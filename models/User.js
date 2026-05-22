@@ -34,6 +34,8 @@ const userSchema = new mongoose.Schema(
     quota:             { type: Number, default: 2 },
 
     refreshToken:   { type: String, select: false },
+    sessionIssuedAt: { type: Date, select: false },
+
     totalDonations: { type: Number, default: 0 },
     badges:         { type: [String], default: [] },
 

@@ -144,8 +144,10 @@ exports.loginLogic = async ({ email, password }) => {
     .update(refreshToken)
     .digest('hex');
 
-  await userRepository.updateUser(user._id, { refreshToken: hashedRefreshToken });
-
+await userRepository.updateUser(user._id, {
+  refreshToken:    hashedRefreshToken,
+  sessionIssuedAt: new Date(), // ← تاريخ بداية الجلسة
+});
   return {
     statusCode: 200,
     refreshToken,
@@ -185,10 +187,41 @@ exports.refreshTokenLogic = async (token) => {
   }
 
   try {
-    const decoded = verifyRefreshToken(token);
-
+    const decoded     = verifyRefreshToken(token);
     const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
 
+    // ✅ اقرأ sessionIssuedAt مع refreshToken في استدعاء واحد
+    const userWithSession = await userRepository.findByIdWithSession(decoded.user.id);
+
+    if (!userWithSession || userWithSession.isBanned) {
+      return {
+        statusCode:  401,
+        clearCookie: true,
+        body: { msg: 'الجلسة غير صالحة 🛑', code: 'INVALID_SESSION' },
+      };
+    }
+
+    // ✅ Absolute Session Lifetime — 30 يوم من أول تسجيل دخول
+    // حتى لو المهاجم يواصل التجديد، الجلسة تنتهي بعد 30 يوم إجبارياً
+    const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+    const sessionAge = Date.now() - new Date(userWithSession.sessionIssuedAt).getTime();
+
+    if (sessionAge > SESSION_MAX_AGE_MS) {
+      // امسح الجلسة من DB — يُجبر المستخدم على login جديد
+      await userRepository.updateUser(userWithSession._id, {
+        $unset: { refreshToken: 1, sessionIssuedAt: 1 },
+      });
+      return {
+        statusCode:  401,
+        clearCookie: true,
+        body: {
+          msg:  'انتهت صلاحية الجلسة، يرجى تسجيل الدخول مجدداً ⏰',
+          code: 'SESSION_EXPIRED',
+        },
+      };
+    }
+
+    // ✅ جهّز التوكنات الجديدة قبل العملية الذرية
     const newAccessToken  = generateAccessToken({ id: decoded.user.id });
     const newRefreshToken = generateRefreshToken({ id: decoded.user.id });
     const newHashedToken  = crypto
@@ -196,27 +229,22 @@ exports.refreshTokenLogic = async (token) => {
       .update(newRefreshToken)
       .digest('hex');
 
-    // ✅ عملية ذرية واحدة — تحقق + تحديث في نفس اللحظة
+    // ✅ Atomic Rotation — تحقق من الهاش القديم + تحديث بالجديد في عملية واحدة
+    // إذا رجعت null = token قديم أو مسروق = reuse detection تلقائي
     const updatedUser = await userRepository.rotateRefreshToken(
       decoded.user.id,
-      hashedToken,    // ← الهاش القديم (يجب أن يطابق ما في DB)
-      newHashedToken  // ← الهاش الجديد
+      hashedToken,   // ← يجب أن يطابق ما في DB
+      newHashedToken // ← يحل محله
     );
 
-    // ✅ إذا رجعت null = token قديم أو مسروق = reuse detection
     if (!updatedUser) {
       return {
-        statusCode: 401,
+        statusCode:  401,
         clearCookie: true,
-        body: { msg: 'Refresh Token غير صالح أو مُعاد استخدامه 🛑', code: 'TOKEN_REUSE_DETECTED' },
-      };
-    }
-
-    if (updatedUser.isBanned) {
-      return {
-        statusCode: 403,
-        clearCookie: true,
-        body: { msg: 'هذا الحساب محظور 🛑', code: 'ACCOUNT_BANNED' },
+        body: {
+          msg:  'Refresh Token غير صالح أو مُعاد استخدامه 🛑',
+          code: 'TOKEN_REUSE_DETECTED',
+        },
       };
     }
 
@@ -228,6 +256,7 @@ exports.refreshTokenLogic = async (token) => {
         accessToken: newAccessToken,
       },
     };
+
   } catch (err) {
     const isExpired = err.name === 'TokenExpiredError';
     return {
@@ -244,14 +273,16 @@ exports.refreshTokenLogic = async (token) => {
 
 // ─── 5. تسجيل الخروج ───────────────────────────────────────
 exports.logoutLogic = async (userId) => {
-  await userRepository.updateUser(userId, { $unset: { refreshToken: 1 } });
+  // ✅ امسح refreshToken و sessionIssuedAt معاً عند الخروج
+  await userRepository.updateUser(userId, {
+    $unset: { refreshToken: 1, sessionIssuedAt: 1 },
+  });
 
   return {
     statusCode: 200,
     body: { msg: 'تم تسجيل الخروج بنجاح 👋' },
   };
 };
-
 
 // ─── 6. بروفايل خاص (GET /me) ──────────────────────────────
 exports.getUserProfileLogic = async (userId) => {

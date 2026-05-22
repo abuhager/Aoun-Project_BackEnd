@@ -42,3 +42,5 @@ exports.rotateRefreshToken = (userId, oldHash, newHash) =>
     { $set: { refreshToken: newHash } },
     { new: true }              // ← أرجع الوثيقة المحدّثة
   ).select('_id name email role trustLevel isBanned');
+  exports.findByIdWithSession = (id) =>
+  User.findById(id).select('+refreshToken +sessionIssuedAt');
