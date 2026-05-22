@@ -6,6 +6,13 @@ const Item = require("../models/Item");
 const sendEmail = require("../utils/sendEmail");
 const { generateOtp } = require("../utils/otp");
 const cloudinary = require("cloudinary").v2;
+const VALID_REPORT_REASONS = [
+  'لم يُسلّم الغرض',
+  'معلومات مضللة',
+  'سلوك غير لائق',
+  'غرض مختلف عن الوصف',
+  'أخرى',
+];
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -203,7 +210,7 @@ exports.cancelBookingLogic = async (itemId, userId) => {
 
   if (!isBooker && !isDonor && !inWait) throw new Error("غير مصرح لك");
 
-  // الانسحاب من الانتظار فقط (الطابور لا يخصم كوتا → لا نُرجع شيئاً)
+  // انسحاب من الطابور فقط
   if (inWait && !isBooker && !isDonor) {
     await Item.findByIdAndUpdate(item._id, {
       $pull: { waitlist: { user: userId } },
@@ -211,10 +218,8 @@ exports.cancelBookingLogic = async (itemId, userId) => {
     return { msg: "تم انسحابك من قائمة الانتظار بنجاح 🚶‍♂️" };
   }
 
-  // إعادة الكوتا للحاجز السابق
-  if (item.bookedBy) {
-    await User.findByIdAndUpdate(item.bookedBy, { $inc: { quota: 1 } });
-  }
+  // ✅ حفظ previousBooker قبل أي تعديل
+  const previousBooker = item.bookedBy;
 
   // فحص طابور الانتظار وتمرير الدور
   if (item.waitlist.length > 0) {
@@ -239,6 +244,8 @@ exports.cancelBookingLogic = async (itemId, userId) => {
 
     if (nextValidUser) {
       const newOtp = generateOtp();
+
+      // ✅ 1: حدِّث الغرض أولاً
       await Item.findByIdAndUpdate(item._id, {
         $set: {
           status:      "محجوز",
@@ -246,28 +253,41 @@ exports.cancelBookingLogic = async (itemId, userId) => {
           deliveryOtp: newOtp,
           bookedAt:    new Date(),
         },
-        $addToSet: { cancelledBy: item.bookedBy },
+        $addToSet: { cancelledBy: previousBooker },
         $pull:     { waitlist: { user: nextValidUser._id } },
       });
 
-      // ✅ OTP يُرسل بالإيميل فقط
+      // ✅ 2: أعِد كوتا الحاجز السابق بعد نجاح تحديث الغرض
+      if (previousBooker) {
+        await User.findByIdAndUpdate(previousBooker, { $inc: { quota: 1 } });
+      }
+
       fireSendEmail({
         email:   nextValidUser.email,
         subject: `الدور وصلك في "عون" 🎉`,
         message: `<div dir="rtl">أصبح الغرض محجوزاً لك! رمز الاستلام: <b>${newOtp}</b><p>لديك 72 ساعة لإتمام الاستلام ⏱️</p></div>`,
       });
+
       return { msg: "تم إلغاء الحجز وتمرير الدور للشخص التالي 🔄" };
     }
   }
 
   // لا يوجد منتظرون — الغرض يعود متاحاً
+  // ✅ 1: حدِّث الغرض أولاً
   await Item.findByIdAndUpdate(item._id, {
     $set:      { status: "متاح", bookedBy: null, deliveryOtp: null, bookedAt: null },
-    $addToSet: { cancelledBy: item.bookedBy },
+    $addToSet: { cancelledBy: previousBooker },
   });
+
+  // ✅ 2: أعِد الكوتا بعد نجاح تحديث الغرض
+  if (previousBooker) {
+    await User.findByIdAndUpdate(previousBooker, { $inc: { quota: 1 } });
+  }
+
+  // TODO Phase 3: استبدل بـ MongoDB Transaction
+
   return { msg: "تم إلغاء الحجز والقطعة متاحة الآن ✅" };
 };
-
 // ─────────────────────────────────────────
 // 7. منطق إتمام التسليم
 // ✅ يزيد totalDonations للمتبرع عند كل تسليم ناجح
@@ -303,59 +323,76 @@ exports.completeDeliveryLogic = async (itemId, userId, otp) => {
 // 8. منطق التقييم
 // ✅ نظام نقاط واضح: 5★=+5 | 3-4★=+2 | 1-2★=-3
 // ─────────────────────────────────────────
+// services/itemService.js — rateItemLogic
+const RATING_POINTS = {
+  5: +5,  // ممتاز
+  4: +3,  // جيد جداً
+  3: +1,  // مقبول
+  2:  0,  // ضعيف   ← لا خصم، فقط لا مكافأة
+  1:  0,  // سيئ    ← نفس الشيء
+};
+
 exports.rateItemLogic = async (itemId, userId, rating) => {
   const item = await Item.findById(itemId);
 
   if (!item || item.bookedBy?.toString() !== userId)
-    throw new Error("غير مصرح لك");
-  if (item.status !== "تم التسليم" || item.isRated)
-    throw new Error("لا يمكن التقييم الآن");
+    throw new Error('غير مصرح لك');
+  if (item.status !== 'تم التسليم' || item.isRated)
+    throw new Error('لا يمكن التقييم الآن');
 
-  // ✅ نظام نقاط واضح ومتوقع
-  let points;
-  if      (rating === 5)           points = +5;
-  else if (rating >= 3)            points = +2;
-  else                             points = -3;
+  const points = RATING_POINTS[rating];
+  if (points === undefined) throw new Error('التقييم يجب أن يكون بين 1 و5');
 
+  // ✅ زيادة فقط — لا خصم أبداً
   const donor = await User.findByIdAndUpdate(
     item.donor,
     { $inc: { trustScore: points } },
     { new: true }
   );
 
-  // clamp 0–100
-  if (donor.trustScore > 100) await User.findByIdAndUpdate(item.donor, { $set: { trustScore: 100 } });
-  if (donor.trustScore < 0)   await User.findByIdAndUpdate(item.donor, { $set: { trustScore: 0  } });
+  // clamp 0–100 (فقط للحد الأعلى — الأدنى لن يُكسَر أصلاً)
+  if (donor.trustScore > 100)
+    await User.findByIdAndUpdate(item.donor, { $set: { trustScore: 100 } });
 
-  await Item.findByIdAndUpdate(itemId, {
-    $set: { isRated: true, rating }
-  });
+  await Item.findByIdAndUpdate(itemId, { $set: { isRated: true, rating } });
 
-  return { msg: "تم التقييم 🌟", trustScore: Math.min(100, Math.max(0, donor.trustScore)) };
+  return {
+    msg: 'تم التقييم 🌟',
+    trustScore: Math.min(100, donor.trustScore),
+  };
 };
 
 // ─────────────────────────────────────────
 // 9. منطق التبليغ
 // ─────────────────────────────────────────
-exports.reportUserLogic = async (reportedUserId, reporterId) => {
-  if (reporterId === reportedUserId) throw new Error("لا يمكنك التبليغ عن نفسك");
+exports.reportUserLogic = async (reportedUserId, reporterId, reason) => {
+  // 1️⃣ التحقق من reason
+  if (!reason || !VALID_REPORT_REASONS.includes(reason))
+    throw new Error(`سبب البلاغ مطلوب. الأسباب المتاحة: ${VALID_REPORT_REASONS.join(' | ')}`);
+
+  // 2️⃣ لا تبليغ عن نفسك
+  if (reporterId === reportedUserId)
+    throw new Error('لا يمكنك التبليغ عن نفسك');
 
   const user = await User.findById(reportedUserId);
-  if (!user) throw new Error("المستخدم غير موجود");
+  if (!user) throw new Error('المستخدم غير موجود');
+
+  // 3️⃣ تبليغ مسبق
   if ((user.reportedBy || []).some((id) => id.toString() === reporterId))
-    throw new Error("لقد قمت بالتبليغ عن هذا المستخدم مسبقاً 🚫");
+    throw new Error('لقد قمت بالتبليغ عن هذا المستخدم مسبقاً 🚫');
 
+  // 4️⃣ تسجيل البلاغ فقط — بدون خصم تلقائي
+  // ⚠️ Phase 4: سيُستبدل هذا بنموذج Report كامل مع dispute window
   user.reportedBy.push(reporterId);
-  const total = user.reportedBy.length;
 
-  if (total >= 6) {
+  // 5️⃣ الحظر التلقائي عند 6 بلاغات فقط (أدنى حد)
+  // ✅ لا خصم trustScore تلقائي — ينتظر Admin review
+  if (user.reportedBy.length >= 6) {
     user.isBanned = true;
-  } else if (total >= 2) {
-    user.trustScore = Math.max(0, (user.trustScore || 85) - total * 5);
   }
 
   await user.save();
-  return { msg: "تم إرسال البلاغ بنجاح 🛡️" };
+  return { msg: 'تم إرسال البلاغ بنجاح. سيتم مراجعته من قبل الإدارة 🛡️' };
 };
 
 // ─────────────────────────────────────────

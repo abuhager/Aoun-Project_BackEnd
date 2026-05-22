@@ -1,7 +1,6 @@
 // repositories/userRepository.js
 const User = require('../models/User');
 
-// ✅ أضف options لدعم selectOtp — باقي الـ functions ما تحتاج تغيير
 exports.findByEmail = (email, options = {}) => {
   let query = User.findOne({ email });
   if (options.selectOtp) query = query.select('+verificationOtp');
@@ -17,10 +16,11 @@ exports.saveUser = (user) => user.save();
 
 exports.findById = (id) =>
   User.findById(id).select(
-    'name email phone avatar role trustScore trustLevel ' +
-    'quota isVerified isVerifiedStudent isBanned ' +
-    'totalDonations badges createdAt updatedAt'
+    'name email avatar role trustScore trustLevel ' +
+    'quota isVerified isVerifiedStudent ' +
+    'totalDonations badges createdAt'
   );
+
 exports.findByIdWithRefreshToken = (id) =>
   User.findById(id).select('+refreshToken');
 
@@ -31,16 +31,24 @@ exports.findByResetToken = (hashedToken) =>
   }).select('+password');
 
 exports.updateUser = (id, update) =>
-  User.findByIdAndUpdate(id, update, { new: true });
+  User.findByIdAndUpdate(id, update, { returnDocument: 'after' }); // ✅
 
 exports.rotateRefreshToken = (userId, oldHash, newHash) =>
   User.findOneAndUpdate(
     {
       _id:          userId,
-      refreshToken: oldHash,   // ← الشرط: طابق القديم أولاً
+      refreshToken: oldHash,
     },
     { $set: { refreshToken: newHash } },
-    { new: true }              // ← أرجع الوثيقة المحدّثة
+    { returnDocument: 'after' } // ✅
   ).select('_id name email role trustLevel isBanned');
-  exports.findByIdWithSession = (id) =>
+
+exports.findByIdWithSession = (id) =>
   User.findById(id).select('+refreshToken +sessionIssuedAt');
+
+exports.findByIdForAdmin = (id) =>
+  User.findById(id).select(
+    'name email phone avatar role trustScore trustLevel ' +
+    'quota isVerified isVerifiedStudent isBanned ' +
+    'totalDonations badges reportedBy createdAt updatedAt'
+  );

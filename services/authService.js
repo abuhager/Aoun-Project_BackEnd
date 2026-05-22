@@ -144,39 +144,32 @@ exports.loginLogic = async ({ email, password }) => {
     .update(refreshToken)
     .digest('hex');
 
-await userRepository.updateUser(user._id, {
-  refreshToken:    hashedRefreshToken,
-  sessionIssuedAt: new Date(), // ← تاريخ بداية الجلسة
-});
+  await userRepository.updateUser(user._id, {
+    refreshToken:    hashedRefreshToken,
+    sessionIssuedAt: new Date(),
+  });
+
   return {
     statusCode: 200,
     refreshToken,
     body: {
       msg: 'تم تسجيل الدخول بنجاح',
       accessToken,
+      // ✅ فقط ما يحتاجه الفرونت لعرض واجهة المستخدم
       user: {
         _id:               user._id,
         name:              user.name,
         email:             user.email,
-        phone:             user.phone,
         avatar:            user.avatar,
         role:              user.role,
-        trustScore:        user.trustScore,
-        trustLevel:        user.trustLevel ?? 1,  // ✅ جديد
+        trustLevel:        user.trustLevel ?? 1,
         quota:             user.quota,
         isVerified:        user.isVerified,
         isVerifiedStudent: user.isVerifiedStudent,
-        isBanned:          user.isBanned,
-        totalDonations:    user.totalDonations,
-        badges:            user.badges,
-        createdAt:         user.createdAt,
-        updatedAt:         user.updatedAt,
       },
     },
   };
 };
-
-
 // ─── 4. منطق تجديد الـ Refresh Token Rotation ─────────────
 exports.refreshTokenLogic = async (token) => {
   if (!token) {
@@ -301,10 +294,27 @@ exports.getUserProfileLogic = async (userId) => {
     return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
   }
 
+  // ✅ DTO صارم — فقط ما يحتاجه الـ /me endpoint
+  const safeUser = {
+    _id:               user._id,
+    name:              user.name,
+    email:             user.email,
+    avatar:            user.avatar,
+    role:              user.role,
+    trustScore:        user.trustScore,
+    trustLevel:        user.trustLevel ?? 1,
+    quota:             user.quota,
+    isVerified:        user.isVerified,
+    isVerifiedStudent: user.isVerifiedStudent,
+    totalDonations:    user.totalDonations,
+    badges:            user.badges,
+    createdAt:         user.createdAt,
+  };
+
   return {
     statusCode: 200,
     body: {
-      user,
+      user:             safeUser,
       stats: {
         donationsCount:     allDonations.length,
         completedDonations: allDonations.filter((i) => i.status === 'تم التسليم').length,

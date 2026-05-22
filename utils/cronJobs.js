@@ -10,7 +10,6 @@ const initCronJobs = () => {
   // ─── 1. تصفير الكوتا شهرياً (أول يوم بالشهر) ───
   cron.schedule('0 0 1 * *', async () => {
     try {
-      // ✅ نصفّر فقط للمستخدمين غير المحظورين
       await User.updateMany({ isBanned: false }, { $set: { quota: 2 } });
       console.log('✅ تم تصفير الكوتا بنجاح!');
     } catch (err) {
@@ -26,14 +25,12 @@ const initCronJobs = () => {
         status:   'محجوز',
         bookedAt: { $lt: threshold },
       }).select('_id bookedBy waitlist donor title');
-      // ✅ select: نجلب فقط الحقول اللازمة (cancelledBy: false لأنها select:false في الـ schema)
 
       console.log(`🔍 حجوزات منتهية: ${expiredItems.length}`);
 
       for (const item of expiredItems) {
         const previousBookerId = item.bookedBy;
 
-        // ✅ $addToSet يضمن عدم التكرار تلقائياً — بدون الحاجة لجلب cancelledBy
         if (previousBookerId) {
           await Item.findByIdAndUpdate(item._id, {
             $addToSet: { cancelledBy: previousBookerId },
@@ -42,14 +39,14 @@ const initCronJobs = () => {
 
         // ─── تمرير الدور للشخص التالي ───
         if (item.waitlist && item.waitlist.length > 0) {
-          let luckyUser     = null;
+          let luckyUser      = null;
           const skippedUsers = [];
 
           for (const entry of item.waitlist) {
             const candidate = await User.findOneAndUpdate(
               { _id: entry.user, quota: { $gt: 0 } },
               { $inc: { quota: -1 } },
-              { new: true }
+              { returnDocument: 'after' } // ✅
             );
             if (candidate) {
               luckyUser = candidate;
@@ -76,7 +73,6 @@ const initCronJobs = () => {
               },
               $pull: { waitlist: { user: luckyUser._id } },
             });
-            // ✅ OTP يُرسل بالإيميل فقط
             sendEmail({
               email:   luckyUser.email,
               subject: `وصل دورك في: ${item.title} 🎉`,
@@ -89,7 +85,6 @@ const initCronJobs = () => {
           }
 
         } else {
-          // لا يوجد waitlist — الغرض يرجع متاحاً
           await Item.findByIdAndUpdate(item._id, {
             $set: { status: 'متاح', bookedBy: null, deliveryOtp: null, bookedAt: null },
           });

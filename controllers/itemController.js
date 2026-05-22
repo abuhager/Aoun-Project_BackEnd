@@ -97,10 +97,15 @@ exports.rateItem = async (req, res) => {
 
 exports.reportUser = async (req, res) => {
   try {
-    const result = await itemService.reportUserLogic(req.body.reportedUserId, req.user.id.toString());
-    res.json(result);
+    const { reason } = req.body; // ← إضافة reason
+    const result = await itemService.reportUserLogic(
+      req.params.userId,
+      req.user.id,
+      reason            // ← تمرير reason
+    );
+    res.status(200).json(result);
   } catch (err) {
-    res.status(400).json({ msg: err.message || 'خطأ في البلاغ' });
+    res.status(400).json({ msg: err.message });
   }
 };
 
