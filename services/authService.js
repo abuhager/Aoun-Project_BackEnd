@@ -100,8 +100,7 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
 exports.verifyEmailLogic = async ({ email, otp }) => {
   // ✅ selectOtp: true — ضروري بعد select: false في الـ Schema
   const user = await userRepository.findByEmail(email, { selectOtp: true });
-   console.log('OTP in DB:', user?.verificationOtp);
-  console.log('OTP from user:', otp);
+  
   if (!user)
     return { statusCode: 404, body: { msg: 'المستخدم غير موجود 🛑' } };
 
@@ -186,62 +185,53 @@ exports.refreshTokenLogic = async (token) => {
   }
 
   try {
-    // ✅ verifyRefreshToken من tokenUtils بدل jwt.verify مباشرة
     const decoded = verifyRefreshToken(token);
 
     const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
 
-    const user = await userRepository.findByIdWithRefreshToken(decoded.user.id);
-
-    if (!user || user.isBanned) {
-      return {
-        statusCode: 401,
-        clearCookie: true,
-        body: { msg: 'الجلسة غير صالحة 🛑', code: 'INVALID_SESSION' },
-      };
-    }
-
-    if (!user.refreshToken) {
-      return {
-        statusCode: 401,
-        clearCookie: true,
-        body: { msg: 'لا توجد جلسة محفوظة', code: 'NO_STORED_SESSION' },
-      };
-    }
-
-    if (user.refreshToken !== hashedToken) {
-      return {
-        statusCode: 401,
-        clearCookie: false,
-        body: { msg: 'Refresh Token غير مطابق', code: 'REFRESH_MISMATCH' },
-      };
-    }
-
-    const newAccessToken  = generateAccessToken(user);
-    const newRefreshToken = generateRefreshToken(user);
-
-    const newHashedRefreshToken = crypto
+    const newAccessToken  = generateAccessToken({ id: decoded.user.id });
+    const newRefreshToken = generateRefreshToken({ id: decoded.user.id });
+    const newHashedToken  = crypto
       .createHash('sha256')
       .update(newRefreshToken)
       .digest('hex');
 
-    await userRepository.updateUser(user._id, {
-      refreshToken: newHashedRefreshToken,
-    });
+    // ✅ عملية ذرية واحدة — تحقق + تحديث في نفس اللحظة
+    const updatedUser = await userRepository.rotateRefreshToken(
+      decoded.user.id,
+      hashedToken,    // ← الهاش القديم (يجب أن يطابق ما في DB)
+      newHashedToken  // ← الهاش الجديد
+    );
+
+    // ✅ إذا رجعت null = token قديم أو مسروق = reuse detection
+    if (!updatedUser) {
+      return {
+        statusCode: 401,
+        clearCookie: true,
+        body: { msg: 'Refresh Token غير صالح أو مُعاد استخدامه 🛑', code: 'TOKEN_REUSE_DETECTED' },
+      };
+    }
+
+    if (updatedUser.isBanned) {
+      return {
+        statusCode: 403,
+        clearCookie: true,
+        body: { msg: 'هذا الحساب محظور 🛑', code: 'ACCOUNT_BANNED' },
+      };
+    }
 
     return {
-      statusCode: 200,
+      statusCode:   200,
       refreshToken: newRefreshToken,
       body: {
-        msg: 'تم تجديد الجلسة بنجاح',
+        msg:         'تم تجديد الجلسة بنجاح',
         accessToken: newAccessToken,
       },
     };
   } catch (err) {
     const isExpired = err.name === 'TokenExpiredError';
-
     return {
-      statusCode: 401,
+      statusCode:  401,
       clearCookie: true,
       body: {
         msg:  isExpired ? 'انتهت صلاحية الجلسة ⏰' : 'جلسة غير صالحة ⚠️',

@@ -15,8 +15,12 @@ exports.createUser = (data) => User.create(data);
 
 exports.saveUser = (user) => user.save();
 
-exports.findById = (id) => User.findById(id);
-
+exports.findById = (id) =>
+  User.findById(id).select(
+    'name email phone avatar role trustScore trustLevel ' +
+    'quota isVerified isVerifiedStudent isBanned ' +
+    'totalDonations badges createdAt updatedAt'
+  );
 exports.findByIdWithRefreshToken = (id) =>
   User.findById(id).select('+refreshToken');
 
@@ -28,3 +32,13 @@ exports.findByResetToken = (hashedToken) =>
 
 exports.updateUser = (id, update) =>
   User.findByIdAndUpdate(id, update, { new: true });
+
+exports.rotateRefreshToken = (userId, oldHash, newHash) =>
+  User.findOneAndUpdate(
+    {
+      _id:          userId,
+      refreshToken: oldHash,   // ← الشرط: طابق القديم أولاً
+    },
+    { $set: { refreshToken: newHash } },
+    { new: true }              // ← أرجع الوثيقة المحدّثة
+  ).select('_id name email role trustLevel isBanned');
