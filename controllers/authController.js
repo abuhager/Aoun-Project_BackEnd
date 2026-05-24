@@ -117,14 +117,14 @@ exports.resetPassword = async (req, res) => {
 // ─── 8. refreshToken ─────────────────────────────────────
 exports.refreshToken = async (req, res) => {
   try {
-    const result = await authService.refreshTokenLogic(req.cookies?.refreshToken);
+    const result = await authService.refreshLogic(req.cookies?.refreshToken); // ✅ refreshLogic
 
     if (result.clearCookie) {
       res.clearCookie('refreshToken', CLEAR_REFRESH_COOKIE_OPTIONS);
     }
 
-    if (result.statusCode === 200 && result.refreshToken) {
-      res.cookie('refreshToken', result.refreshToken, REFRESH_COOKIE_OPTIONS);
+    if (result.statusCode === 200 && result.newRefreshToken) { // ✅ newRefreshToken
+      res.cookie('refreshToken', result.newRefreshToken, REFRESH_COOKIE_OPTIONS);
     }
 
     return res.status(result.statusCode).json(result.body);
