@@ -1,9 +1,23 @@
 // utils/tokenUtils.js
+// ✅ Phase 1 Fix:
+//    - أضيف trustLevel للـ Access Token payload (يحل Bug #7 جزئياً)
+//    - أضيف isBanned للـ Access Token payload (يُغني auth middleware عن DB query)
+//    - الـ API لم يتغير — نفس exports
+
 const jwt = require('jsonwebtoken');
 
 const generateAccessToken = (user) => {
   return jwt.sign(
-    { user: { id: user._id?.toString?.() || user.id, role: user.role } },
+    {
+      user: {
+        id:         user._id?.toString?.() || user.id,
+        role:       user.role,
+        // ✅ Fix Bug #7 جزئياً — أضف trustLevel و isBanned للـ payload
+        // بدل DB query في كل طلب
+        trustLevel: user.trustLevel ?? 1,
+        isBanned:   user.isBanned   ?? false,
+      },
+    },
     process.env.JWT_SECRET,
     { expiresIn: '15m' }
   );
@@ -19,35 +33,23 @@ const generateRefreshToken = (user) => {
 
 const isProduction = process.env.NODE_ENV === 'production';
 
-// ✅ تنظيف: كانت خصائص مكررة (secure, sameSite, path)
 const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: isProduction,
+  secure:   isProduction,
   sameSite: isProduction ? 'none' : 'lax',
-  maxAge: 7 * 24 * 60 * 60 * 1000,
-  path: '/',
+  maxAge:   7 * 24 * 60 * 60 * 1000,
+  path:     '/',
 };
 
 const CLEAR_REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: isProduction,
+  secure:   isProduction,
   sameSite: isProduction ? 'none' : 'lax',
-  path: '/',
+  path:     '/',
 };
 
-/**
- * ✅ مركزية التحقق من Access Token — استخدم هذه في middleware بدل jwt.verify المكررة
- */
-const verifyAccessToken = (token) => {
-  return jwt.verify(token, process.env.JWT_SECRET);
-};
-
-/**
- * ✅ مركزية التحقق من Refresh Token
- */
-const verifyRefreshToken = (token) => {
-  return jwt.verify(token, process.env.JWT_REFRESH_SECRET);
-};
+const verifyAccessToken  = (token) => jwt.verify(token, process.env.JWT_SECRET);
+const verifyRefreshToken = (token) => jwt.verify(token, process.env.JWT_REFRESH_SECRET);
 
 module.exports = {
   generateAccessToken,

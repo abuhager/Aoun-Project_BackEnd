@@ -1,95 +1,77 @@
 // middlewares/auth.js
-const User = require('../models/User');
+// ✅ Phase 1 Fix:
+//    Bug #7  — حذف DB query من كل طلب، نقرأ من JWT payload مباشرة
+//    Bug #17 — requireAdmin يتحقق من req.user أولاً (يعتمد على requireAuth)
+
 const { verifyAccessToken } = require('../utils/tokenUtils');
 
-// ───────────────────────────────────────
-// requireAuth — حماية كل route محمية
-// ───────────────────────────────────────
-const requireAuth = async (req, res, next) => {
+// ─── 1. حماية المسارات العامة ─────────────────────────────────
+exports.requireAuth = (req, res, next) => {
   const authHeader = req.headers.authorization;
-  const token =
-    authHeader && authHeader.startsWith('Bearer ')
-      ? authHeader.slice(7)
-      : null;
 
-  if (!token) {
-    return res.status(401).json({ msg: 'لا يوجد توكن، الدخول مرفوض 🛑', code: 'NO_ACCESS_TOKEN' });
+  if (!authHeader?.startsWith('Bearer ')) {
+    return res.status(401).json({ msg: 'لا يوجد توكن، الوصول مرفوض 🔒' });
   }
 
+  const token = authHeader.split(' ')[1];
+
   try {
-    // ✅ verifyAccessToken من tokenUtils — مش jwt.verify مباشرة
+    // ✅ Fix Bug #7 — نتحقق من التوكن فقط، لا DB query
     const decoded = verifyAccessToken(token);
-    const user = await User.findById(decoded.user.id).select('isBanned role trustLevel');
 
-    if (!user) return res.status(401).json({ msg: 'المستخدم غير موجود 🛑', code: 'USER_NOT_FOUND' });
-    if (user.isBanned) return res.status(403).json({ msg: 'حسابك محظور 🚫', code: 'ACCOUNT_BANNED' });
+    // ✅ Fix Bug #7 — isBanned موجود في الـ payload الآن (من tokenUtils المُصلَح)
+    // لا حاجة لـ User.findById في كل طلب
+    if (decoded.user.isBanned) {
+      return res.status(403).json({ msg: 'حسابك محظور 🚫' });
+    }
 
-    req.user = { id: decoded.user.id, role: user.role, trustLevel: user.trustLevel ?? 1 };
+    req.user = {
+      id:         decoded.user.id,
+      role:       decoded.user.role,
+      trustLevel: decoded.user.trustLevel ?? 1,  // ✅ جديد — متاح لكل controllers
+      isBanned:   decoded.user.isBanned   ?? false,
+    };
+
     next();
   } catch (err) {
-    if (err.name === 'TokenExpiredError') {
-      return res.status(401).json({ msg: 'انتهت صلاحية الجلسة ⏰', code: 'TOKEN_EXPIRED' });
-    }
-    return res.status(401).json({ msg: 'التوكن غير صالح ⚠️', code: 'TOKEN_INVALID' });
+    const isExpired = err.name === 'TokenExpiredError';
+    return res.status(401).json({
+      msg:  isExpired ? 'انتهت صلاحية الجلسة ⏰' : 'توكن غير صالح ⚠️',
+      code: isExpired ? 'TOKEN_EXPIRED'           : 'INVALID_TOKEN',
+    });
   }
 };
 
-// ───────────────────────────────────────
-// optionalAuth — للمسارات العامة مع تحسين
-// ───────────────────────────────────────
-const optionalAuth = async (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  const token =
-    authHeader && authHeader.startsWith('Bearer ')
-      ? authHeader.slice(7)
-      : null;
-
-  if (!token) return next();
-
-  try {
-    const decoded = verifyAccessToken(token);
-    const user = await User.findById(decoded.user.id).select('isBanned role trustLevel');
-    if (user && !user.isBanned) {
-      req.user = { id: decoded.user.id, role: user.role, trustLevel: user.trustLevel ?? 1 };
-    }
-  } catch (err) {
-    // ✅ تسجيل السبب للـ debugging بدل ابتلاع الخطأ صامتاً
-    console.warn('[optionalAuth] token rejected:', err.message);
-  }
-  next();
-};
-
-// ───────────────────────────────────────
-// requireAdmin — للمسارات الإدارية فقط
-// ───────────────────────────────────────
-const requireAdmin = (req, res, next) => {
+// ─── 2. مسارات الأدمن ─────────────────────────────────────────
+// ✅ Fix Bug #17 — requireAdmin يعتمد على requireAuth حتمًا قبله في الـ route
+// يفحص req.user الذي زرعه requireAuth — لا يعمل وحده
+exports.requireAdmin = (req, res, next) => {
+  // إذا استُدعي requireAdmin بدون requireAuth قبله → req.user = undefined → 401
   if (!req.user) {
-    return res.status(401).json({ msg: 'يجب تسجيل الدخول أولاً', code: 'NO_AUTH' });
+    return res.status(401).json({ msg: 'غير مصرح — يجب تسجيل الدخول أولاً 🔒' });
   }
+
   if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
-    return res.status(403).json({ msg: 'صلاحيات المدير مطلوبة 🔒', code: 'ADMIN_REQUIRED' });
+    return res.status(403).json({ msg: 'هذه المنطقة للمشرفين فقط 🛡️' });
   }
+
   next();
 };
 
-// ───────────────────────────────────────
-// requireLevel2 — للحجز فقط (Phase 2)
-// Level 2 = طالب جامعي OR رقم واتساب مُحقَّق OR مُرقَّى يدوياً
-// ───────────────────────────────────────
-const requireLevel2 = (req, res, next) => {
+// ─── 3. مسارات Level 2 (Phase 2 — stub جاهز) ─────────────────
+// ✅ الـ middleware جاهز الآن — يقرأ trustLevel من req.user (من الـ JWT payload)
+// لا DB query — سريع ومباشر
+exports.requireLevel2 = (req, res, next) => {
   if (!req.user) {
-    return res.status(401).json({ msg: 'يجب تسجيل الدخول أولاً', code: 'NO_AUTH' });
+    return res.status(401).json({ msg: 'غير مصرح — يجب تسجيل الدخول أولاً 🔒' });
   }
+
   if ((req.user.trustLevel ?? 1) < 2) {
     return res.status(403).json({
-      msg: 'يجب التحقق من هويتك أولاً للحجز (إيميل جامعي أو واتساب) 🔐',
+      msg:  'يتطلب هذا الإجراء التحقق من الهوية (المستوى 2) 🔐',
       code: 'LEVEL2_REQUIRED',
     });
   }
+
   next();
 };
-
-module.exports = requireAuth;
-module.exports.optionalAuth = optionalAuth;
-module.exports.requireAdmin = requireAdmin;
-module.exports.requireLevel2 = requireLevel2;

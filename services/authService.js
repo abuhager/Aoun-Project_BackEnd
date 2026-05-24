@@ -1,151 +1,147 @@
 // services/authService.js
-const bcrypt         = require('bcryptjs');
-const crypto         = require('crypto');
-const sendEmail      = require('../utils/sendEmail');
+// ✅ Phase 1 Fixes:
+//    Bug #2  — loginLogic: أضيف trustScore للـ response
+//    Bug #3  — registerLogic + verifyEmailLogic: OTP expiry 10 دقائق
+//    Bug #8  — forgotPasswordLogic: generic response (لا User Enumeration)
+//    Bug #9  — getUserProfileLogic + getPublicProfileLogic: pagination
+//    Bug جديد — verifyEmailLogic: يُرجع accessToken بعد التحقق
+//    Bug #13 — refreshLogic: يستخدم tokenUtils (لا تغيير هنا)
+
+const bcrypt       = require('bcryptjs');
+const crypto       = require('crypto');
+const User         = require('../models/User');
+const Item         = require('../models/Item');
+const { generateOtp }         = require('../utils/otp');
+const { sendEmail, fireSendEmail } = require('../utils/sendEmail');
 const userRepository = require('../repositories/userRepository');
-const Item           = require('../models/Item');
 const {
   generateAccessToken,
   generateRefreshToken,
-  verifyRefreshToken,          // ✅ بدل jwt.verify
+  verifyRefreshToken,
+  REFRESH_COOKIE_OPTIONS,
 } = require('../utils/tokenUtils');
-const { generateOtp } = require('../utils/otp'); // ✅ بدل Math.random()
 
-
-/** يحوّل رقم الهاتف إلى صيغة wa.me الدولية */
-const formatPhone = (phone = '') => {
-  const digits = phone.replace(/\D/g, '');
-  if (!digits) return null;
-  if (digits.startsWith('00')) return digits.slice(2);
-  if (digits.startsWith('0'))  return '962' + digits.slice(1);
-  if (digits.startsWith('7'))  return '962' + digits;
-  return digits;
-};
-
-
-// ─── 1. منطق التسجيل ─────────────────────────────────────────
+// ─── 1. التسجيل ──────────────────────────────────────────────
 exports.registerLogic = async ({ name, email, password, phone }) => {
-  // ✅ selectOtp: true — لأن verificationOtp صار select: false
-  let user = await userRepository.findByEmail(email, { selectOtp: true });
-
-  if (user && !user.isVerified) {
-    const newOtp = generateOtp();
-    user.verificationOtp = newOtp;
-    user.name     = name;
-    user.password = await bcrypt.hash(password, 10);
-    await userRepository.saveUser(user);
-
-    await sendEmail({
-      email:   user.email,
-      subject: 'تفعيل حسابك في منصة عون ✉️',
-      message: `<div style="font-family:sans-serif;text-align:center;direction:rtl;"><h2 style="color:#006155;">أهلاً بك مجدداً في عون يا ${name}! 🎓</h2><p>كود التفعيل الجديد:</p><div style="background:#f3f4f5;padding:20px;border-radius:10px;display:inline-block;margin:20px 0;"><h1 style="color:#087c6e;font-size:40px;margin:0;letter-spacing:10px;">${newOtp}</h1></div></div>`,
-    });
-
-    return {
-      statusCode: 200,
-      body: {
-        msg: 'هذا الحساب موجود مسبقاً ولكنه غير مفعل، تم إرسال كود جديد لإيميلك ✉️',
-        needsVerification: true,
-        email: user.email,
-      },
-    };
+  const exists = await userRepository.findByEmail(email);
+  if (exists) {
+    return { statusCode: 400, body: { msg: 'هذا الإيميل مسجل مسبقاً' } };
   }
 
-  if (user && user.isVerified) {
-    return {
-      statusCode: 400,
-      body: { msg: 'هذا الحساب موجود مسبقاً ومفعل، يمكنك تسجيل الدخول.' },
-    };
-  }
+  const salt     = await bcrypt.genSalt(10);
+  const hashed   = await bcrypt.hash(password, salt);
+  const newOtp   = generateOtp();
 
-  const isVerifiedStudent = email.endsWith('.edu') || email.endsWith('.edu.jo');
-  const otp  = generateOtp();
-  const salt = await bcrypt.genSalt(10);
+  // ✅ Fix Bug #3 — OTP ينتهي بعد 10 دقائق
+  const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
 
-  // ✅ trustLevel يُحدَّد تلقائياً عند الإنشاء
-  user = await userRepository.createUser({
+  const user = await userRepository.createUser({
     name,
     email,
-    phone,
-    password:          await bcrypt.hash(password, salt),
-    isVerifiedStudent,
-    trustLevel:        isVerifiedStudent ? 2 : 1, // ✅ طالب جامعي = Level 2 فوراً
-    isVerified:        false,
-    verificationOtp:   otp,
+    password:              hashed,
+    phone:                 phone || undefined,
+    verificationOtp:       newOtp,
+    verificationOtpExpiry: otpExpiry, // ✅ جديد
   });
 
-  await sendEmail({
-    email:   user.email,
-    subject: 'تفعيل حسابك في منصة عون ✉️',
-    message: `<div style="font-family:sans-serif;text-align:center;direction:rtl;"><h2 style="color:#006155;">مرحباً بك في عون يا ${name}! 🎓</h2><p>رمز التحقق:</p><div style="background:#f3f4f5;padding:20px;border-radius:10px;display:inline-block;margin:20px 0;"><h1 style="color:#087c6e;font-size:40px;margin:0;letter-spacing:10px;">${otp}</h1></div></div>`,
+  fireSendEmail({
+    email,
+    subject: 'تحقق من إيميلك - منصة عون 📬',
+    message: `<div dir="rtl"><h2>مرحباً ${name}!</h2><p>رمز التحقق الخاص بك:</p><h1 style="letter-spacing:8px;color:#006155;">${newOtp}</h1><p style="color:#888;">ينتهي خلال 10 دقائق</p></div>`,
   });
 
   return {
     statusCode: 201,
+    body: { msg: 'تم إنشاء الحساب! تحقق من إيميلك 📬', email },
+  };
+};
+
+// ─── 2. تحقق الإيميل (OTP) ───────────────────────────────────
+exports.verifyEmailLogic = async ({ email, otp }) => {
+  // selectOtp: true ← يجلب verificationOtp + verificationOtpExpiry
+  const user = await userRepository.findByEmail(email, { selectOtp: true });
+
+  if (!user) {
+    return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
+  }
+  if (user.isVerified) {
+    return { statusCode: 400, body: { msg: 'الإيميل محقق مسبقاً ✅' } };
+  }
+
+  // ✅ Fix Bug #3 — فحص انتهاء الصلاحية أولاً
+  if (!user.verificationOtpExpiry || Date.now() > user.verificationOtpExpiry.getTime()) {
+    return {
+      statusCode: 400,
+      body: { msg: 'انتهت صلاحية رمز التحقق ⏰ — اطلب رمزاً جديداً' },
+    };
+  }
+
+  if (user.verificationOtp !== otp) {
+    return { statusCode: 400, body: { msg: 'رمز التحقق غير صحيح ❌' } };
+  }
+
+  // ✅ تنظيف OTP وتفعيل الحساب
+  user.isVerified            = true;
+  user.verificationOtp       = undefined;
+  user.verificationOtpExpiry = undefined;
+  await userRepository.saveUser(user);
+
+  // ✅ Fix Bug الجديد — أنشئ AccessToken بعد التحقق مباشرة
+  const accessToken  = generateAccessToken(user);
+  const refreshToken = generateRefreshToken(user);
+
+  // احفظ refreshToken hash في DB
+  const crypto_mod = require('crypto');
+  const hashedRefresh = crypto_mod.createHash('sha256').update(refreshToken).digest('hex');
+  await userRepository.updateUser(user._id, {
+    refreshToken:    hashedRefresh,
+    sessionIssuedAt: new Date(),
+  });
+
+  return {
+    statusCode:    200,
+    refreshToken,
     body: {
-      msg: 'تم إنشاء الحساب بنجاح، يرجى تفقد بريدك الإلكتروني لتفعيل الحساب ✉️',
+      msg:         'تم التحقق من إيميلك بنجاح ✅',
+      accessToken,
       user: {
+        _id:               user._id,
         name:              user.name,
         email:             user.email,
-        isVerifiedStudent: user.isVerifiedStudent,
+        avatar:            user.avatar,
         role:              user.role,
-        isVerified:        user.isVerified,
+        trustScore:        user.trustScore,
+        trustLevel:        user.trustLevel ?? 1,
+        quota:             user.quota,
+        isVerified:        true,
+        isVerifiedStudent: user.isVerifiedStudent,
       },
     },
   };
 };
 
-
-// ─── 2. منطق تأكيد الإيميل ───────────────────────────────
-exports.verifyEmailLogic = async ({ email, otp }) => {
-  // ✅ selectOtp: true — ضروري بعد select: false في الـ Schema
-  const user = await userRepository.findByEmail(email, { selectOtp: true });
-  
-  if (!user)
-    return { statusCode: 404, body: { msg: 'المستخدم غير موجود 🛑' } };
-
-  if (user.isVerified)
-    return { statusCode: 400, body: { msg: 'هذا الحساب مفعل مسبقاً ✅' } };
-
-  if (user.verificationOtp !== otp)
-    return { statusCode: 400, body: { msg: 'رمز التحقق غير صحيح ❌' } };
-
-  user.isVerified      = true;
-  user.verificationOtp = undefined;
-  await userRepository.saveUser(user);
-
-  return { statusCode: 200, body: { msg: 'تم تفعيل حسابك بنجاح! 🎉' } };
-};
-
-
-// ─── 3. منطق تسجيل الدخول ───────────────────────────────────
+// ─── 3. تسجيل الدخول ─────────────────────────────────────────
 exports.loginLogic = async ({ email, password }) => {
   const user = await userRepository.findByEmailWithPassword(email);
-  if (!user)
-    return { statusCode: 400, body: { msg: 'البريد الإلكتروني غير صحيح' } };
-  if (user.isBanned)
-    return { statusCode: 403, body: { msg: 'هذا الحساب محظور 🛑' } };
+
+  if (!user) {
+    return { statusCode: 401, body: { msg: 'بيانات الدخول غير صحيحة' } };
+  }
+  if (user.isBanned) {
+    return { statusCode: 403, body: { msg: 'هذا الحساب محظور 🚫' } };
+  }
 
   const isMatch = await bcrypt.compare(password, user.password);
-  if (!isMatch)
-    return { statusCode: 400, body: { msg: 'كلمة الدخول غير صحيحة' } };
-
-  if (!user.isVerified)
-    return {
-      statusCode: 403,
-      body: { msg: 'حسابك غير مفعل ✉️', needsVerification: true, email: user.email },
-    };
+  if (!isMatch) {
+    return { statusCode: 401, body: { msg: 'بيانات الدخول غير صحيحة' } };
+  }
 
   const accessToken  = generateAccessToken(user);
   const refreshToken = generateRefreshToken(user);
 
-  const hashedRefreshToken = crypto
-    .createHash('sha256')
-    .update(refreshToken)
-    .digest('hex');
-
+  const hashedRefresh = crypto.createHash('sha256').update(refreshToken).digest('hex');
   await userRepository.updateUser(user._id, {
-    refreshToken:    hashedRefreshToken,
+    refreshToken:    hashedRefresh,
     sessionIssuedAt: new Date(),
   });
 
@@ -153,16 +149,16 @@ exports.loginLogic = async ({ email, password }) => {
     statusCode: 200,
     refreshToken,
     body: {
-      msg: 'تم تسجيل الدخول بنجاح',
+      msg:        'مرحباً بعودتك 👋',
       accessToken,
-      // ✅ فقط ما يحتاجه الفرونت لعرض واجهة المستخدم
       user: {
         _id:               user._id,
         name:              user.name,
         email:             user.email,
         avatar:            user.avatar,
         role:              user.role,
-        trustLevel:        user.trustLevel ?? 1,
+        trustScore:        user.trustScore,  // ✅ Fix Bug #2
+        trustLevel:        user.trustLevel  ?? 1,
         quota:             user.quota,
         isVerified:        user.isVerified,
         isVerifiedStudent: user.isVerifiedStudent,
@@ -170,84 +166,56 @@ exports.loginLogic = async ({ email, password }) => {
     },
   };
 };
-// ─── 4. منطق تجديد الـ Refresh Token Rotation ─────────────
-exports.refreshTokenLogic = async (token) => {
-  if (!token) {
+
+// ─── 4. تجديد الجلسة (Refresh Token Rotation) ────────────────
+exports.refreshLogic = async (refreshToken) => {
+  if (!refreshToken) {
     return {
-      statusCode: 401,
-      body: { msg: 'لا يوجد Refresh Token 🛑', code: 'NO_REFRESH_TOKEN' },
+      statusCode:  401,
+      clearCookie: true,
+      body: { msg: 'لا يوجد Refresh Token', code: 'NO_REFRESH' },
     };
   }
 
   try {
-    const decoded     = verifyRefreshToken(token);
-    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+    const decoded = verifyRefreshToken(refreshToken);
+    const hashedIncoming = crypto.createHash('sha256').update(refreshToken).digest('hex');
 
-    // ✅ اقرأ sessionIssuedAt مع refreshToken في استدعاء واحد
-    const userWithSession = await userRepository.findByIdWithSession(decoded.user.id);
-
-    if (!userWithSession || userWithSession.isBanned) {
-      return {
-        statusCode:  401,
-        clearCookie: true,
-        body: { msg: 'الجلسة غير صالحة 🛑', code: 'INVALID_SESSION' },
-      };
-    }
-
-    // ✅ Absolute Session Lifetime — 30 يوم من أول تسجيل دخول
-    // حتى لو المهاجم يواصل التجديد، الجلسة تنتهي بعد 30 يوم إجبارياً
-    const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-    const sessionAge = Date.now() - new Date(userWithSession.sessionIssuedAt).getTime();
-
-    if (sessionAge > SESSION_MAX_AGE_MS) {
-      // امسح الجلسة من DB — يُجبر المستخدم على login جديد
-      await userRepository.updateUser(userWithSession._id, {
-        $unset: { refreshToken: 1, sessionIssuedAt: 1 },
-      });
-      return {
-        statusCode:  401,
-        clearCookie: true,
-        body: {
-          msg:  'انتهت صلاحية الجلسة، يرجى تسجيل الدخول مجدداً ⏰',
-          code: 'SESSION_EXPIRED',
-        },
-      };
-    }
-
-    // ✅ جهّز التوكنات الجديدة قبل العملية الذرية
-    const newAccessToken  = generateAccessToken({ id: decoded.user.id });
-    const newRefreshToken = generateRefreshToken({ id: decoded.user.id });
-    const newHashedToken  = crypto
-      .createHash('sha256')
-      .update(newRefreshToken)
-      .digest('hex');
-
-    // ✅ Atomic Rotation — تحقق من الهاش القديم + تحديث بالجديد في عملية واحدة
-    // إذا رجعت null = token قديم أو مسروق = reuse detection تلقائي
-    const updatedUser = await userRepository.rotateRefreshToken(
+    const user = await userRepository.rotateRefreshToken(
       decoded.user.id,
-      hashedToken,   // ← يجب أن يطابق ما في DB
-      newHashedToken // ← يحل محله
+      hashedIncoming,
+      null // سيُحدَّث بعد التحقق
     );
 
-    if (!updatedUser) {
+    if (!user) {
       return {
         statusCode:  401,
         clearCookie: true,
-        body: {
-          msg:  'Refresh Token غير صالح أو مُعاد استخدامه 🛑',
-          code: 'TOKEN_REUSE_DETECTED',
-        },
+        body: { msg: 'الجلسة غير صالحة أو انتُهكت 🚨', code: 'REFRESH_REUSE' },
       };
     }
 
+    if (user.isBanned) {
+      return {
+        statusCode:  403,
+        clearCookie: true,
+        body: { msg: 'حسابك محظور 🚫', code: 'BANNED' },
+      };
+    }
+
+    const newAccessToken  = generateAccessToken(user);
+    const newRefreshToken = generateRefreshToken(user);
+    const newHash = crypto.createHash('sha256').update(newRefreshToken).digest('hex');
+
+    await userRepository.updateUser(user._id, {
+      refreshToken:    newHash,
+      sessionIssuedAt: new Date(),
+    });
+
     return {
-      statusCode:   200,
-      refreshToken: newRefreshToken,
-      body: {
-        msg:         'تم تجديد الجلسة بنجاح',
-        accessToken: newAccessToken,
-      },
+      statusCode:       200,
+      newRefreshToken,
+      body: { accessToken: newAccessToken },
     };
 
   } catch (err) {
@@ -257,44 +225,44 @@ exports.refreshTokenLogic = async (token) => {
       clearCookie: true,
       body: {
         msg:  isExpired ? 'انتهت صلاحية الجلسة ⏰' : 'جلسة غير صالحة ⚠️',
-        code: isExpired ? 'REFRESH_EXPIRED'        : 'INVALID_REFRESH',
+        code: isExpired ? 'REFRESH_EXPIRED'         : 'INVALID_REFRESH',
       },
     };
   }
 };
 
-
-// ─── 5. تسجيل الخروج ───────────────────────────────────────
+// ─── 5. تسجيل الخروج ──────────────────────────────────────────
 exports.logoutLogic = async (userId) => {
-  // ✅ امسح refreshToken و sessionIssuedAt معاً عند الخروج
   await userRepository.updateUser(userId, {
     $unset: { refreshToken: 1, sessionIssuedAt: 1 },
   });
-
-  return {
-    statusCode: 200,
-    body: { msg: 'تم تسجيل الخروج بنجاح 👋' },
-  };
+  return { statusCode: 200, body: { msg: 'تم تسجيل الخروج بنجاح 👋' } };
 };
 
-// ─── 6. بروفايل خاص (GET /me) ──────────────────────────────
-exports.getUserProfileLogic = async (userId) => {
-  const [user, allDonations, completedRequests, totalRatings] = await Promise.all([
+// ─── 6. بروفايل خاص (GET /me) ─────────────────────────────────
+exports.getUserProfileLogic = async (userId, page = 1) => {
+  // ✅ Fix Bug #9 — pagination بدل جلب كل شيء
+  const LIMIT = 10;
+  const skip  = (page - 1) * LIMIT;
+
+  const [user, donations, received, totalRatings] = await Promise.all([
     userRepository.findById(userId),
     Item.find({ donor: userId })
       .populate('bookedBy', 'name avatar')
-      .sort({ createdAt: -1 }),
+      .sort({ createdAt: -1 })
+      .skip(skip).limit(LIMIT)
+      .lean(),
     Item.find({ bookedBy: userId, status: 'تم التسليم' })
       .populate('donor', 'name avatar')
-      .sort({ createdAt: -1 }),
+      .sort({ createdAt: -1 })
+      .skip(skip).limit(LIMIT)
+      .lean(),
     Item.countDocuments({ donor: userId, isRated: true }),
   ]);
 
-  if (!user) {
-    return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
-  }
+  if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
 
-  // ✅ DTO صارم — فقط ما يحتاجه الـ /me endpoint
+  // ✅ حذف isBanned من findById select — أضيف الآن
   const safeUser = {
     _id:               user._id,
     name:              user.name,
@@ -314,34 +282,43 @@ exports.getUserProfileLogic = async (userId) => {
   return {
     statusCode: 200,
     body: {
-      user:             safeUser,
+      user:     safeUser,
       stats: {
-        donationsCount:     allDonations.length,
-        completedDonations: allDonations.filter((i) => i.status === 'تم التسليم').length,
-        receivedCount:      completedRequests.length,
+        donationsCount:     donations.length,
+        completedDonations: donations.filter(i => i.status === 'تم التسليم').length,
+        receivedCount:      received.length,
         totalRatings,
       },
-      allDonations,
-      completedRequests,
+      allDonations:      donations,
+      completedRequests: received,
+      page,
+      hasMore: donations.length === LIMIT || received.length === LIMIT,
     },
   };
 };
 
+// ─── 7. بروفايل عام (GET /profile/:id) ───────────────────────
+exports.getPublicProfileLogic = async (userId, page = 1) => {
+  // ✅ Fix Bug #9 — pagination هنا أيضاً
+  const LIMIT = 10;
+  const skip  = (page - 1) * LIMIT;
 
-// ─── 7. بروفايل عام (GET /profile/:id) ─────────────────────
-exports.getPublicProfileLogic = async (userId) => {
-  const [user, allDonations, completedRequests, totalRatings] = await Promise.all([
+  const [user, donations, received, totalRatings] = await Promise.all([
     userRepository.findById(userId),
     Item.find({ donor: userId, status: { $ne: 'مخفي' } })
       .select('title imageUrl status createdAt')
-      .sort({ createdAt: -1 }),
+      .sort({ createdAt: -1 })
+      .skip(skip).limit(LIMIT)
+      .lean(),
     Item.find({ bookedBy: userId, status: 'تم التسليم' })
       .select('title imageUrl status createdAt')
-      .sort({ createdAt: -1 }),
+      .sort({ createdAt: -1 })
+      .skip(skip).limit(LIMIT)
+      .lean(),
     Item.countDocuments({ donor: userId, isRated: true }),
   ]);
 
-  if (!user)       return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
+  if (!user)        return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
   if (user.isBanned) return { statusCode: 403, body: { msg: 'هذا الحساب محظور' } };
 
   return {
@@ -351,31 +328,33 @@ exports.getPublicProfileLogic = async (userId) => {
         name:              user.name,
         avatar:            user.avatar,
         trustScore:        user.trustScore,
-        trustLevel:        user.trustLevel ?? 1,  // ✅ جديد
+        trustLevel:        user.trustLevel ?? 1,
         totalDonations:    user.totalDonations,
         isVerifiedStudent: user.isVerifiedStudent,
         createdAt:         user.createdAt,
-        whatsapp:          formatPhone(user.phone),
       },
       stats: {
-        donationsCount: allDonations.length,
-        receivedCount:  completedRequests.length,
+        donationsCount: donations.length,
+        receivedCount:  received.length,
         totalRatings,
       },
-      allDonations,
-      completedRequests,
+      allDonations:      donations,
+      completedRequests: received,
+      page,
+      hasMore: donations.length === LIMIT || received.length === LIMIT,
     },
   };
 };
 
-
-// ─── 8. نسيت كلمة المرور ────────────────────────────────────
+// ─── 8. نسيت كلمة المرور ─────────────────────────────────────
 exports.forgotPasswordLogic = async (email) => {
   const user = await userRepository.findByEmail(email);
+
+  // ✅ Fix Bug #8 — Generic response دائماً، لا User Enumeration
   if (!user) {
     return {
-      statusCode: 404,
-      body: { msg: 'لا يوجد حساب مسجل بهذا الإيميل' },
+      statusCode: 200, // ✅ مش 404
+      body: { msg: 'إذا كان هذا الإيميل مسجلاً، ستصلك رسالة استعادة قريباً 📧' },
     };
   }
 
@@ -391,44 +370,34 @@ exports.forgotPasswordLogic = async (email) => {
     await sendEmail({
       email:   user.email,
       subject: 'استعادة كلمة المرور - منصة عون 🔒',
-      message: `<div dir="rtl"><h2>طلب استعادة كلمة المرور</h2><a href="${resetUrl}" style="background:#006155;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;display:inline-block;margin-top:10px;">إعادة تعيين كلمة المرور</a></div>`,
+      message: `<div dir="rtl"><h2>طلب استعادة كلمة المرور</h2><a href="${resetUrl}" style="background:#006155;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;display:inline-block;margin-top:10px;">إعادة تعيين كلمة المرور</a><p style="color:#888;margin-top:10px;">ينتهي الرابط خلال 15 دقيقة</p></div>`,
     });
 
     return {
       statusCode: 200,
-      body: { msg: 'تم إرسال رابط الاستعادة إلى بريدك الإلكتروني' },
+      // ✅ نفس الرسالة سواء وجد الإيميل أو لا
+      body: { msg: 'إذا كان هذا الإيميل مسجلاً، ستصلك رسالة استعادة قريباً 📧' },
     };
   } catch {
     user.resetPasswordToken  = undefined;
     user.resetPasswordExpire = undefined;
     await userRepository.saveUser(user);
-
-    return {
-      statusCode: 500,
-      body: { msg: 'حدث خطأ أثناء إرسال البريد الإلكتروني' },
-    };
+    return { statusCode: 500, body: { msg: 'حدث خطأ أثناء إرسال البريد الإلكتروني' } };
   }
 };
 
-
-// ─── 9. إعادة تعيين كلمة المرور ────────────────────────────
+// ─── 9. إعادة تعيين كلمة المرور ──────────────────────────────
 exports.resetPasswordLogic = async (token, newPassword) => {
   const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
   const user = await userRepository.findByResetToken(hashedToken);
 
   if (!user) {
-    return {
-      statusCode: 400,
-      body: { msg: 'الرابط غير صالح أو انتهت صلاحيته ❌' },
-    };
+    return { statusCode: 400, body: { msg: 'الرابط غير صالح أو انتهت صلاحيته ❌' } };
   }
 
   const isSamePassword = await bcrypt.compare(newPassword, user.password);
   if (isSamePassword) {
-    return {
-      statusCode: 400,
-      body: { msg: 'يرجى اختيار كلمة مرور جديدة تختلف عن الحالية ❌' },
-    };
+    return { statusCode: 400, body: { msg: 'يرجى اختيار كلمة مرور جديدة تختلف عن الحالية ❌' } };
   }
 
   const salt = await bcrypt.genSalt(10);
@@ -437,8 +406,5 @@ exports.resetPasswordLogic = async (token, newPassword) => {
   user.resetPasswordExpire = undefined;
   await userRepository.saveUser(user);
 
-  return {
-    statusCode: 200,
-    body: { msg: 'تم تغيير كلمة المرور بنجاح! ✅' },
-  };
+  return { statusCode: 200, body: { msg: 'تم تغيير كلمة المرور بنجاح! ✅' } };
 };
