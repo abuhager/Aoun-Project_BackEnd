@@ -13,8 +13,7 @@ const cookieParser = require('cookie-parser');
 
 const authRoutes  = require('./routes/auth');
 const itemRoutes  = require('./routes/items');
-const startCronJobs = require('./utils/cronJobs');
-
+const { startCronJobs } = require('./utils/cronJobs');
 const app = express();
 
 // ✅ Fix Bug #13 — trust proxy لازم قبل أي middleware يعتمد على IP
