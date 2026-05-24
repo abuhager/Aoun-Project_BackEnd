@@ -1,92 +1,146 @@
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const helmet = require('helmet');
-const cookieParser = require('cookie-parser');
-const { globalLimiter } = require('./middlewares/rateLimiter');
-const initCronJobs = require('./utils/cronJobs');
+// server.js
+// ✅ Phase 1 Fix:
+//    Bug #13 — إضافة maxPoolSize + serverSelectionTimeoutMS لاتصال MongoDB
+//              إعداد trust proxy الصحيح لـ Render + Vercel deployment
+
 require('dotenv').config();
+const express     = require('express');
+const mongoose    = require('mongoose');
+const cors        = require('cors');
+const helmet      = require('helmet');
+const rateLimit   = require('express-rate-limit');
+const cookieParser = require('cookie-parser');
+
+const authRoutes  = require('./routes/auth');
+const itemRoutes  = require('./routes/items');
+const { startCronJobs } = require('./utils/cronJobs');
 
 const app = express();
 
-// ✅ مهم على Render / أي reverse proxy
+// ✅ Fix Bug #13 — trust proxy لازم قبل أي middleware يعتمد على IP
+// Render.com يضع load balancer أمام السيرفر
+// القيمة 1 = نثق بأول proxy في السلسلة فقط (الأأمن)
 app.set('trust proxy', 1);
 
-app.use(
-  helmet({
-    crossOriginResourcePolicy: false,
-  })
-);
+// ── Security Headers ───────────────────────────────────────────
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
 
+// ── CORS ──────────────────────────────────────────────────────
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    cb(new Error(`CORS: Origin غير مصرح به — ${origin}`));
+  },
+  credentials:     true,   // ✅ مطلوب لـ httpOnly cookies
+  methods:         ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders:  ['Content-Type', 'Authorization'],
+  exposedHeaders:  ['X-RateLimit-Limit', 'X-RateLimit-Remaining'],
+}));
+
+// ── Global Rate Limiter ────────────────────────────────────────
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 دقيقة
+  max:      process.env.NODE_ENV !== 'production' ? 10000 : 200,
+  message:  { msg: '🛑 طلبات كثيرة جداً، حاول بعد 15 دقيقة.' },
+  standardHeaders: true,
+  legacyHeaders:   false,
+  skip: () => process.env.NODE_ENV !== 'production',
+});
+app.use(globalLimiter);
+
+// ── Auth Rate Limiter (أشد صرامة) ────────────────────────────
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max:      process.env.NODE_ENV !== 'production' ? 1000 : 30,
+  message:  { msg: '🔐 محاولات تسجيل دخول كثيرة، انتظر 15 دقيقة.' },
+  standardHeaders: true,
+  legacyHeaders:   false,
+  skip: () => process.env.NODE_ENV !== 'production',
+});
+
+// ── Body Parsers ─────────────────────────────────────────────
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 app.use(cookieParser());
 
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
-  'https://aoun-project-front-end-dk76.vercel.app',
-  'https://aoun-project-front-end.vercel.app',
-];
+// ── Routes ────────────────────────────────────────────────────
+app.use('/api/auth',  authLimiter, authRoutes);
+app.use('/api/items', itemRoutes);
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      const isVercel =
-        origin &&
-        origin.includes('aoun-project') &&
-        origin.endsWith('.vercel.app');
-
-      if (!origin || allowedOrigins.includes(origin) || isVercel) {
-        callback(null, true);
-      } else {
-        console.log('🚫 CORS Blocked for origin:', origin);
-        callback(new Error('Not allowed by CORS'));
-      }
-    },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-    credentials: true,
+// ── Health Check ──────────────────────────────────────────────
+app.get('/health', (_req, res) =>
+  res.json({
+    status: 'ok',
+    uptime: process.uptime(),
+    // ✅ لا نكشف معلومات النظام الداخلية
+    timestamp: new Date().toISOString(),
   })
 );
 
-app.use(express.json({ limit: '10mb' }));
+// ── Global Error Handler ──────────────────────────────────────
+app.use((err, _req, res, _next) => {
+  // ✅ لا نكشف stack trace في production
+  const isDev = process.env.NODE_ENV !== 'production';
+  console.error('[Error]', err.message, isDev ? err.stack : '');
 
-// ✅ health قبل أي limiter
-app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: 'ok',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
-    db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+  if (err.name === 'ValidationError') {
+    return res.status(400).json({ msg: err.message });
+  }
+  if (err.name === 'CastError') {
+    return res.status(400).json({ msg: 'معرّف غير صحيح' });
+  }
+  if (err.message?.includes('CORS')) {
+    return res.status(403).json({ msg: err.message });
+  }
+
+  res.status(err.status || 500).json({
+    msg: isDev ? err.message : 'حدث خطأ داخلي في الخادم 🛠️',
   });
 });
 
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => {
-    console.log('✅ Connected to MongoDB');
-    initCronJobs();
-  })
-  .catch((err) => console.log('❌ DB Error:', err.message));
+// ── MongoDB Connection ────────────────────────────────────────
+const connectDB = async () => {
+  try {
+    await mongoose.connect(process.env.MONGO_URI, {
+      // ✅ Fix Bug #13 — خيارات الاتصال المُحسَّنة
+      maxPoolSize:              10,    // ✅ جديد — حد أقصى 10 اتصالات متوازية
+      serverSelectionTimeoutMS: 5000,  // ✅ جديد — 5 ثوانٍ للاتصال
+      socketTimeoutMS:          45000, // ✅ جديد — 45 ثانية timeout للعمليات
+      family:                   4,     // ✅ إجبار IPv4 (يتجنب مشاكل Render DNS)
+    });
+    console.log('✅ MongoDB متصل بنجاح');
+  } catch (err) {
+    console.error('❌ فشل الاتصال بـ MongoDB:', err.message);
+    process.exit(1);
+  }
+};
 
-app.get('/', (req, res) => res.send('Aoun Server is Live! 🚀'));
-
-// ✅ limiter فقط على items
-app.use('/api/items', globalLimiter, require('./routes/items'));
-
-// ✅ auth بدون globalLimiter — كل route له limiter الخاص
-app.use('/api/auth', require('./routes/auth'));
-
-app.use((err, req, res, next) => {
-  console.error('🔥 Global Error Handler:', err.stack);
-
-  const statusCode = err.status || err.statusCode || 500;
-
-  res.status(statusCode).json({
-    message: err.message || 'حدث خطأ داخلي في السيرفر',
+// ── Graceful Shutdown ─────────────────────────────────────────
+const gracefulShutdown = (signal) => {
+  console.log(`\n[${signal}] إيقاف تشغيل الخادم بشكل آمن...`);
+  mongoose.connection.close(false, () => {
+    console.log('✅ اتصال MongoDB مُغلَق');
+    process.exit(0);
   });
-});
+};
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
 
+// ── Start ─────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server is running on port: ${PORT}`);
+
+connectDB().then(() => {
+  app.listen(PORT, () => {
+    console.log(`🚀 الخادم يعمل على المنفذ ${PORT}`);
+    startCronJobs();
+  });
 });
+
+module.exports = app;
