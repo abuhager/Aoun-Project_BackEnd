@@ -46,7 +46,8 @@ const initCronJobs = () => {
             const candidate = await User.findOneAndUpdate(
               { _id: entry.user, quota: { $gt: 0 } },
               { $inc: { quota: -1 } },
-              { returnDocument: 'after' } // ✅
+              { new: true }
+ // ✅
             );
             if (candidate) {
               luckyUser = candidate;

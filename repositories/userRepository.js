@@ -42,7 +42,7 @@ exports.rotateRefreshToken = (userId, oldHash, _unused) =>
   User.findOneAndUpdate(
     { _id: userId, refreshToken: oldHash },
     { $set: { refreshToken: null } }, // يُصفَّر مؤقتاً — يُحدَّث في الـ service
-    { returnDocument: 'after' }
+    { new: true }
   ).select('_id name email role trustLevel isBanned quota trustScore');
 
 exports.findByIdWithSession = (id) =>

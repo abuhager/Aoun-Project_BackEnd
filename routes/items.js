@@ -5,8 +5,8 @@
 
 const express    = require('express');
 const router     = express.Router();
-const multer     = require('multer');
-const upload     = multer({ storage: multer.memoryStorage() });
+const upload = require('../middlewares/upload');
+
 const rateLimit  = require('express-rate-limit');
 
 const { requireAuth, requireLevel2 } = require('../middlewares/auth');

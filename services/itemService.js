@@ -10,6 +10,7 @@ const itemRepository = require('../repositories/itemRepository');
 const { generateOtp }              = require('../utils/otp');
 const { fireSendEmail }            = require('../utils/sendEmail');
 const { uploadToCloudinary }       = require('../utils/uploadToCloudinary');
+const Report = require('../models/Report');
 
 const VALID_REPORT_REASONS = [
   'لم يُسلّم الغرض',
@@ -306,26 +307,41 @@ exports.rateItemLogic = async (itemId, userId, rating) => {
 };
 
 // ─── 9. البلاغات ─────────────────────────────────────────────
-exports.reportUserLogic = async (reportedUserId, reporterId, reason) => {
-  if (!reason || !VALID_REPORT_REASONS.includes(reason))
+exports.reportUserLogic = async (reportedUserId, reporterId, reason, details, relatedItemId) => {
+  // التحقق من السبب
+  if (!reason || !VALID_REPORT_REASONS.includes(reason)) {
     throw new Error(`سبب البلاغ مطلوب. الأسباب: ${VALID_REPORT_REASONS.join(' | ')}`);
+  }
 
-  if (reporterId.toString() === reportedUserId.toString())
+  // لا يمكن التبليغ عن نفسك
+  if (reporterId.toString() === reportedUserId.toString()) {
     throw new Error('لا يمكنك التبليغ عن نفسك');
+  }
 
-  const user = await User.findById(reportedUserId);
-  if (!user) throw new Error('المستخدم غير موجود');
+  // تحقق من وجود المستخدم المُبلَّغ عنه
+  const targetUser = await User.findById(reportedUserId).select('_id');
+  if (!targetUser) throw new Error('المستخدم غير موجود');
 
-  if (user.reportedBy?.some(id => id.toString() === reporterId.toString()))
-    throw new Error('لقد قمت بالتبليغ عن هذا المستخدم مسبقاً 🚫');
+  // ✅ منع التبليغ المزدوج — يعتمد على الـ unique index في Report.js
+  const existing = await Report.findOne({
+    reporter:     reporterId,
+    reportedUser: reportedUserId,
+  });
+  if (existing) throw new Error('لقد قمت بالتبليغ عن هذا المستخدم مسبقاً 🚫');
 
-  user.reportedBy.push(reporterId);
-  if (user.reportedBy.length >= 6) user.isBanned = true;
+  // ✅ إنشاء Report document كامل — status: 'pending' افتراضياً
+  // ❌ لا ban تلقائي — Admin يقرر بعد المراجعة
+  await Report.create({
+    reporter:     reporterId,
+    reportedUser: reportedUserId,
+    relatedItem:  relatedItemId || undefined,
+    reason,
+    details:      details || undefined,
+    // status: 'pending' ← افتراضي من الـ Schema
+  });
 
-  await user.save();
   return { msg: 'تم إرسال البلاغ بنجاح. سيتم مراجعته من الإدارة 🛡️' };
 };
-
 // ─── 10. تعديل غرض ───────────────────────────────────────────
 exports.updateItemLogic = async (itemId, userId, updateData, file) => {
   const item = await itemRepository.findItemForUpdate(itemId, userId);
