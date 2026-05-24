@@ -101,4 +101,4 @@ const initCronJobs = () => {
 
 };
 
-module.exports = initCronJobs;
+module.exports = { startCronJobs: initCronJobs };
