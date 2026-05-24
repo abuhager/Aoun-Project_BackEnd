@@ -22,14 +22,17 @@ const VALID_REPORT_REASONS = [
 
 // ─── 1. جلب الأغراض (مع pagination) ─────────────────────────
 exports.getItemsLogic = async (query) => {
-  const page     = Math.max(1, parseInt(query.page)  || 1);
-  const limit    = Math.min(20, parseInt(query.limit) || 10);
-  const skip     = (page - 1) * limit;
-  const filter   = { status: { $ne: 'مخفي' } };
+  const page = Math.max(1, parseInt(query.page) || 1);
+  const limit = Math.min(20, parseInt(query.limit) || 10);
+  const skip = (page - 1) * limit;
+
+  const filter = {
+        status: { $in: ['متاح', 'محجوز'] },
+  };
 
   if (query.category) filter.category = query.category;
   if (query.location) filter.location = new RegExp(query.location, 'i');
-  if (query.search)   filter.title    = new RegExp(query.search,   'i');
+  if (query.search) filter.title = new RegExp(query.search, 'i');
 
   const [items, total] = await Promise.all([
     Item.find(filter)
@@ -41,7 +44,12 @@ exports.getItemsLogic = async (query) => {
     Item.countDocuments(filter),
   ]);
 
-  return { items, total, page, pages: Math.ceil(total / limit) };
+  return {
+    items,
+    total,
+    page,
+    pages: Math.ceil(total / limit),
+  };
 };
 
 // ─── 2. أغراضي ───────────────────────────────────────────────
