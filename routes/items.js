@@ -10,7 +10,7 @@ const upload     = multer({ storage: multer.memoryStorage() });
 const rateLimit  = require('express-rate-limit');
 
 const { requireAuth, requireLevel2 } = require('../middlewares/auth');
-const { validateObjectId }           = require('../middlewares/validateObjectId');
+const validateObjectId = require('../middlewares/validateObjectId');
 const {
   getItems,
   getMyItems,
