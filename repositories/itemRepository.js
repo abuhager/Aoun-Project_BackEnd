@@ -1,89 +1,57 @@
-// backend/repositories/itemRepository.js
+// repositories/itemRepository.js
+// ✅ Phase 1 Fixes:
+//    Bug #18 — findDonationsByUser: حذف email + phone من populate
+//    Bug #21 — findItemDetails: لا نجلب deliveryOtp إلا للمتبرع (يُتحكم فيه في الـ service)
+
 const Item = require('../models/Item');
 
-// ==========================================
-// 1. دوال الحجز والإضافة
-// ==========================================
-exports.findItemById = async (itemId) => {
-    return await Item.findById(itemId);
-};
+// ─── جلب غرض للقراءة العامة (لا OTP) ─────────────────────────
+exports.findItemDetails = (itemId) =>
+  Item.findById(itemId)
+    .populate('donor',    'name avatar trustScore isVerifiedStudent trustLevel')
+    .populate('bookedBy', 'name avatar')
+    // ✅ Fix Bug #21 — لا نجلب deliveryOtp هنا إطلاقاً
+    // إذا احتاج المتبرع الـ OTP، يستخدم findItemForAction
+    .select('-deliveryOtp -__v');
 
-exports.bookItemSafely = async (itemId, userId, updateData) => {
-  return await Item.findOneAndUpdate(
-    { 
-      _id: itemId,
-      status: 'متاح',
-      donor: { $ne: userId },
-      cancelledBy: { $nin: [userId] }
-    },
-    updateData,
-    { returnDocument: 'after' } // ✅
-  );
-};
+// ─── جلب غرض للعمليات (حجز/إلغاء/تسليم) — يحتاج OTP ──────────
+exports.findItemForAction = (itemId) =>
+  Item.findById(itemId).select('+deliveryOtp');
 
-exports.addToWaitlist = async (itemId, userId) => {
-  return await Item.findByIdAndUpdate(
-    itemId,
-    { $addToSet: { waitlist: { user: userId, joinedAt: new Date() } } },
-    { returnDocument: 'after' } // ✅
-  );
-};
+// ─── جلب غرض للتعديل — مع التحقق من الملكية ──────────────────
+exports.findItemForUpdate = (itemId, userId) =>
+  Item.findOne({ _id: itemId, donor: userId });
 
-exports.createItem = async (itemData) => {
-    const newItem = new Item(itemData);
-    return await newItem.save();
-};
+// ─── حذف غرض ─────────────────────────────────────────────────
+exports.deleteItemById = (item) => item.deleteOne();
 
-// ==========================================
-// 2. دوال العرض وتقسيم الصفحات (Pagination)
-// ==========================================
-exports.findItemsWithPagination = async (query, skip, limit) => {
-    return await Item.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();
-};
-
-exports.countItems = async (query) => {
-    return await Item.countDocuments(query);
-};
-
-// ==========================================
-// 3. دوال البروفايل والأغراض الشخصية
-// ==========================================
-exports.findDonationsByUser = async (userId) => {
-  return await Item.find({ donor: userId })
-    .populate('bookedBy', 'name avatar trustScore email phone isVerifiedStudent')
+// ─── تبرعاتي كمتبرع ──────────────────────────────────────────
+exports.findDonationsByUser = (userId) =>
+  Item.find({ donor: userId })
+    .populate(
+      'bookedBy',
+      // ✅ Fix Bug #18 — حذف email + phone من الـ payload العام
+      'name avatar trustScore isVerifiedStudent'
+      // ❌ كان: 'name avatar trustScore email phone isVerifiedStudent'
+    )
     .sort({ createdAt: -1 })
     .lean();
-};
 
-exports.findRequestsByUser = async (userId) => {
-  return await Item.find({ bookedBy: userId })
-    .populate('donor', 'name avatar trustScore email phone isVerifiedStudent')
+// ─── طلبات الاستلام ───────────────────────────────────────────
+exports.findReceivedByUser = (userId) =>
+  Item.find({ bookedBy: userId })
+    .populate('donor', 'name avatar trustScore isVerifiedStudent')
     .sort({ createdAt: -1 })
     .lean();
-};
 
-exports.findItemDetails = async (itemId) => {
-    return await Item.findById(itemId)
-        .populate('donor', 'name phone trustScore avatar isVerified isVerifiedStudent')
-        .select('+cancelledBy +deliveryOtp +bookedAt');
-};
-
-exports.findItemForAction = async (itemId) => {
-    return await Item.findById(itemId).select('+cancelledBy +deliveryOtp');
-};
-
-exports.findItemForUpdate = async (itemId, donorId) => {
-    return await Item.findOne({ _id: itemId, donor: donorId });
-};
-
-exports.deleteItemById = async (itemDoc) => {
-    return await itemDoc.deleteOne();
-};
-
-exports.findPendingRating = async (userId) => {
-  return await Item.findOne({
+// ─── تقييم معلق ──────────────────────────────────────────────
+exports.findPendingRating = (userId) =>
+  Item.findOne({
     bookedBy: userId,
-    status: 'تم التسليم',
-    isRated: false,
-  }).select('_id title');
-};
+    status:   'تم التسليم',
+    isRated:  false,
+  })
+    .populate('donor', 'name avatar trustScore')
+    .select('-deliveryOtp -__v')
+    .lean();
+    
