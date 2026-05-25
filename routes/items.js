@@ -64,6 +64,7 @@ router.put(
 router.put(
   '/cancel/:id',
   requireAuth,
+  requireLevel2,
   bookingLimiter,          // ✅ جديد
   validateObjectId('id'),
   cancelBooking
