@@ -30,10 +30,10 @@ const ItemSchema = new mongoose.Schema(
     imageUrl:     { type: String },
     cloudinaryId: { type: String },
     condition: {
-      type:    String,
-      enum:    ['ممتازة', 'جيدة', 'مقبولة'],
-      default: 'جيدة',
-    },
+  type: String,
+  enum: ['جديد', 'مستعمل ممتاز', 'مستعمل جيد'], 
+  required: true,
+},
    safeHub: {
   type:     mongoose.Schema.Types.ObjectId,
   ref:      'SafeHub',
