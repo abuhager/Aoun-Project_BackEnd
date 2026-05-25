@@ -1,7 +1,7 @@
 const express    = require('express');
 const router     = express.Router();
 const hubCtrl    = require('../controllers/hubController');
-const { requireAuth, requireAdmin } = require('../middlewares/authMiddleware');
+const { requireAuth, requireAdmin } = require('../middleware/authMiddleware');
 
 router.get('/',         hubCtrl.getHubs);                             
 router.post('/',        requireAuth, requireAdmin, hubCtrl.createHub);
