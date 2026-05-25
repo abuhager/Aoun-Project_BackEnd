@@ -30,12 +30,16 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
     return { statusCode: 400, body: { msg: 'هذا الإيميل مسجل مسبقاً' } };
   }
 
-  const salt     = await bcrypt.genSalt(10);
-  const hashed   = await bcrypt.hash(password, salt);
-  const newOtp   = generateOtp();
+  const salt   = await bcrypt.genSalt(10);
+  const hashed = await bcrypt.hash(password, salt);
+  const newOtp = generateOtp();
 
-  // ✅ Fix Bug #3 — OTP ينتهي بعد 10 دقائق
   const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+
+  // ✅ اكتشاف الإيميل الجامعي تلقائياً
+  const isVerifiedStudent =
+    email.endsWith('@std-zuj.edu.jo') ||
+    email.endsWith('@zuj.edu.jo');
 
   const user = await userRepository.createUser({
     name,
@@ -43,21 +47,31 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
     password:              hashed,
     phone:                 phone || undefined,
     verificationOtp:       newOtp,
-    verificationOtpExpiry: otpExpiry, // ✅ جديد
+    verificationOtpExpiry: otpExpiry,
+    isVerifiedStudent,     // ✅ إضافة
   });
 
   fireSendEmail({
     email,
     subject: 'تحقق من إيميلك - منصة عون 📬',
-    message: `<div dir="rtl"><h2>مرحباً ${name}!</h2><p>رمز التحقق الخاص بك:</p><h1 style="letter-spacing:8px;color:#006155;">${newOtp}</h1><p style="color:#888;">ينتهي خلال 10 دقائق</p></div>`,
+    message: `<div dir="rtl">
+      <h2>مرحباً ${name}!</h2>
+      <p>رمز التحقق الخاص بك:</p>
+      <h1 style="letter-spacing:8px;color:#006155;">${newOtp}</h1>
+      <p style="color:#888;">ينتهي خلال 10 دقائق</p>
+      ${isVerifiedStudent ? '<p style="color:#006155;">✅ تم التحقق من انتمائك الجامعي تلقائياً</p>' : ''}
+    </div>`,
   });
 
   return {
     statusCode: 201,
-    body: { msg: 'تم إنشاء الحساب! تحقق من إيميلك 📬', email },
+    body: {
+      msg:              'تم إنشاء الحساب! تحقق من إيميلك 📬',
+      email,
+      isVerifiedStudent, // ✅ أرجعه للـ Frontend
+    },
   };
 };
-
 // ─── 2. تحقق الإيميل (OTP) ───────────────────────────────────
 exports.verifyEmailLogic = async ({ email, otp }) => {
   // selectOtp: true ← يجلب verificationOtp + verificationOtpExpiry
@@ -123,6 +137,7 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
 };
 
 // ─── 3. تسجيل الدخول ─────────────────────────────────────────
+// services/authService.js — loginLogic فقط (الجزء المعدّل)
 exports.loginLogic = async ({ email, password }) => {
   const user = await userRepository.findByEmailWithPassword(email);
 
@@ -131,6 +146,13 @@ exports.loginLogic = async ({ email, password }) => {
   }
   if (user.isBanned) {
     return { statusCode: 403, body: { msg: 'هذا الحساب محظور 🚫' } };
+  }
+  // ✅ إضافة — تحقق من تفعيل الإيميل
+  if (!user.isVerified) {
+    return {
+      statusCode: 403,
+      body: { msg: 'يرجى تأكيد إيميلك أولاً 📧', code: 'NOT_VERIFIED', email: user.email },
+    };
   }
 
   const isMatch = await bcrypt.compare(password, user.password);
@@ -159,8 +181,8 @@ exports.loginLogic = async ({ email, password }) => {
         email:             user.email,
         avatar:            user.avatar,
         role:              user.role,
-        trustScore:        user.trustScore,  // ✅ Fix Bug #2
-        trustLevel:        user.trustLevel  ?? 1,
+        trustScore:        user.trustScore,
+        trustLevel:        user.trustLevel ?? 1,
         quota:             user.quota,
         isVerified:        user.isVerified,
         isVerifiedStudent: user.isVerifiedStudent,
@@ -168,7 +190,6 @@ exports.loginLogic = async ({ email, password }) => {
     },
   };
 };
-
 // ─── 4. تجديد الجلسة (Refresh Token Rotation) ────────────────
 // services/authService.js — refreshLogic
 
