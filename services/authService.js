@@ -6,22 +6,31 @@
 //    Bug #9  — getUserProfileLogic + getPublicProfileLogic: pagination
 //    Bug جديد — verifyEmailLogic: يُرجع accessToken بعد التحقق
 //    Bug #13 — refreshLogic: يستخدم tokenUtils (لا تغيير هنا)
+// ✅ Phase 2 Fixes:
+//    إيميل جامعي → isVerifiedStudent + trustLevel: 2 تلقائياً
 
-const bcrypt       = require('bcryptjs');
-const crypto       = require('crypto');
-const User         = require('../models/User');
-const Item         = require('../models/Item');
-const { generateOtp }         = require('../utils/otp');
+const bcrypt         = require('bcryptjs');
+const crypto         = require('crypto');
+const User           = require('../models/User');
+const Item           = require('../models/Item');
+const { generateOtp }              = require('../utils/otp');
 const { sendEmail, fireSendEmail } = require('../utils/sendEmail');
-const userRepository = require('../repositories/userRepository');
+const userRepository               = require('../repositories/userRepository');
 const {
   generateAccessToken,
   generateRefreshToken,
   verifyRefreshToken,
   REFRESH_COOKIE_OPTIONS,
 } = require('../utils/tokenUtils');
+
 const hashToken = (token) =>
   crypto.createHash('sha256').update(token).digest('hex');
+
+// ✅ helper — اكتشاف الإيميل الجامعي
+const isUniversityEmail = (email) =>
+  email.endsWith('@std-zuj.edu.jo') ||
+  email.endsWith('@zuj.edu.jo');
+
 
 // ─── 1. التسجيل ──────────────────────────────────────────────
 exports.registerLogic = async ({ name, email, password, phone }) => {
@@ -36,10 +45,8 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
 
   const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
 
-  // ✅ اكتشاف الإيميل الجامعي تلقائياً
-  const isVerifiedStudent =
-    email.endsWith('@std-zuj.edu.jo') ||
-    email.endsWith('@zuj.edu.jo');
+  // ✅ إيميل جامعي → trustLevel 2 تلقائياً
+  const isStudent = isUniversityEmail(email);
 
   const user = await userRepository.createUser({
     name,
@@ -48,7 +55,8 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
     phone:                 phone || undefined,
     verificationOtp:       newOtp,
     verificationOtpExpiry: otpExpiry,
-    isVerifiedStudent,     // ✅ إضافة
+    isVerifiedStudent:     isStudent,
+    trustLevel:            isStudent ? 2 : 1, // ✅
   });
 
   fireSendEmail({
@@ -59,7 +67,7 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
       <p>رمز التحقق الخاص بك:</p>
       <h1 style="letter-spacing:8px;color:#006155;">${newOtp}</h1>
       <p style="color:#888;">ينتهي خلال 10 دقائق</p>
-      ${isVerifiedStudent ? '<p style="color:#006155;">✅ تم التحقق من انتمائك الجامعي تلقائياً</p>' : ''}
+      ${isStudent ? '<p style="color:#006155;">✅ تم التحقق من انتمائك الجامعي تلقائياً</p>' : ''}
     </div>`,
   });
 
@@ -68,13 +76,14 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
     body: {
       msg:              'تم إنشاء الحساب! تحقق من إيميلك 📬',
       email,
-      isVerifiedStudent, // ✅ أرجعه للـ Frontend
+      isVerifiedStudent: isStudent,
     },
   };
 };
+
+
 // ─── 2. تحقق الإيميل (OTP) ───────────────────────────────────
 exports.verifyEmailLogic = async ({ email, otp }) => {
-  // selectOtp: true ← يجلب verificationOtp + verificationOtpExpiry
   const user = await userRepository.findByEmail(email, { selectOtp: true });
 
   if (!user) {
@@ -83,42 +92,43 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
   if (user.isVerified) {
     return { statusCode: 400, body: { msg: 'الإيميل محقق مسبقاً ✅' } };
   }
-
-  // ✅ Fix Bug #3 — فحص انتهاء الصلاحية أولاً
   if (!user.verificationOtpExpiry || Date.now() > user.verificationOtpExpiry.getTime()) {
     return {
       statusCode: 400,
       body: { msg: 'انتهت صلاحية رمز التحقق ⏰ — اطلب رمزاً جديداً' },
     };
   }
-
   if (user.verificationOtp !== otp) {
     return { statusCode: 400, body: { msg: 'رمز التحقق غير صحيح ❌' } };
   }
 
-  // ✅ تنظيف OTP وتفعيل الحساب
+  // ✅ تفعيل الحساب
   user.isVerified            = true;
   user.verificationOtp       = undefined;
   user.verificationOtpExpiry = undefined;
+
+  // ✅ إيميل جامعي → trustLevel 2 عند التحقق
+  if (isUniversityEmail(user.email)) {
+    user.isVerifiedStudent = true;
+    if (!user.trustLevel || user.trustLevel < 2) user.trustLevel = 2;
+  }
+
   await userRepository.saveUser(user);
 
-  // ✅ Fix Bug الجديد — أنشئ AccessToken بعد التحقق مباشرة
-  const accessToken  = generateAccessToken(user);
-  const refreshToken = generateRefreshToken(user);
+  const accessToken   = generateAccessToken(user);
+  const refreshToken  = generateRefreshToken(user);
+  const hashedRefresh = hashToken(refreshToken);
 
-  // احفظ refreshToken hash في DB
-  const crypto_mod = require('crypto');
-  const hashedRefresh = crypto_mod.createHash('sha256').update(refreshToken).digest('hex');
   await userRepository.updateUser(user._id, {
     refreshToken:    hashedRefresh,
     sessionIssuedAt: new Date(),
   });
 
   return {
-    statusCode:    200,
+    statusCode: 200,
     refreshToken,
     body: {
-      msg:         'تم التحقق من إيميلك بنجاح ✅',
+      msg:        'تم التحقق من إيميلك بنجاح ✅',
       accessToken,
       user: {
         _id:               user._id,
@@ -136,8 +146,8 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
   };
 };
 
+
 // ─── 3. تسجيل الدخول ─────────────────────────────────────────
-// services/authService.js — loginLogic فقط (الجزء المعدّل)
 exports.loginLogic = async ({ email, password }) => {
   const user = await userRepository.findByEmailWithPassword(email);
 
@@ -147,7 +157,6 @@ exports.loginLogic = async ({ email, password }) => {
   if (user.isBanned) {
     return { statusCode: 403, body: { msg: 'هذا الحساب محظور 🚫' } };
   }
-  // ✅ إضافة — تحقق من تفعيل الإيميل
   if (!user.isVerified) {
     return {
       statusCode: 403,
@@ -160,10 +169,20 @@ exports.loginLogic = async ({ email, password }) => {
     return { statusCode: 401, body: { msg: 'بيانات الدخول غير صحيحة' } };
   }
 
+  // ✅ تحديث trustLevel عند الدخول إذا لم يكن صحيحاً
+  if (isUniversityEmail(email) && (!user.trustLevel || user.trustLevel < 2)) {
+    await userRepository.updateUser(user._id, {
+      isVerifiedStudent: true,
+      trustLevel:        2,
+    });
+    user.isVerifiedStudent = true;
+    user.trustLevel        = 2;
+  }
+
   const accessToken  = generateAccessToken(user);
   const refreshToken = generateRefreshToken(user);
 
-  const hashedRefresh = crypto.createHash('sha256').update(refreshToken).digest('hex');
+  const hashedRefresh = hashToken(refreshToken);
   await userRepository.updateUser(user._id, {
     refreshToken:    hashedRefresh,
     sessionIssuedAt: new Date(),
@@ -190,9 +209,9 @@ exports.loginLogic = async ({ email, password }) => {
     },
   };
 };
-// ─── 4. تجديد الجلسة (Refresh Token Rotation) ────────────────
-// services/authService.js — refreshLogic
 
+
+// ─── 4. تجديد الجلسة (Refresh Token Rotation) ────────────────
 exports.refreshLogic = async (refreshToken) => {
   if (!refreshToken) {
     return {
@@ -204,9 +223,8 @@ exports.refreshLogic = async (refreshToken) => {
 
   try {
     const decoded        = verifyRefreshToken(refreshToken);
-    const hashedIncoming = hashToken(refreshToken); // ← helper جديد (أضفه أول الملف)
+    const hashedIncoming = hashToken(refreshToken);
 
-    // Step 1: اجلب المستخدم للتحقق من بياناته (role, isBanned, إلخ)
     const user = await userRepository.findByIdWithSession(decoded.user.id);
 
     if (!user || user.refreshToken !== hashedIncoming) {
@@ -216,7 +234,6 @@ exports.refreshLogic = async (refreshToken) => {
         body: { msg: 'الجلسة غير صالحة أو انتُهكت 🚨', code: 'REFRESH_REUSE' },
       };
     }
-
     if (user.isBanned) {
       return {
         statusCode:  403,
@@ -225,15 +242,10 @@ exports.refreshLogic = async (refreshToken) => {
       };
     }
 
-    // Step 2: ولّد الـ tokens الجديدة بناءً على بيانات DB الحقيقية
     const newAccessToken  = generateAccessToken(user);
     const newRefreshToken = generateRefreshToken(user);
     const newHash         = hashToken(newRefreshToken);
 
-    // Step 3: ✅ ATOMIC — شرط المطابقة + الكتابة في findOneAndUpdate واحد
-    // إذا جاء طلبان متزامنان بنفس hashedIncoming:
-    //   الأول  → يجد المطابقة → يكتب newHash → ينجح ✅
-    //   الثاني → لا يجد المطابقة (تغيّر) → يُعيد null → REFRESH_REUSE ✅
     const rotated = await User.findOneAndUpdate(
       { _id: user._id, refreshToken: hashedIncoming },
       { $set: { refreshToken: newHash, sessionIssuedAt: new Date() } },
@@ -267,7 +279,8 @@ exports.refreshLogic = async (refreshToken) => {
   }
 };
 
-// ─── 5. تسجيل الخروج ──────────────────────────────────────────
+
+// ─── 5. تسجيل الخروج ─────────────────────────────────────────
 exports.logoutLogic = async (userId) => {
   await userRepository.updateUser(userId, {
     $unset: { refreshToken: 1, sessionIssuedAt: 1 },
@@ -275,9 +288,9 @@ exports.logoutLogic = async (userId) => {
   return { statusCode: 200, body: { msg: 'تم تسجيل الخروج بنجاح 👋' } };
 };
 
-// ─── 6. بروفايل خاص (GET /me) ─────────────────────────────────
+
+// ─── 6. بروفايل خاص (GET /me) ────────────────────────────────
 exports.getUserProfileLogic = async (userId, page = 1) => {
-  // ✅ Fix Bug #9 — pagination بدل جلب كل شيء
   const LIMIT = 10;
   const skip  = (page - 1) * LIMIT;
 
@@ -298,7 +311,6 @@ exports.getUserProfileLogic = async (userId, page = 1) => {
 
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
 
-  // ✅ حذف isBanned من findById select — أضيف الآن
   const safeUser = {
     _id:               user._id,
     name:              user.name,
@@ -318,7 +330,7 @@ exports.getUserProfileLogic = async (userId, page = 1) => {
   return {
     statusCode: 200,
     body: {
-      user:     safeUser,
+      user: safeUser,
       stats: {
         donationsCount:     donations.length,
         completedDonations: donations.filter(i => i.status === 'تم التسليم').length,
@@ -333,9 +345,9 @@ exports.getUserProfileLogic = async (userId, page = 1) => {
   };
 };
 
+
 // ─── 7. بروفايل عام (GET /profile/:id) ───────────────────────
 exports.getPublicProfileLogic = async (userId, page = 1) => {
-  // ✅ Fix Bug #9 — pagination هنا أيضاً
   const LIMIT = 10;
   const skip  = (page - 1) * LIMIT;
 
@@ -354,7 +366,7 @@ exports.getPublicProfileLogic = async (userId, page = 1) => {
     Item.countDocuments({ donor: userId, isRated: true }),
   ]);
 
-  if (!user)        return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
+  if (!user)         return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
   if (user.isBanned) return { statusCode: 403, body: { msg: 'هذا الحساب محظور' } };
 
   return {
@@ -382,20 +394,20 @@ exports.getPublicProfileLogic = async (userId, page = 1) => {
   };
 };
 
+
 // ─── 8. نسيت كلمة المرور ─────────────────────────────────────
 exports.forgotPasswordLogic = async (email) => {
   const user = await userRepository.findByEmail(email);
 
-  // ✅ Fix Bug #8 — Generic response دائماً، لا User Enumeration
   if (!user) {
     return {
-      statusCode: 200, // ✅ مش 404
+      statusCode: 200,
       body: { msg: 'إذا كان هذا الإيميل مسجلاً، ستصلك رسالة استعادة قريباً 📧' },
     };
   }
 
   const resetToken = crypto.randomBytes(20).toString('hex');
-  user.resetPasswordToken  = crypto.createHash('sha256').update(resetToken).digest('hex');
+  user.resetPasswordToken  = hashToken(resetToken);
   user.resetPasswordExpire = Date.now() + 15 * 60 * 1000;
   await userRepository.saveUser(user);
 
@@ -406,12 +418,17 @@ exports.forgotPasswordLogic = async (email) => {
     await sendEmail({
       email:   user.email,
       subject: 'استعادة كلمة المرور - منصة عون 🔒',
-      message: `<div dir="rtl"><h2>طلب استعادة كلمة المرور</h2><a href="${resetUrl}" style="background:#006155;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;display:inline-block;margin-top:10px;">إعادة تعيين كلمة المرور</a><p style="color:#888;margin-top:10px;">ينتهي الرابط خلال 15 دقيقة</p></div>`,
+      message: `<div dir="rtl">
+        <h2>طلب استعادة كلمة المرور</h2>
+        <a href="${resetUrl}" style="background:#006155;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;display:inline-block;margin-top:10px;">
+          إعادة تعيين كلمة المرور
+        </a>
+        <p style="color:#888;margin-top:10px;">ينتهي الرابط خلال 15 دقيقة</p>
+      </div>`,
     });
 
     return {
       statusCode: 200,
-      // ✅ نفس الرسالة سواء وجد الإيميل أو لا
       body: { msg: 'إذا كان هذا الإيميل مسجلاً، ستصلك رسالة استعادة قريباً 📧' },
     };
   } catch {
@@ -422,10 +439,11 @@ exports.forgotPasswordLogic = async (email) => {
   }
 };
 
+
 // ─── 9. إعادة تعيين كلمة المرور ──────────────────────────────
 exports.resetPasswordLogic = async (token, newPassword) => {
-  const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
-  const user = await userRepository.findByResetToken(hashedToken);
+  const hashedToken = hashToken(token);
+  const user        = await userRepository.findByResetToken(hashedToken);
 
   if (!user) {
     return { statusCode: 400, body: { msg: 'الرابط غير صالح أو انتهت صلاحيته ❌' } };
