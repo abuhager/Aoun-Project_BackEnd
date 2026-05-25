@@ -170,9 +170,10 @@ exports.cancelBookingLogic = async (itemId, userId) => {
   const item = await itemRepository.findItemForAction(itemId);
   if (!item) throw new Error('الغرض غير موجود');
 
-  const isBooker = item.bookedBy && item.bookedBy.toString() === userId;
-  const isDonor  = item.donor.toString() === userId;
-  const inWait   = item.waitlist?.some(w => w.user.toString() === userId);
+  const isBooker   = item.bookedBy && item.bookedBy.toString() === userId;
+  const isDonor    = item.donor.toString() === userId;
+  const inWait     = item.waitlist?.some(w => w.user.toString() === userId);
+  const topWaiting = item.waitlist?.slice(0, 3) ?? []; // ✅ F6 Fix
 
   if (!isBooker && !isDonor && !inWait) throw new Error('غير مصرح لك');
 
@@ -191,7 +192,7 @@ exports.cancelBookingLogic = async (itemId, userId) => {
     let nextValidUser = null;
     const usersToRemove = [];
 
-    for (const waiting of item.waitlist) {
+    for (const waiting of topWaiting) {
       nextValidUser = await User.findOneAndUpdate(
         { _id: waiting.user, quota: { $gt: 0 } },
         { $inc: { quota: -1 } },
@@ -247,7 +248,6 @@ exports.cancelBookingLogic = async (itemId, userId) => {
 
   return { msg: 'تم إلغاء الحجز والقطعة متاحة الآن ✅' };
 };
-
 // ─── 7. إتمام التسليم ─────────────────────────────────────────
 exports.completeDeliveryLogic = async (itemId, userId, otp) => {
   const item = await itemRepository.findItemForAction(itemId);
@@ -297,14 +297,16 @@ exports.rateItemLogic = async (itemId, userId, rating) => {
   const points = RATING_POINTS[rating];
   if (points === undefined) throw new Error('التقييم يجب أن يكون بين 1 و5');
 
-  const donor = await User.findByIdAndUpdate(
-    item.donor,
-    { $inc: { trustScore: points } },
-    { new: true }
-  );
-
-  if (donor.trustScore > 100)
-    await User.findByIdAndUpdate(item.donor, { $set: { trustScore: 100 } });
+  await User.findByIdAndUpdate(
+  item.donor,
+  [{
+    $set: {
+      trustScore: {
+        $min: [{ $add: ['$trustScore', points] }, 100]
+      }
+    }
+  }]
+);
 
   await Item.findByIdAndUpdate(itemId, { $set: { isRated: true, rating } });
 
