@@ -28,7 +28,7 @@ const userSchema = new mongoose.Schema(
 
     // ─── تحقق الهاتف (Phase 2 — WhatsApp OTP) ───────────────
     // phoneOtp + phoneOtpExpiry: select: false — لا يُرسَلان أبداً في الـ Response
-    phone:             { type: String,  default: null },
+    phone: {type:   String,sparse: true,unique: true,},
     phoneVerified:     { type: Boolean, default: false },
     phoneOtp:          { type: String,  select: false },     // ✅ جديد
     phoneOtpExpiry:    { type: Date,    select: false },     // ✅ جديد

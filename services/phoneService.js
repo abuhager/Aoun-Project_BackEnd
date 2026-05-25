@@ -20,17 +20,28 @@ function generateOtp() {
 // يُعيد: { otp, phone } — الـ otp يُمرَّر لـ whatsappService للإرسال
 // لا يُعيده للـ client أبداً
 async function createPhoneOtp(userId, phone) {
-  // ✅ Rate Limit: لا تسمح بأكثر من طلب كل دقيقة لنفس المستخدم
   const user = await User.findById(userId).select('+phoneOtp +phoneOtpExpiry');
 
   if (!user) {
     throw Object.assign(new Error('المستخدم غير موجود'), { status: 404 });
   }
 
+  // ✅ إضافة هنا — قبل Rate Limit
+  const existingPhone = await User.findOne({
+    phone:         phone.trim(),
+    phoneVerified: true,
+    _id:           { $ne: userId },
+  });
+
+  if (existingPhone) {
+    throw Object.assign(
+      new Error('هذا الرقم مسجّل لدى حساب آخر بالفعل ❌'),
+      { status: 409, code: 'PHONE_ALREADY_USED' }
+    );
+  }
+
   // تحقق من Rate Limit: هل الـ OTP الحالي لم يمر عليه دقيقة بعد؟
   if (user.phoneOtpExpiry) {
-    const otpAge = user.phoneOtpExpiry - Date.now() - (OTP_TTL_MINUTES * 60 * 1000 - OTP_RATE_LIMIT);
-    // إذا الـ OTP صدر منذ أقل من دقيقة → ارفض
     const issuedAt = user.phoneOtpExpiry.getTime() - OTP_TTL_MINUTES * 60 * 1000;
     if (Date.now() - issuedAt < OTP_RATE_LIMIT) {
       throw Object.assign(
@@ -40,10 +51,9 @@ async function createPhoneOtp(userId, phone) {
     }
   }
 
-  const otp     = generateOtp();
-  const expiry  = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
+  const otp    = generateOtp();
+  const expiry = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
 
-  // ✅ select: false في Schema يضمن عدم إرساله في أي response آخر
   await User.findByIdAndUpdate(userId, {
     phone,
     phoneOtp:       otp,
@@ -52,7 +62,6 @@ async function createPhoneOtp(userId, phone) {
 
   return { otp, phone };
 }
-
 // ─── التحقق من OTP المُدخَل ───────────────────────────────────
 async function verifyPhoneOtp(userId, inputOtp) {
   const user = await User.findById(userId).select('+phoneOtp +phoneOtpExpiry');
