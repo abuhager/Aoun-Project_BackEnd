@@ -297,22 +297,24 @@ exports.rateItemLogic = async (itemId, userId, rating) => {
   const points = RATING_POINTS[rating];
   if (points === undefined) throw new Error('التقييم يجب أن يكون بين 1 و5');
 
-  await User.findByIdAndUpdate(
-  item.donor,
-  [{
-    $set: {
-      trustScore: {
-        $min: [{ $add: ['$trustScore', points] }, 100]
+  // ✅ F4 Fix — atomic في استعلام واحد + نرجع القيمة المحدّثة
+  const updatedDonor = await User.findByIdAndUpdate(
+    item.donor,
+    [{
+      $set: {
+        trustScore: {
+          $min: [{ $add: ['$trustScore', points] }, 100]
+        }
       }
-    }
-  }]
-);
+    }],
+    { new: true } // ← نرجع القيمة بعد التحديث
+  ).select('trustScore').lean();
 
   await Item.findByIdAndUpdate(itemId, { $set: { isRated: true, rating } });
 
   return {
-    msg: 'تم التقييم 🌟',
-    trustScore: Math.min(100, donor.trustScore),
+    msg:        'تم التقييم 🌟',
+    trustScore: updatedDonor?.trustScore ?? 0, // ✅ من الـ DB مباشرة
   };
 };
 
