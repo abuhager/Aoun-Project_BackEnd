@@ -34,10 +34,11 @@ const ItemSchema = new mongoose.Schema(
       enum:    ['ممتازة', 'جيدة', 'مقبولة'],
       default: 'جيدة',
     },
-    safeHub: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref:  'SafeHub',
-    },
+   safeHub: {
+  type:     mongoose.Schema.Types.ObjectId,
+  ref:      'SafeHub',
+  required: true, // ✅
+},
     reportCount: {
       type:    Number,
       default: 0,

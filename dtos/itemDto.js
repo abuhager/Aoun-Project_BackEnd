@@ -23,14 +23,13 @@ exports.validateCreateItem = (data) => {
       'string.empty': 'الموقع مطلوب',
     }),
     condition: Joi.string().allow('').max(100),
-    // ✅ إضافة safeHub — ObjectId اختياري
-    safeHub: Joi.string().hex().length(24).optional().allow('', null).messages({
-      'string.length': 'معرّف المركز غير صحيح',
+    safeHub:   Joi.string().hex().length(24).required().messages({ // ✅ هنا
+      'string.empty': 'مركز التسليم مطلوب',
+      'any.required': 'مركز التسليم مطلوب',
     }),
   }).unknown(true);
   return schema.validate(data);
 };
-
 exports.validateUpdateItem = (data) => {
   const schema = Joi.object({
     title:       Joi.string().min(3).max(100),
