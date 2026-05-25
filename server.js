@@ -13,6 +13,7 @@ const cookieParser = require('cookie-parser');
 
 const authRoutes  = require('./routes/auth');
 const itemRoutes  = require('./routes/items');
+const phoneRoutes = require('./routes/phone');  
 const { startCronJobs } = require('./utils/cronJobs');
 const app = express();
 
@@ -72,6 +73,7 @@ app.use(cookieParser());
 // ── Routes ────────────────────────────────────────────────────
 app.use('/api/auth',  authLimiter, authRoutes);
 app.use('/api/items', itemRoutes);
+app.use('/api/phone', phoneRoutes);
 
 // ── Health Check ──────────────────────────────────────────────
 app.get('/health', (_req, res) =>
