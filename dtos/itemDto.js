@@ -2,7 +2,7 @@
 const Joi = require('joi');
 
 // ============================================
-// 1. Validation — التحقق من البيانات الواردة
+// 1. Validation
 // ============================================
 
 exports.validateCreateItem = (data) => {
@@ -23,6 +23,10 @@ exports.validateCreateItem = (data) => {
       'string.empty': 'الموقع مطلوب',
     }),
     condition: Joi.string().allow('').max(100),
+    // ✅ إضافة safeHub — ObjectId اختياري
+    safeHub: Joi.string().hex().length(24).optional().allow('', null).messages({
+      'string.length': 'معرّف المركز غير صحيح',
+    }),
   }).unknown(true);
   return schema.validate(data);
 };
@@ -34,15 +38,18 @@ exports.validateUpdateItem = (data) => {
     description: Joi.string().allow('').max(500),
     location:    Joi.string(),
     condition:   Joi.string().allow('').max(100),
+    // ✅ إضافة safeHub في التعديل أيضاً
+    safeHub: Joi.string().hex().length(24).optional().allow('', null).messages({
+      'string.length': 'معرّف المركز غير صحيح',
+    }),
   }).unknown(true);
   return schema.validate(data);
 };
 
 // ============================================
-// 2. Transformations — تشكيل بيانات الـ Response
+// 2. Transformations
 // ============================================
 
-// للعموم — بدون أي بيانات حساسة
 exports.toPublicItem = (item) => ({
   _id:           item._id,
   title:         item.title,
@@ -54,12 +61,18 @@ exports.toPublicItem = (item) => ({
   status:        item.status,
   reportCount:   item.reportCount,
   waitlistCount: item.waitlist?.length ?? 0,
-  // ✅ مضاف — كان مفقوداً
   bookedAt:      item.bookedAt,
   isRated:       item.isRated,
   handoverMode:  item.handoverMode,
-  hubId:         item.hubId,
-  createdAt:     item.createdAt,
+  // ✅ safeHub بدل hubId — يتطابق مع اسم الحقل في الـ Model
+  safeHub: item.safeHub ? {
+    _id:          item.safeHub._id,
+    name:         item.safeHub.name,
+    address:      item.safeHub.address,
+    city:         item.safeHub.city,
+    workingHours: item.safeHub.workingHours,
+  } : null,
+  createdAt: item.createdAt,
   donor: item.donor ? {
     _id:               item.donor._id,
     name:              item.donor.name,
@@ -73,11 +86,9 @@ exports.toPublicItem = (item) => ({
   } : null,
 });
 
-// للمتبرع — يرى بيانات الحاجز (email + phone) لكن ❌ بدون OTP
+// للمتبرع — يرى بيانات الحاجز (email + phone) بدون OTP
 exports.toDonorItem = (item) => ({
   ...exports.toPublicItem(item),
-  // ✅ OTP مُزال من الـ response نهائياً
-  // الـ OTP يُرسَل للمتبرع عبر email فقط عند الحجز
   bookedBy: item.bookedBy ? {
     _id:   item.bookedBy._id,
     name:  item.bookedBy.name,
@@ -86,11 +97,9 @@ exports.toDonorItem = (item) => ({
   } : null,
 });
 
-// للمستلم — يرى بيانات المتبرع (phone) لكن ❌ بدون OTP
+// للمستلم — يرى بيانات المتبرع (phone) بدون OTP
 exports.toReceiverItem = (item) => ({
   ...exports.toPublicItem(item),
-  // ✅ OTP مُزال من الـ response نهائياً
-  // الـ OTP يُرسَل للمستلم عبر email فقط عند الحجز
   donor: item.donor ? {
     _id:               item.donor._id,
     name:              item.donor.name,

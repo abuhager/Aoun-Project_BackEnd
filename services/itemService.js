@@ -115,6 +115,7 @@ exports.bookItemLogic = async (itemId, userId) => {
   if (!user) throw new Error('لا تملك حصصاً متاحة لحجز أغراض جديدة 🚫');
 
   // ─── Step 2: pre-checks ──────────────────────────────────────
+  // ✅ أضف populate لـ safeHub لاستخدامه في الـ email
   const item = await itemRepository.findItemForAction(itemId);
   if (!item) {
     await User.findByIdAndUpdate(userId, { $inc: { quota: 1 } });
@@ -129,17 +130,12 @@ exports.bookItemLogic = async (itemId, userId) => {
     throw new Error('لا يمكنك الحجز مجدداً لأنك ألغيت الحجز مسبقاً');
   }
 
-  // ─── Step 3: ✅ ATOMIC booking — يمنع double-booking تماماً ──
-  // الشرط: status === 'متاح' يجب أن يُتحقق منه داخل الـ DB query
-  // إذا تزامن طلبان، الثاني سيجد status !== 'متاح' فيفشل تلقائياً
+  // ─── Step 3: ATOMIC booking ──────────────────────────────────
   if (item.status === 'متاح') {
     const newOtp = generateOtp();
 
     const booked = await Item.findOneAndUpdate(
-      {
-        _id:    itemId,
-        status: 'متاح',   // ✅ الشرط الحاسم — atomic check+write
-      },
+      { _id: itemId, status: 'متاح' },
       {
         $set: {
           status:      'محجوز',
@@ -149,11 +145,10 @@ exports.bookItemLogic = async (itemId, userId) => {
         },
       },
       { new: true }
-    );
+    // ✅ populate هنا لاستخدام بيانات الـ Hub في الـ email
+    ).populate('safeHub', 'name address city workingHours');
 
-    // ✅ إذا فشل (طلب آخر سبق) → استرجع الكوتا وأضف للطابور
     if (!booked) {
-      // الغرض انحجز للتو من طلب آخر → انضم للطابور
       const alreadyInWaitlist = item.waitlist?.some(w => w.user.toString() === userId);
       if (!alreadyInWaitlist) {
         await Item.findByIdAndUpdate(itemId, {
@@ -165,10 +160,25 @@ exports.bookItemLogic = async (itemId, userId) => {
       throw new Error('أنت بالفعل في قائمة الانتظار');
     }
 
+    // ✅ بناء قسم مركز التسليم بشكل شرطي
+    const hubSection = booked.safeHub
+      ? `<hr/>
+         <p>📍 <b>مركز التسليم:</b> ${booked.safeHub.name}</p>
+         <p>🏙️ ${booked.safeHub.city} — ${booked.safeHub.address}</p>
+         <p>🕐 أوقات العمل: ${booked.safeHub.workingHours}</p>`
+      : `<p>📦 سيتم التنسيق مع المتبرع مباشرة</p>`;
+
     fireSendEmail({
       email:   user.email,
       subject: 'تم حجز الغرض 🎉',
-      message: `<div dir="rtl">رمز الاستلام: <b>${newOtp}</b><p>لديك 72 ساعة ⏱️</p></div>`,
+      message: `
+        <div dir="rtl">
+          <p>تم حجز <b>${booked.title}</b> بنجاح!</p>
+          <p>🔑 رمز الاستلام: <b style="font-size:1.4em">${newOtp}</b></p>
+          <p>⏱️ لديك <b>72 ساعة</b> لاستلام الغرض</p>
+          ${hubSection}
+        </div>
+      `,
     });
 
     return { status: 'booked', msg: 'تم الحجز بنجاح 🎉' };
