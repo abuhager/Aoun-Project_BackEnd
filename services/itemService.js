@@ -103,55 +103,78 @@ exports.createItemLogic = async (body, userId, file) => {
 };
 
 // ─── 5. حجز غرض (مع atomic $inc) ────────────────────────────
+// services/itemService.js — bookItemLogic (الجزء المُصلَح)
 exports.bookItemLogic = async (itemId, userId) => {
-  // ✅ atomic: تحقق من quota ونقصها في عملية واحدة — يمنع race condition
+
+  // ─── Step 1: atomic quota check ──────────────────────────────
   const user = await User.findOneAndUpdate(
     { _id: userId, quota: { $gt: 0 } },
     { $inc: { quota: -1 } },
     { new: true }
   );
-
   if (!user) throw new Error('لا تملك حصصاً متاحة لحجز أغراض جديدة 🚫');
 
+  // ─── Step 2: pre-checks ──────────────────────────────────────
   const item = await itemRepository.findItemForAction(itemId);
   if (!item) {
-    // ✅ استرداد الكوتا إذا فشل الحجز
     await User.findByIdAndUpdate(userId, { $inc: { quota: 1 } });
     throw new Error('الغرض غير موجود');
   }
-
   if (item.donor.toString() === userId) {
     await User.findByIdAndUpdate(userId, { $inc: { quota: 1 } });
     throw new Error('لا يمكنك حجز غرضك الخاص');
   }
-
-  if (item.status === 'متاح') {
-    const newOtp = generateOtp();
-
-    await Item.findByIdAndUpdate(itemId, {
-      $set: {
-        status:      'محجوز',
-        bookedBy:    userId,
-        deliveryOtp: newOtp,
-        bookedAt:    new Date(),
-      },
-    });
-
-    fireSendEmail({
-      email:   user.email,
-      subject: `تم حجز الغرض 🎉`,
-      message: `<div dir="rtl">تم حجز الغرض بنجاح! رمز الاستلام: <b>${newOtp}</b><p>لديك 72 ساعة لإتمام الاستلام ⏱️</p></div>`,
-    });
-
-    return { status: 'booked', msg: 'تم الحجز بنجاح 🎉' };
-  }
-
-  // الغرض محجوز → أضف للطابور
   if (item.cancelledBy?.some(id => id.toString() === userId)) {
     await User.findByIdAndUpdate(userId, { $inc: { quota: 1 } });
     throw new Error('لا يمكنك الحجز مجدداً لأنك ألغيت الحجز مسبقاً');
   }
 
+  // ─── Step 3: ✅ ATOMIC booking — يمنع double-booking تماماً ──
+  // الشرط: status === 'متاح' يجب أن يُتحقق منه داخل الـ DB query
+  // إذا تزامن طلبان، الثاني سيجد status !== 'متاح' فيفشل تلقائياً
+  if (item.status === 'متاح') {
+    const newOtp = generateOtp();
+
+    const booked = await Item.findOneAndUpdate(
+      {
+        _id:    itemId,
+        status: 'متاح',   // ✅ الشرط الحاسم — atomic check+write
+      },
+      {
+        $set: {
+          status:      'محجوز',
+          bookedBy:    userId,
+          deliveryOtp: newOtp,
+          bookedAt:    new Date(),
+        },
+      },
+      { new: true }
+    );
+
+    // ✅ إذا فشل (طلب آخر سبق) → استرجع الكوتا وأضف للطابور
+    if (!booked) {
+      // الغرض انحجز للتو من طلب آخر → انضم للطابور
+      const alreadyInWaitlist = item.waitlist?.some(w => w.user.toString() === userId);
+      if (!alreadyInWaitlist) {
+        await Item.findByIdAndUpdate(itemId, {
+          $push: { waitlist: { user: userId, joinedAt: new Date() } },
+        });
+        return { status: 'waitlist', msg: 'تمت إضافتك لقائمة الانتظار ⏳' };
+      }
+      await User.findByIdAndUpdate(userId, { $inc: { quota: 1 } });
+      throw new Error('أنت بالفعل في قائمة الانتظار');
+    }
+
+    fireSendEmail({
+      email:   user.email,
+      subject: 'تم حجز الغرض 🎉',
+      message: `<div dir="rtl">رمز الاستلام: <b>${newOtp}</b><p>لديك 72 ساعة ⏱️</p></div>`,
+    });
+
+    return { status: 'booked', msg: 'تم الحجز بنجاح 🎉' };
+  }
+
+  // ─── Step 4: Waitlist ─────────────────────────────────────────
   const alreadyInWaitlist = item.waitlist?.some(w => w.user.toString() === userId);
   if (alreadyInWaitlist) {
     await User.findByIdAndUpdate(userId, { $inc: { quota: 1 } });

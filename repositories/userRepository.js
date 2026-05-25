@@ -38,13 +38,23 @@ exports.findByResetToken = (hashedToken) =>
 exports.updateUser = (id, update) =>
   User.findByIdAndUpdate(id, update, { returnDocument: 'after' });
 
-exports.rotateRefreshToken = (userId, oldHash, _unused) =>
+// repositories/userRepository.js — rotateRefreshToken المُصلَح
+
+exports.rotateRefreshToken = (userId, oldHash, newHash, newIssuedAt) =>
   User.findOneAndUpdate(
-    { _id: userId, refreshToken: oldHash },
-    { $set: { refreshToken: null } }, // يُصفَّر مؤقتاً — يُحدَّث في الـ service
+    {
+      _id:          userId,
+      refreshToken: oldHash,   // ← الشرط: فقط لو الـ hash مطابق
+    },
+    {
+      $set: {
+        refreshToken:    newHash,       // ✅ يُكتب مباشرة — لا خطوة ثانية
+        sessionIssuedAt: newIssuedAt,
+      },
+    },
     { new: true }
   ).select('_id name email role trustLevel isBanned quota trustScore');
-
+  
 exports.findByIdWithSession = (id) =>
   User.findById(id).select('+refreshToken +sessionIssuedAt');
 

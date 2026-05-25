@@ -20,6 +20,8 @@ const {
   verifyRefreshToken,
   REFRESH_COOKIE_OPTIONS,
 } = require('../utils/tokenUtils');
+const hashToken = (token) =>
+  crypto.createHash('sha256').update(token).digest('hex');
 
 // ─── 1. التسجيل ──────────────────────────────────────────────
 exports.registerLogic = async ({ name, email, password, phone }) => {
@@ -168,6 +170,8 @@ exports.loginLogic = async ({ email, password }) => {
 };
 
 // ─── 4. تجديد الجلسة (Refresh Token Rotation) ────────────────
+// services/authService.js — refreshLogic
+
 exports.refreshLogic = async (refreshToken) => {
   if (!refreshToken) {
     return {
@@ -178,16 +182,13 @@ exports.refreshLogic = async (refreshToken) => {
   }
 
   try {
-    const decoded = verifyRefreshToken(refreshToken);
-    const hashedIncoming = crypto.createHash('sha256').update(refreshToken).digest('hex');
+    const decoded        = verifyRefreshToken(refreshToken);
+    const hashedIncoming = hashToken(refreshToken); // ← helper جديد (أضفه أول الملف)
 
-    const user = await userRepository.rotateRefreshToken(
-      decoded.user.id,
-      hashedIncoming,
-      null // سيُحدَّث بعد التحقق
-    );
+    // Step 1: اجلب المستخدم للتحقق من بياناته (role, isBanned, إلخ)
+    const user = await userRepository.findByIdWithSession(decoded.user.id);
 
-    if (!user) {
+    if (!user || user.refreshToken !== hashedIncoming) {
       return {
         statusCode:  401,
         clearCookie: true,
@@ -203,17 +204,31 @@ exports.refreshLogic = async (refreshToken) => {
       };
     }
 
+    // Step 2: ولّد الـ tokens الجديدة بناءً على بيانات DB الحقيقية
     const newAccessToken  = generateAccessToken(user);
     const newRefreshToken = generateRefreshToken(user);
-    const newHash = crypto.createHash('sha256').update(newRefreshToken).digest('hex');
+    const newHash         = hashToken(newRefreshToken);
 
-    await userRepository.updateUser(user._id, {
-      refreshToken:    newHash,
-      sessionIssuedAt: new Date(),
-    });
+    // Step 3: ✅ ATOMIC — شرط المطابقة + الكتابة في findOneAndUpdate واحد
+    // إذا جاء طلبان متزامنان بنفس hashedIncoming:
+    //   الأول  → يجد المطابقة → يكتب newHash → ينجح ✅
+    //   الثاني → لا يجد المطابقة (تغيّر) → يُعيد null → REFRESH_REUSE ✅
+    const rotated = await User.findOneAndUpdate(
+      { _id: user._id, refreshToken: hashedIncoming },
+      { $set: { refreshToken: newHash, sessionIssuedAt: new Date() } },
+      { new: true }
+    );
+
+    if (!rotated) {
+      return {
+        statusCode:  401,
+        clearCookie: true,
+        body: { msg: 'الجلسة غير صالحة أو انتُهكت 🚨', code: 'REFRESH_REUSE' },
+      };
+    }
 
     return {
-      statusCode:       200,
+      statusCode:      200,
       newRefreshToken,
       body: { accessToken: newAccessToken },
     };

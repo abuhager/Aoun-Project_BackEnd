@@ -75,3 +75,25 @@ exports.requireLevel2 = (req, res, next) => {
 
   next();
 };
+exports.optionalAuth = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader?.startsWith('Bearer ')) {
+    req.user = null; // ← لا مستخدم، لكن الطلب يكمل
+    return next();
+  }
+
+  const token = authHeader.split(' ')[1];
+  try {
+    const decoded = verifyAccessToken(token);
+    req.user = {
+      id:         decoded.user.id,
+      role:       decoded.user.role,
+      trustLevel: decoded.user.trustLevel ?? 1,
+      isBanned:   decoded.user.isBanned   ?? false,
+    };
+  } catch {
+    req.user = null; // ← token فاسد → نتجاهله
+  }
+  next();
+};

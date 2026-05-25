@@ -33,6 +33,28 @@ const ItemSchema = new mongoose.Schema(
     location:    { type: String, trim: true },
     imageUrl:    { type: String },
     cloudinaryId:{ type: String },
+    condition: {
+  type:    String,
+  enum:    ['ممتازة', 'جيدة', 'مقبولة'],
+  default: 'جيدة',
+},
+
+handoverMode: {
+  type:    String,
+  enum:    ['direct', 'hub'],
+  default: 'direct',
+},
+
+hubId: {
+  type:    mongoose.Schema.Types.ObjectId,
+  ref:     'SafeHub',
+  default: null,
+},
+
+reportCount: {
+  type:    Number,
+  default: 0,
+},
 
     donor: {
       type:     mongoose.Schema.Types.ObjectId,
