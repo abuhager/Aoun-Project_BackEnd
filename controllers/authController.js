@@ -70,7 +70,30 @@ exports.getUserProfile = async (req, res) => {
     return res.status(500).json({ msg: 'خطأ في السيرفر' });
   }
 };
+// ─── GET /me — minimal payload للـ AuthContext فقط ───────────
+exports.getMe = async (req, res) => {
+  try {
+    const user = await require('../repositories/userRepository')
+      .findById(req.user.id);
 
+    if (!user) return res.status(404).json({ msg: 'المستخدم غير موجود' });
+
+    // ✅ F5 Fix — 8 حقول فقط، لا donations، لا stats
+    res.json({
+      _id:        user._id,
+      name:       user.name,
+      email:      user.email,
+      avatar:     user.avatar,
+      role:       user.role,
+      trustLevel: user.trustLevel ?? 1,
+      trustScore: user.trustScore ?? 0,
+      quota:      user.quota ?? 0,
+      isVerified: user.isVerified,
+    });
+  } catch (err) {
+    res.status(500).json({ msg: 'خطأ في الخادم' });
+  }
+};
 // ─── 5. بروفايل عام (GET /profile/:id) ─────────────────────
 exports.getPublicProfile = async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id))

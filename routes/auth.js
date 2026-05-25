@@ -18,7 +18,9 @@ router.post('/verify-email',    authLimiter,   authController.verifyEmail);
 router.post('/login',           authLimiter,   authController.login);
 router.post('/forgot-password', authLimiter,   authController.forgotPassword);
 router.post('/reset-password',  authLimiter,   authController.resetPassword);
-router.get( '/me',              requireAuth,   authController.getUserProfile);      // ✅ كان: auth
+router.get( '/me',         requireAuth, authController.getMe);
+router.get( '/me/profile', requireAuth, authController.getUserProfile); // ← كامل — لصفحة Profile فقط
+
 router.get( '/profile/:id',     globalLimiter, validateObjectId('id'), authController.getPublicProfile);
 router.post('/refresh',         refreshLimiter, authController.refreshToken);
 router.post('/logout',          requireAuth,   authController.logout);              // ✅ كان: auth
