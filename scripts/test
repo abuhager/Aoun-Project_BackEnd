@@ -1,0 +1,9 @@
+db.users.findOne({ email: "abuhager3600@gmail.com" })
+// إذا الناتج false → هذي مشكلة منفصلة
+{ isEmailVerified: false }
+db.users.findOne({ email: "البريد_اللي_تستخدمه" }, {
+  email: 1,
+  isEmailVerified: 1,
+  password: 1,
+  trustLevel: 1
+})
