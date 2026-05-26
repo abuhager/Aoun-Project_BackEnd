@@ -13,6 +13,7 @@ const {
   refreshLimiter,
 } = require('../middlewares/rateLimiter');
 
+
 router.post('/register',        authLimiter,   authController.register);
 router.post('/verify-email',    authLimiter,   authController.verifyEmail);
 router.post('/login',           authLimiter,   authController.login);

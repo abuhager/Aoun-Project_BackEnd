@@ -15,6 +15,8 @@ const authRoutes  = require('./routes/auth');
 const itemRoutes  = require('./routes/items');
 const phoneRoutes = require('./routes/phone');  
 const hubRoutes = require('./routes/hubs');
+const adminRoutes = require('./routes/admin');
+
 const { startCronJobs } = require('./utils/cronJobs');
 const app = express();
 
@@ -76,6 +78,8 @@ app.use('/api/auth',  authLimiter, authRoutes);
 app.use('/api/items', itemRoutes);
 app.use('/api/phone', phoneRoutes);
 app.use('/api/hubs', hubRoutes);
+app.use('/api/admin', adminRoutes);
+
 // ── Health Check ──────────────────────────────────────────────
 app.get('/health', (_req, res) =>
   res.json({

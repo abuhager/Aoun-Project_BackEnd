@@ -64,3 +64,7 @@ exports.findByIdForAdmin = (id) =>
     'quota isVerified isVerifiedStudent isBanned ' +
     'totalDonations badges reportedBy createdAt'
   );
+  // ─── Admin: ترقية/خفض trustLevel ─────────────────────────────
+exports.setTrustLevel = (id, level) =>
+  User.findByIdAndUpdate(id, { trustLevel: level }, { new: true })
+      .select('name email trustLevel isVerifiedStudent phoneVerified isBanned');
