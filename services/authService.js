@@ -147,29 +147,62 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
 };
 
 
-// ─── 3. تسجيل الدخول ─────────────────────────────────────────
 exports.loginLogic = async ({ email, password }) => {
   const user = await userRepository.findByEmailWithPassword(email);
 
+  // ─── 1. تحقق من وجود المستخدم ───────────────────────────
   if (!user) {
     return { statusCode: 401, body: { msg: 'بيانات الدخول غير صحيحة' } };
   }
+
+  // ─── 2. تحقق من الحظر ────────────────────────────────────
   if (user.isBanned) {
     return { statusCode: 403, body: { msg: 'هذا الحساب محظور 🚫' } };
   }
-  if (!user.isVerified) {
-    return {
-      statusCode: 403,
-      body: { msg: 'يرجى تأكيد إيميلك أولاً 📧', code: 'NOT_VERIFIED', email: user.email },
-    };
-  }
 
+  // ─── 3. تحقق من كلمة السر أولاً (قبل أي OTP) ────────────
+  // ✅ مهم: نتحقق من الباسورد قبل إرسال OTP
+  // لمنع أي شخص من إرسال OTP لحساب شخص آخر بمعرفة إيميله فقط
   const isMatch = await bcrypt.compare(password, user.password);
   if (!isMatch) {
     return { statusCode: 401, body: { msg: 'بيانات الدخول غير صحيحة' } };
   }
 
-  // ✅ تحديث trustLevel عند الدخول إذا لم يكن صحيحاً
+  // ─── 4. الحساب غير مفعّل → أعد إرسال OTP ────────────────
+  if (!user.isVerified) {
+    const newOtp    = generateOtp();
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+
+    // حدّث OTP في قاعدة البيانات
+    await userRepository.updateUser(user._id, {
+      verificationOtp:       newOtp,
+      verificationOtpExpiry: otpExpiry,
+    });
+
+    // أرسل إيميل التحقق
+    fireSendEmail({
+      email,
+      subject: 'تحقق من إيميلك - منصة عون 📬',
+      message: `<div dir="rtl">
+        <h2>مرحباً ${user.name}!</h2>
+        <p>طلبت تسجيل الدخول، لكن حسابك لم يُفعَّل بعد.</p>
+        <p>رمز التحقق الجديد الخاص بك:</p>
+        <h1 style="letter-spacing:8px;color:#006155;">${newOtp}</h1>
+        <p style="color:#888;">ينتهي خلال 10 دقائق</p>
+      </div>`,
+    });
+
+    return {
+      statusCode: 403,
+      body: {
+        msg:   'حسابك غير مفعّل — تم إرسال رمز تحقق جديد إلى إيميلك 📧',
+        code:  'NOT_VERIFIED', // ← الـ Frontend يقرأ هذا ويوجّه لصفحة التفعيل
+        email: user.email,
+      },
+    };
+  }
+
+  // ─── 5. تحديث trustLevel لإيميل جامعي إن لزم ────────────
   if (isUniversityEmail(email) && (!user.trustLevel || user.trustLevel < 2)) {
     await userRepository.updateUser(user._id, {
       isVerifiedStudent: true,
@@ -179,6 +212,7 @@ exports.loginLogic = async ({ email, password }) => {
     user.trustLevel        = 2;
   }
 
+  // ─── 6. إنشاء التوكنز ────────────────────────────────────
   const accessToken  = generateAccessToken(user);
   const refreshToken = generateRefreshToken(user);
 
@@ -188,6 +222,7 @@ exports.loginLogic = async ({ email, password }) => {
     sessionIssuedAt: new Date(),
   });
 
+  // ─── 7. رجّع البيانات ─────────────────────────────────────
   return {
     statusCode: 200,
     refreshToken,
@@ -209,8 +244,6 @@ exports.loginLogic = async ({ email, password }) => {
     },
   };
 };
-
-
 // ─── 4. تجديد الجلسة (Refresh Token Rotation) ────────────────
 exports.refreshLogic = async (refreshToken) => {
   if (!refreshToken) {
