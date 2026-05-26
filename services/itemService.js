@@ -322,35 +322,41 @@ const RATING_POINTS = { 5: 5, 4: 3, 3: 1, 2: 0, 1: 0 };
 exports.rateItemLogic = async (itemId, userId, rating) => {
   const item = await Item.findById(itemId).lean();
 
-  if (!item || item.bookedBy?.toString() !== userId.toString())
+  if (!item || item.bookedBy?.toString() !== userId.toString()) {
     throw new Error('غير مصرح لك');
-  if (item.status !== 'تم التسليم' || item.isRated)
+  }
+
+  if (item.status !== 'تم التسليم' || item.isRated) {
     throw new Error('لا يمكن التقييم الآن');
+  }
 
   const points = RATING_POINTS[rating];
-  if (points === undefined) throw new Error('التقييم يجب أن يكون بين 1 و5');
+  if (points === undefined) {
+    throw new Error('التقييم يجب أن يكون بين 1 و5');
+  }
 
-  // ✅ F4 Fix — atomic في استعلام واحد + نرجع القيمة المحدّثة
+  const donor = await User.findById(item.donor).select('trustScore').lean();
+  if (!donor) {
+    throw new Error('المتبرع غير موجود');
+  }
+
+  const newTrustScore = Math.min((donor.trustScore ?? 0) + points, 100);
+
   const updatedDonor = await User.findByIdAndUpdate(
     item.donor,
-    [{
-      $set: {
-        trustScore: {
-          $min: [{ $add: ['$trustScore', points] }, 100]
-        }
-      }
-    }],
-    { new: true } // ← نرجع القيمة بعد التحديث
+    { $set: { trustScore: newTrustScore } },
+    { new: true }
   ).select('trustScore').lean();
 
-  await Item.findByIdAndUpdate(itemId, { $set: { isRated: true, rating } });
+  await Item.findByIdAndUpdate(itemId, {
+    $set: { isRated: true, rating }
+  });
 
   return {
-    msg:        'تم التقييم 🌟',
-    trustScore: updatedDonor?.trustScore ?? 0, // ✅ من الـ DB مباشرة
+    msg: 'تم التقييم 🌟',
+    trustScore: updatedDonor?.trustScore ?? 0,
   };
 };
-
 // ─── 9. البلاغات ─────────────────────────────────────────────
 exports.reportUserLogic = async (reportedUserId, reporterId, reason, details, relatedItemId) => {
   // التحقق من السبب
