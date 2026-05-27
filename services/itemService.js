@@ -6,6 +6,7 @@ const itemRepository = require('../repositories/itemRepository');
 const { generateOtp }        = require('../utils/otp');
 const { fireSendEmail }      = require('../utils/sendEmail');
 const { uploadToCloudinary } = require('../utils/uploadToCloudinary');
+const { notifyUser } = require('../utils/notifyUser');
 
 // ─── 1. جلب الأغراض (مع pagination) ─────────────────────────
 exports.getItemsLogic = async (query) => {
@@ -141,6 +142,13 @@ exports.bookItemLogic = async (itemId, userId) => {
          <p>🕐 أوقات العمل: ${booked.safeHub.workingHours}</p>`
       : `<p>📦 سيتم التنسيق مع المتبرع مباشرة</p>`;
 
+      await notifyUser(item.donor, {
+  type:   'item_booked',
+  title:  'تم حجز غرضك! 🎉',
+  body:   `قام شخص ما بحجز "${item.title}"`,
+  itemId: item._id,
+});
+
     fireSendEmail({
       email:   user.email,
       subject: 'تم حجز الغرض 🎉',
@@ -244,6 +252,13 @@ exports.cancelBookingLogic = async (itemId, userId) => {
         await User.findByIdAndUpdate(previousBooker, { $inc: { quota: 1 } });
       }
 
+await notifyUser(nextValidUser._id, {
+  type:   'waitlist_promoted',
+  title:  'وصل دورك! 🔔',
+  body:   `أصبح "${item.title}" محجوزاً لك`,
+  itemId: item._id,
+});
+
       fireSendEmail({
         email:   nextValidUser.email,
         subject: `الدور وصلك في "عون" 🎉`,
@@ -268,6 +283,12 @@ exports.cancelBookingLogic = async (itemId, userId) => {
   if (previousBooker) {
     await User.findByIdAndUpdate(previousBooker, { $inc: { quota: 1 } });
   }
+await notifyUser(item.donor, {
+  type:   'booking_cancelled',
+  title:  'تم إلغاء الحجز',
+  body:   `غرضك "${item.title}" متاح مجدداً`,
+  itemId: item._id,
+});
 
   return { msg: 'تم إلغاء الحجز والقطعة متاحة الآن ✅' };
 };

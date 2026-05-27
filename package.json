@@ -29,6 +29,7 @@
     "multer-storage-cloudinary": "^2.2.1",
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.4",
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "socket.io": "^4.8.3"
   }
 }

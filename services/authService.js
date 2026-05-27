@@ -20,9 +20,45 @@ const hashToken = (token) =>
   crypto.createHash('sha256').update(token).digest('hex');
 
 // ✅ helper — اكتشاف الإيميل الجامعي
+const JORDANIAN_UNIVERSITY_DOMAINS = [
+  // الجامعة الأردنية
+  '@student.ju.edu.jo', '@ju.edu.jo',
+  // الزيتونة
+  '@std-zuj.edu.jo', '@zuj.edu.jo',
+  // اليرموك
+  '@stu.yarmouk.edu.jo', '@yarmouk.edu.jo',
+  // مؤتة
+  '@students.mut.edu.jo', '@mut.edu.jo',
+  // الهاشمية
+  '@stu.hu.edu.jo', '@hu.edu.jo',
+  // البلقاء التطبيقية
+  '@student.bau.edu.jo', '@bau.edu.jo',
+  // العربية الأمريكية
+  '@students.aaup.edu', '@aaup.edu',
+  // العلوم والتكنولوجيا (JUST)
+  '@stu.just.edu.jo', '@just.edu.jo',
+  // فيلادلفيا
+  '@student.philadelphia.edu.jo', '@philadelphia.edu.jo',
+  // الشرق الأوسط (MEU)
+  '@student.meu.edu.jo', '@meu.edu.jo',
+  // البترا
+  '@students.pu.edu.jo', '@pu.edu.jo',
+  // الإسراء
+  '@stu.isra.edu.jo', '@isra.edu.jo',
+  // عمان الأهلية
+  '@students.ammanu.edu.jo', '@ammanu.edu.jo',
+  // الألمانية الأردنية (GJU)
+  '@student.gju.edu.jo', '@gju.edu.jo',
+  // عمان العربية
+  '@students.aau.edu.jo', '@aau.edu.jo',
+  // الأميرة سمية (PSUT)
+  '@psut.edu.jo',
+  // الإدارة والتكنولوجيا (AMU)
+  '@amu.edu.jo',
+];
+
 const isUniversityEmail = (email) =>
-  email.endsWith('@std-zuj.edu.jo') ||
-  email.endsWith('@zuj.edu.jo');
+  JORDANIAN_UNIVERSITY_DOMAINS.some((domain) => email.endsWith(domain));
 
 
 // ─── 1. التسجيل ──────────────────────────────────────────────

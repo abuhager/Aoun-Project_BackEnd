@@ -13,6 +13,7 @@ const hubRoutes    = require('./routes/hubs');
 const adminRoutes  = require('./routes/admin');
 const ratingRoutes = require('./routes/ratings');
 const reportRoutes = require('./routes/reports');
+const notificationRoutes = require('./routes/notifications');
 
 const app = express();
 
@@ -51,6 +52,7 @@ app.use('/api/hubs',    hubRoutes);
 app.use('/api/admin',   adminRoutes);
 app.use('/api/ratings', ratingRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // ── Health Check ──────────────────────────────────────────────
 app.get('/health', (_req, res) =>

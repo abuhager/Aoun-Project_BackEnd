@@ -1,15 +1,20 @@
 // server.js — entry point فقط
 require('dotenv').config();
 
-const app             = require('./app');
-const connectDB       = require('./config/db');
-const { startCronJobs } = require('./jobs/cronJobs');
+const http              = require('http');
+const app               = require('./app');
+const connectDB         = require('./config/db');
+const { initCronJobs }  = require('./jobs/cronJobs'); // ✅ startCronJobs → initCronJobs
+const { initSocket }    = require('./socket');
 
-const PORT = process.env.PORT || 5000;
+const PORT   = process.env.PORT || 5000;
+const server = http.createServer(app);
+
+initSocket(server);
 
 connectDB().then(() => {
-  app.listen(PORT, () => {
+  server.listen(PORT, () => {
     console.log(`🚀 الخادم يعمل على المنفذ ${PORT}`);
-    startCronJobs();
+    initCronJobs(); // ✅ موجود بالفعل — الاسم صح الآن
   });
 });

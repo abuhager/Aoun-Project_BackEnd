@@ -106,3 +106,35 @@ exports.deleteItem = async (req, res) => {
 };
 
 
+// ✅ B5 — يُرجع أول غرض يحتاج تقييم من المستخدم الحالي
+exports.getPendingRating = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const Rating = require('../models/Rating'); // ✅ استيراد صحيح
+
+    // جميع الأغراض التي استلمها هذا المستخدم
+    const bookedItems = await Item.find({
+      bookedBy: userId,
+      status:   'تم التسليم',
+    })
+      .populate('donor', 'name avatar')
+      .lean();
+
+    if (!bookedItems.length) {
+      return res.json({ pendingRating: null });
+    }
+
+    // الأغراض التي قيّمها مسبقاً
+    const ratedItemIds = await Rating.find({ rater: userId }).distinct('item');
+    const ratedSet     = new Set(ratedItemIds.map(String));
+
+    // أول غرض غير مقيَّم
+    const pending = bookedItems.find(
+      (item) => !ratedSet.has(String(item._id))
+    );
+
+    return res.json({ pendingRating: pending || null });
+  } catch (err) {
+    return res.status(500).json({ msg: err.message });
+  }
+};
