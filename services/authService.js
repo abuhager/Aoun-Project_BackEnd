@@ -339,7 +339,7 @@ exports.getUserProfileLogic = async (userId, page = 1) => {
       .sort({ createdAt: -1 })
       .skip(skip).limit(LIMIT)
       .lean(),
-    Item.countDocuments({ donor: userId, isRated: true }),
+Rating.countDocuments({ ratee: userId })
   ]);
 
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
@@ -396,7 +396,7 @@ exports.getPublicProfileLogic = async (userId, page = 1) => {
       .sort({ createdAt: -1 })
       .skip(skip).limit(LIMIT)
       .lean(),
-    Item.countDocuments({ donor: userId, isRated: true }),
+        Rating.countDocuments({ ratee: userId }),
   ]);
 
   if (!user)         return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };

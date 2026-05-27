@@ -22,11 +22,8 @@ const {
   bookItem,
   cancelBooking,
   completeDelivery,
-  rateItem,
-  reportUser,
   updateItem,
   deleteItem,
-  getPendingRating,
 } = require('../controllers/itemController');
 
 
@@ -45,7 +42,6 @@ const bookingLimiter = rateLimit({
 // ── قراءة عامة ────────────────────────────────────────────────
 router.get('/',     getItems);
 router.get('/me',   requireAuth, getMyItems);
-router.get('/pending-rating', requireAuth, getPendingRating);
 router.get('/:id',  validateObjectId('id'), getItemById);
 
 
@@ -87,22 +83,8 @@ router.put(
 );
 
 
-router.post(
-  '/rate/:id',
-  requireAuth,
-  validateObjectId('id'),
-  rateItem
-);
 
 
-// ✅ Fix Bug #1 — URL موحَّد: /report/:userId (param)
-// كان الفرونت يُرسل لـ /report-user وهو URL خاطئ → 404
-router.post(
-  '/report/:userId',
-  requireAuth,
-  validateObjectId('userId'),
-  reportUser
-);
 
 
 router.put(

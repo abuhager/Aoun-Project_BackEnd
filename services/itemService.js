@@ -10,15 +10,6 @@ const itemRepository = require('../repositories/itemRepository');
 const { generateOtp }              = require('../utils/otp');
 const { fireSendEmail }            = require('../utils/sendEmail');
 const { uploadToCloudinary }       = require('../utils/uploadToCloudinary');
-const Report = require('../models/Report');
-
-const VALID_REPORT_REASONS = [
-  'لم يُسلّم الغرض',
-  'معلومات مضللة',
-  'سلوك غير لائق',
-  'غرض مختلف عن الوصف',
-  'أخرى',
-];
 
 // ─── 1. جلب الأغراض (مع pagination) ─────────────────────────
 exports.getItemsLogic = async (query) => {
@@ -41,7 +32,7 @@ exports.getItemsLogic = async (query) => {
       .skip(skip)
       .limit(limit)
       .lean(),
-    Item.countDocuments(filter),
+    Rating.countDocuments(filter),
   ]);
 
   return {
@@ -316,83 +307,7 @@ exports.completeDeliveryLogic = async (itemId, userId, otp) => {
   return { msg: 'تم التسليم! 💚', item: updatedItem };
 };
 
-// ─── 8. التقييم ───────────────────────────────────────────────
-const RATING_POINTS = { 5: 5, 4: 3, 3: 1, 2: 0, 1: 0 };
 
-exports.rateItemLogic = async (itemId, userId, rating) => {
-  const item = await Item.findById(itemId).lean();
-
-  if (!item || item.bookedBy?.toString() !== userId.toString()) {
-    throw new Error('غير مصرح لك');
-  }
-
-  if (item.status !== 'تم التسليم' || item.isRated) {
-    throw new Error('لا يمكن التقييم الآن');
-  }
-
-  const points = RATING_POINTS[rating];
-  if (points === undefined) {
-    throw new Error('التقييم يجب أن يكون بين 1 و5');
-  }
-
-  const donor = await User.findById(item.donor).select('trustScore').lean();
-  if (!donor) {
-    throw new Error('المتبرع غير موجود');
-  }
-
-  const newTrustScore = Math.min((donor.trustScore ?? 0) + points, 100);
-
-  const updatedDonor = await User.findByIdAndUpdate(
-    item.donor,
-    { $set: { trustScore: newTrustScore } },
-    { new: true }
-  ).select('trustScore').lean();
-
-  await Item.findByIdAndUpdate(itemId, {
-    $set: { isRated: true, rating }
-  });
-
-  return {
-    msg: 'تم التقييم 🌟',
-    trustScore: updatedDonor?.trustScore ?? 0,
-  };
-};
-// ─── 9. البلاغات ─────────────────────────────────────────────
-exports.reportUserLogic = async (reportedUserId, reporterId, reason, details, relatedItemId) => {
-  // التحقق من السبب
-  if (!reason || !VALID_REPORT_REASONS.includes(reason)) {
-    throw new Error(`سبب البلاغ مطلوب. الأسباب: ${VALID_REPORT_REASONS.join(' | ')}`);
-  }
-
-  // لا يمكن التبليغ عن نفسك
-  if (reporterId.toString() === reportedUserId.toString()) {
-    throw new Error('لا يمكنك التبليغ عن نفسك');
-  }
-
-  // تحقق من وجود المستخدم المُبلَّغ عنه
-  const targetUser = await User.findById(reportedUserId).select('_id');
-  if (!targetUser) throw new Error('المستخدم غير موجود');
-
-  // ✅ منع التبليغ المزدوج — يعتمد على الـ unique index في Report.js
-  const existing = await Report.findOne({
-    reporter:     reporterId,
-    reportedUser: reportedUserId,
-  });
-  if (existing) throw new Error('لقد قمت بالتبليغ عن هذا المستخدم مسبقاً 🚫');
-
-  // ✅ إنشاء Report document كامل — status: 'pending' افتراضياً
-  // ❌ لا ban تلقائي — Admin يقرر بعد المراجعة
-  await Report.create({
-    reporter:     reporterId,
-    reportedUser: reportedUserId,
-    relatedItem:  relatedItemId || undefined,
-    reason,
-    details:      details || undefined,
-    // status: 'pending' ← افتراضي من الـ Schema
-  });
-
-  return { msg: 'تم إرسال البلاغ بنجاح. سيتم مراجعته من الإدارة 🛡️' };
-};
 // ─── 10. تعديل غرض ───────────────────────────────────────────
 exports.updateItemLogic = async (itemId, userId, updateData, file) => {
   const item = await itemRepository.findItemForUpdate(itemId, userId);
@@ -449,8 +364,3 @@ exports.deleteItemLogic = async (itemId, userId, userRole) => {
   return { msg: 'تم حذف الغرض نهائياً ⚖️' };
 };
 
-// ─── 12. التقييم المعلق ───────────────────────────────────────
-exports.getPendingRatingLogic = async (userId) => {
-  const item = await itemRepository.findPendingRating(userId);
-  return { pendingRating: item || null };
-};

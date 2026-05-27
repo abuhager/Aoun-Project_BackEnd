@@ -16,6 +16,9 @@ const itemRoutes  = require('./routes/items');
 const phoneRoutes = require('./routes/phone');  
 const hubRoutes = require('./routes/hubs');
 const adminRoutes = require('./routes/admin');
+const ratingRoutes = require('./routes/ratings');
+const reportRoutes = require('./routes/reports');
+
 
 const { startCronJobs } = require('./utils/cronJobs');
 const app = express();
@@ -79,6 +82,8 @@ app.use('/api/items', itemRoutes);
 app.use('/api/phone', phoneRoutes);
 app.use('/api/hubs', hubRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/ratings',  ratingRoutes);
+app.use('/api/reports',  reportRoutes);
 
 // ── Health Check ──────────────────────────────────────────────
 app.get('/health', (_req, res) =>

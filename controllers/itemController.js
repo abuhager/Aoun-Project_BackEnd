@@ -81,33 +81,9 @@ exports.completeDelivery = async (req, res) => {
   }
 };
 
-exports.rateItem = async (req, res) => {
-  // ✅ validation: rating يجب أن يكون بين 1 و 5
-  const rating = Number(req.body.rating);
-  if (!rating || rating < 1 || rating > 5)
-    return res.status(400).json({ msg: 'التقييم يجب أن يكون بين 1 و 5 ⭐' });
 
-  try {
-    const result = await itemService.rateItemLogic(req.params.id, req.user.id, rating);
-    res.json(result);
-  } catch (err) {
-    res.status(400).json({ msg: err.message || 'خطأ في التقييم' });
-  }
-};
 
-exports.reportUser = async (req, res) => {
-  try {
-    const { reason } = req.body; // ← إضافة reason
-    const result = await itemService.reportUserLogic(
-      req.params.userId,
-      req.user.id,
-      reason            // ← تمرير reason
-    );
-    res.status(200).json(result);
-  } catch (err) {
-    res.status(400).json({ msg: err.message });
-  }
-};
+
 
 exports.updateItem = async (req, res) => {
   try {
@@ -129,11 +105,4 @@ exports.deleteItem = async (req, res) => {
   }
 };
 
-exports.getPendingRating = async (req, res) => {
-  try {
-    const result = await itemService.getPendingRatingLogic(req.user.id);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ msg: err.message });
-  }
-};
+

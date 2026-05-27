@@ -44,16 +44,3 @@ exports.findReceivedByUser = (userId) =>
     .populate('safeHub', 'name address city workingHours') // ✅ إضافة — المستلم يحتاج العنوان كاملاً
     .sort({ createdAt: -1 })
     .lean();
-
-
-// ─── تقييم معلق ──────────────────────────────────────────────
-exports.findPendingRating = (userId) =>
-  Item.findOne({
-    bookedBy: userId,
-    status:   'تم التسليم',
-    isRated:  false,
-  })
-    .populate('donor',   'name avatar trustScore')
-    // ❌ safeHub غير مطلوب هنا — شاشة التقييم لا تعرض بيانات المركز
-    .select('-deliveryOtp -__v')
-    .lean();

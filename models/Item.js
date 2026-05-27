@@ -66,8 +66,6 @@ const ItemSchema = new mongoose.Schema(
     },
     waitlist:    [WaitlistEntrySchema],
     cancelledBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-    isRated: { type: Boolean, default: false },
-    rating:  { type: Number, min: 1, max: 5, default: null },
   },
   {
     timestamps: true,
