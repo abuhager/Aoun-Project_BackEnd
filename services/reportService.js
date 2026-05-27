@@ -1,11 +1,10 @@
 // services/reportService.js
-// ✅ Phase 4: البلاغ + نافذة الطعن (72 ساعة) — بدون خصم تلقائي
-const Report = require('../models/Report');
-const Item   = require('../models/Item');
+const Report         = require('../models/Report');
+const Item           = require('../models/Item');
+const { notifyUser } = require('../utils/notifyUser');
 
-const APPEAL_WINDOW_MS = 72 * 60 * 60 * 1000; // 72 ساعة
+const APPEAL_WINDOW_MS = 72 * 60 * 60 * 1000;
 
-// ─── إنشاء بلاغ ──────────────────────────────────────────
 exports.createReport = async ({ reporterId, reportedUserId, itemId, reason, details }) => {
 
   if (reporterId.toString() === reportedUserId.toString())
@@ -14,20 +13,26 @@ exports.createReport = async ({ reporterId, reportedUserId, itemId, reason, deta
       { status: 400, code: 'SELF_REPORT' }
     );
 
-  // ✅ منع التكرار (unique index في الـ schema)
   const report = await Report.create({
     reporter:     reporterId,
     reportedUser: reportedUserId,
     relatedItem:  itemId,
     reason,
     details,
-    status: 'pending',  // ✅ لا إجراء تلقائي أبداً
+    status: 'pending',
+  });
+
+  // ✅ أبلغ المُبلَّغ عنه فوراً
+  await notifyUser(reportedUserId, {
+    type:   'report_resolved',
+    title:  'تم تقديم بلاغ بحقك',
+    body:   `سبب البلاغ: ${reason} — لديك 72 ساعة للطعن`,
+    itemId: itemId ?? null,
   });
 
   return report;
 };
 
-// ─── تقديم طعن من المتبرع ────────────────────────────────
 exports.submitAppeal = async ({ reportId, donorId, appealText }) => {
 
   const report = await Report.findById(reportId);
@@ -35,11 +40,9 @@ exports.submitAppeal = async ({ reportId, donorId, appealText }) => {
   if (!report)
     throw Object.assign(new Error('البلاغ غير موجود'), { status: 404, code: 'REPORT_NOT_FOUND' });
 
-  // ✅ فقط المُبلَّغ عنه يقدر يطعن
   if (report.reportedUser.toString() !== donorId.toString())
     throw Object.assign(new Error('غير مصرح'), { status: 403, code: 'FORBIDDEN' });
 
-  // ✅ نافذة الطعن 72 ساعة فقط
   const windowEnd = new Date(report.createdAt.getTime() + APPEAL_WINDOW_MS);
   if (new Date() > windowEnd)
     throw Object.assign(
