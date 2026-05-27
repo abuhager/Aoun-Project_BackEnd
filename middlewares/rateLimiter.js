@@ -1,20 +1,24 @@
 // middlewares/rateLimiter.js
-const rateLimit = require('express-rate-limit');
-const { ipKeyGenerator } = require('express-rate-limit'); // ✅ أضف هذا
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
 const isDev = process.env.NODE_ENV !== 'production';
 
-// 🛡️ 1. Rate Limiter العام
+// ✅ helper: استخدم الإيميل كـ key إن وُجد، وإلا استخدم IP مع دعم IPv6
+const emailOrIp = (req) =>
+  req.body?.email?.toLowerCase?.() || ipKeyGenerator(req);
+
+// 🛡️ 1. Global Limiter
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max:      isDev ? 2000 : 150,
-  message:  { msg: '🛑 طلبات كثيرة جداً من جهازك، الرجاء الانتظار قليلاً.' },
+  message:  { msg: '🛑 طلبات كثيرة جداً، الرجاء الانتظار قليلاً.' },
   standardHeaders: true,
   legacyHeaders:   false,
   skip: () => isDev,
+  // ✅ لا keyGenerator هنا — الـ default يستخدم IP بشكل صحيح
 });
 
-// 🛡️ 2. Rate Limiter لمسارات auth الحساسة
+// 🛡️ 2. Auth Limiter (login)
 const authLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max:      isDev ? 1000 : 50,
@@ -22,11 +26,11 @@ const authLimiter = rateLimit({
   standardHeaders:        true,
   legacyHeaders:          false,
   skipSuccessfulRequests: true,
-  skip: () => isDev,
-  keyGenerator: (req) => req.body?.email || ipKeyGenerator(req), // ✅ إصلاح
+  skip:         () => isDev,
+  keyGenerator: emailOrIp, // ✅ إيميل + IPv6-safe IP
 });
 
-// 🛡️ 3. Refresh limiter
+// 🛡️ 3. Refresh Limiter
 const refreshLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
   max:      isDev ? 2000 : 60,
@@ -64,7 +68,7 @@ const forgotPasswordLimiter = rateLimit({
   message:  { msg: '🛑 محاولات كثيرة، حاول بعد ساعة.' },
   standardHeaders: true,
   legacyHeaders:   false,
-  keyGenerator: (req) => req.body?.email || ipKeyGenerator(req), // ✅ إصلاح
+  keyGenerator:    emailOrIp, // ✅ إيميل + IPv6-safe IP
   skip: () => isDev,
 });
 

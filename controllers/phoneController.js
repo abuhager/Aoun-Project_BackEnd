@@ -3,7 +3,7 @@
 // لا منطق هنا — فقط validate → service → respond
 
 const { createPhoneOtp, verifyPhoneOtp } = require('../services/phoneService');
-const { sendOtpWhatsApp }                = require('../services/whatsappService');
+const { sendOtpWhatsApp } = require('../integrations/whatsappService');
 
 // ─── Helpers ──────────────────────────────────────────────────
 // تحقق بسيط من صيغة رقم الهاتف الأردني

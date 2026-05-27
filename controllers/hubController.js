@@ -1,60 +1,39 @@
-const SafeHub = require('../models/SafeHub');
+// controllers/hubController.js
+// المسؤولية: HTTP فقط — استقبال الطلب → hubService → Response
+const hubService = require('../services/hubService');
 
-// GET /api/hubs — كل المستخدمين يشوفون الـ Hubs النشطة
 exports.getHubs = async (req, res) => {
   try {
-    const hubs = await SafeHub.find({ isActive: true }).select('-createdBy');
-    res.json(hubs);
+    const { statusCode, body } = await hubService.getAllHubs();
+    res.status(statusCode).json(body);
   } catch (err) {
-    res.status(500).json({ message: 'خطأ في جلب المراكز' });
+    res.status(500).json({ msg: 'خطأ في جلب المراكز' });
   }
 };
 
-// POST /api/hubs — Admin فقط
 exports.createHub = async (req, res) => {
   try {
-    const { name, address, city, coordinates } = req.body;
-
-    if (!name || !address || !city) {
-      return res.status(400).json({ message: 'الاسم والعنوان والمدينة مطلوبة' });
-    }
-
-    const hub = await SafeHub.create({
-      name,
-      address,
-      city,
-      coordinates,
-      createdBy: req.user.id,
-    });
-
-    res.status(201).json(hub);
+    const { statusCode, body } = await hubService.createHub(req.body, req.user.id);
+    res.status(statusCode).json(body);
   } catch (err) {
-    res.status(500).json({ message: 'خطأ في إنشاء المركز' });
+    res.status(500).json({ msg: 'خطأ في إنشاء المركز' });
   }
 };
 
-// PATCH /api/hubs/:id — Admin فقط
 exports.updateHub = async (req, res) => {
   try {
-    const hub = await SafeHub.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!hub) return res.status(404).json({ message: 'المركز غير موجود' });
-    res.json(hub);
+    const { statusCode, body } = await hubService.updateHub(req.params.id, req.body);
+    res.status(statusCode).json(body);
   } catch (err) {
-    res.status(500).json({ message: 'خطأ في تحديث المركز' });
+    res.status(500).json({ msg: 'خطأ في تحديث المركز' });
   }
 };
 
-// DELETE /api/hubs/:id — Admin فقط (soft delete)
 exports.deactivateHub = async (req, res) => {
   try {
-    const hub = await SafeHub.findByIdAndUpdate(
-      req.params.id,
-      { isActive: false },
-      { new: true }
-    );
-    if (!hub) return res.status(404).json({ message: 'المركز غير موجود' });
-    res.json({ message: 'تم تعطيل المركز' });
+    const { statusCode, body } = await hubService.deactivateHub(req.params.id);
+    res.status(statusCode).json(body);
   } catch (err) {
-    res.status(500).json({ message: 'خطأ في تعطيل المركز' });
+    res.status(500).json({ msg: 'خطأ في تعطيل المركز' });
   }
 };
