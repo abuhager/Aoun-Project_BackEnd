@@ -24,7 +24,7 @@ exports.submitRating = async ({ itemId, raterId, score, comment }) => {
     throw Object.assign(new Error('الغرض غير موجود'), { status: 404, code: 'ITEM_NOT_FOUND' });
 
   // ✅ الحماية الأساسية: لا تقييم إلا بعد handover ناجح
-  if (item.status !== 'delivered')
+  if (item.status !== 'تم التسليم')
     throw Object.assign(
       new Error('لا يمكن التقييم قبل اكتمال التسليم'),
       { status: 403, code: 'HANDOVER_NOT_COMPLETE' }

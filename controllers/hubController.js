@@ -24,7 +24,7 @@ exports.createHub = async (req, res) => {
       address,
       city,
       coordinates,
-      createdBy: req.user._id,
+      createdBy: req.user.id,
     });
 
     res.status(201).json(hub);

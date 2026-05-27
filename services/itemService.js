@@ -32,7 +32,7 @@ exports.getItemsLogic = async (query) => {
       .skip(skip)
       .limit(limit)
       .lean(),
-    Rating.countDocuments(filter),
+    Item.countDocuments(filter),
   ]);
 
   return {
@@ -194,14 +194,13 @@ exports.cancelBookingLogic = async (itemId, userId) => {
   const item = await itemRepository.findItemForAction(itemId);
   if (!item) throw new Error('الغرض غير موجود');
 
-  const isBooker   = item.bookedBy && item.bookedBy.toString() === userId;
-  const isDonor    = item.donor.toString() === userId;
-  const inWait     = item.waitlist?.some(w => w.user.toString() === userId);
-  const topWaiting = item.waitlist?.slice(0, 3) ?? []; // ✅ F6 Fix
+  const isBooker = item.bookedBy && item.bookedBy.toString() === userId;
+  const isDonor  = item.donor.toString() === userId;
+  const inWait   = item.waitlist?.some(w => w.user.toString() === userId);
 
   if (!isBooker && !isDonor && !inWait) throw new Error('غير مصرح لك');
 
-  // انسحاب من الطابور فقط
+  // ─── انسحاب من الطابور فقط ────────────────────────────────
   if (inWait && !isBooker && !isDonor) {
     await Item.findByIdAndUpdate(item._id, {
       $pull: { waitlist: { user: userId } },
@@ -212,40 +211,56 @@ exports.cancelBookingLogic = async (itemId, userId) => {
 
   const previousBooker = item.bookedBy;
 
+  // ─── يوجد Waitlist — حاول تمرير الدور ────────────────────
   if (item.waitlist?.length > 0) {
-    let nextValidUser = null;
-    const usersToRemove = [];
+    const topWaiting = item.waitlist.slice(0, 3);
 
     for (const waiting of topWaiting) {
-      nextValidUser = await User.findOneAndUpdate(
+
+      // ✅ Step 1: خصم كوتا المستخدم التالي atomically
+      const nextValidUser = await User.findOneAndUpdate(
         { _id: waiting.user, quota: { $gt: 0 } },
         { $inc: { quota: -1 } },
         { new: true }
       );
-      if (nextValidUser) break;
-      else usersToRemove.push(waiting.user);
-    }
 
-    if (usersToRemove.length > 0) {
-      await Item.findByIdAndUpdate(item._id, {
-        $pull: { waitlist: { user: { $in: usersToRemove } } },
-      });
-    }
+      // ليس لديه كوتا — احذفه من الـ waitlist وجرّب التالي
+      if (!nextValidUser) {
+        await Item.findByIdAndUpdate(item._id, {
+          $pull: { waitlist: { user: waiting.user } },
+        });
+        continue;
+      }
 
-    if (nextValidUser) {
-      const newOtp = generateOtp();
-
-      await Item.findByIdAndUpdate(item._id, {
-        $set: {
-          status:      'محجوز',
-          bookedBy:    nextValidUser._id,
-          deliveryOtp: newOtp,
-          bookedAt:    new Date(),
+      // ✅ Step 2: احجز الغرض بشرط أن nextValidUser لا يزال في الـ waitlist
+      // هذا يمنع Race Condition — لو شخصان ألغيا في نفس الوقت
+      const newOtp   = generateOtp();
+      const updated  = await Item.findOneAndUpdate(
+        {
+          _id:           item._id,
+          'waitlist.user': nextValidUser._id, // ✅ تأكد أنه لا يزال في القائمة
         },
-        $addToSet: { cancelledBy: previousBooker },
-        $pull:     { waitlist: { user: nextValidUser._id } },
-      });
+        {
+          $set: {
+            status:      'محجوز',
+            bookedBy:    nextValidUser._id,
+            deliveryOtp: newOtp,
+            bookedAt:    new Date(),
+          },
+          $addToSet: { cancelledBy: previousBooker },
+          $pull:     { waitlist: { user: nextValidUser._id } },
+        },
+        { new: true }
+      );
 
+      // ✅ Step 3: لو فشل الحجز (غادر الـ waitlist بين الخطوتين)
+      // أعد كوتاه وجرّب المستخدم التالي
+      if (!updated) {
+        await User.findByIdAndUpdate(nextValidUser._id, { $inc: { quota: 1 } });
+        continue;
+      }
+
+      // ✅ Step 4: نجح الحجز — أعد كوتا الحاجز السابق وأبلغ المستخدم الجديد
       if (previousBooker) {
         await User.findByIdAndUpdate(previousBooker, { $inc: { quota: 1 } });
       }
@@ -253,13 +268,19 @@ exports.cancelBookingLogic = async (itemId, userId) => {
       fireSendEmail({
         email:   nextValidUser.email,
         subject: `الدور وصلك في "عون" 🎉`,
-        message: `<div dir="rtl">أصبح الغرض محجوزاً لك! رمز الاستلام: <b>${newOtp}</b><p>لديك 72 ساعة لإتمام الاستلام ⏱️</p></div>`,
+        message: `<div dir="rtl">
+          أصبح الغرض محجوزاً لك!
+          رمز الاستلام: <b style="font-size:1.4em">${newOtp}</b>
+          <p>لديك 72 ساعة لإتمام الاستلام ⏱️</p>
+        </div>`,
       });
 
       return { msg: 'تم إلغاء الحجز وتمرير الدور للشخص التالي 🔄' };
     }
+    // كل الـ topWaiting فشلوا (لا كوتا أو غادروا) — أكمل للتالي
   }
 
+  // ─── لا يوجد Waitlist صالح — أعد الغرض متاحاً ─────────────
   await Item.findByIdAndUpdate(item._id, {
     $set:      { status: 'متاح', bookedBy: null, bookedAt: null },
     $unset:    { deliveryOtp: '' },

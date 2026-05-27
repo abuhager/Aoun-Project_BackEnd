@@ -14,7 +14,7 @@ exports.getItems = async (req, res) => {
 
 exports.getMyItems = async (req, res) => {
   try {
-    const userId = req.user.id || req.user._id;
+    const userId = req.user.id || req.user.id;
     const result = await itemService.getMyItemsLogic(userId);
     res.json(result);
   } catch (err) {
@@ -41,7 +41,7 @@ exports.createItem = async (req, res) => {
     if (error)
       return res.status(400).json({ success: false, message: error.details[0].message });
 
-    const userId = req.user.id || req.user._id;
+    const userId = req.user.id || req.user.id;
     const result = await itemService.createItemLogic(req.body, userId, req.file);
     res.status(201).json({ success: true, ...result });
   } catch (err) {
@@ -52,7 +52,7 @@ exports.createItem = async (req, res) => {
 
 exports.bookItem = async (req, res) => {
   try {
-    const userId = req.user.id || req.user._id;
+    const userId = req.user.id || req.user.id;
     const result = await itemService.bookItemLogic(req.params.id, userId);
     res.status(200).json({ success: true, ...result });
   } catch (err) {

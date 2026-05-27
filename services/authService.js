@@ -1,13 +1,5 @@
 // services/authService.js
-// ✅ Phase 1 Fixes:
-//    Bug #2  — loginLogic: أضيف trustScore للـ response
-//    Bug #3  — registerLogic + verifyEmailLogic: OTP expiry 10 دقائق
-//    Bug #8  — forgotPasswordLogic: generic response (لا User Enumeration)
-//    Bug #9  — getUserProfileLogic + getPublicProfileLogic: pagination
-//    Bug جديد — verifyEmailLogic: يُرجع accessToken بعد التحقق
-//    Bug #13 — refreshLogic: يستخدم tokenUtils (لا تغيير هنا)
-// ✅ Phase 2 Fixes:
-//    إيميل جامعي → isVerifiedStudent + trustLevel: 2 تلقائياً
+
 
 const bcrypt         = require('bcryptjs');
 const crypto         = require('crypto');
@@ -16,6 +8,7 @@ const Item           = require('../models/Item');
 const { generateOtp }              = require('../utils/otp');
 const { sendEmail, fireSendEmail } = require('../utils/sendEmail');
 const userRepository               = require('../repositories/userRepository');
+const Rating = require('../models/Rating');
 const {
   generateAccessToken,
   generateRefreshToken,
@@ -327,20 +320,28 @@ exports.getUserProfileLogic = async (userId, page = 1) => {
   const LIMIT = 10;
   const skip  = (page - 1) * LIMIT;
 
-  const [user, donations, received, totalRatings] = await Promise.all([
-    userRepository.findById(userId),
-    Item.find({ donor: userId })
-      .populate('bookedBy', 'name avatar')
-      .sort({ createdAt: -1 })
-      .skip(skip).limit(LIMIT)
-      .lean(),
-    Item.find({ bookedBy: userId, status: 'تم التسليم' })
-      .populate('donor', 'name avatar')
-      .sort({ createdAt: -1 })
-      .skip(skip).limit(LIMIT)
-      .lean(),
-Rating.countDocuments({ ratee: userId })
-  ]);
+  const [user, donations, received, totalRatings, totalDonationsCount, totalReceivedCount] =
+    await Promise.all([
+      userRepository.findById(userId),
+
+      Item.find({ donor: userId })
+        .populate('bookedBy', 'name avatar')
+        .sort({ createdAt: -1 })
+        .skip(skip).limit(LIMIT)
+        .lean(),
+
+      Item.find({ bookedBy: userId, status: 'تم التسليم' })
+        .populate('donor', 'name avatar')
+        .sort({ createdAt: -1 })
+        .skip(skip).limit(LIMIT)
+        .lean(),
+
+      Rating.countDocuments({ ratee: userId }),
+
+      // ✅ العدد الكلي الحقيقي من DB — لحساب hasMore و stats
+      Item.countDocuments({ donor: userId }),
+      Item.countDocuments({ bookedBy: userId, status: 'تم التسليم' }),
+    ]);
 
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
 
@@ -365,15 +366,21 @@ Rating.countDocuments({ ratee: userId })
     body: {
       user: safeUser,
       stats: {
-        donationsCount:     donations.length,
+        // ✅ العدد الحقيقي الكلي — لا عدد الصفحة الحالية فقط
+        donationsCount:     totalDonationsCount,
         completedDonations: donations.filter(i => i.status === 'تم التسليم').length,
-        receivedCount:      received.length,
+        receivedCount:      totalReceivedCount,
         totalRatings,
       },
       allDonations:      donations,
       completedRequests: received,
       page,
-      hasMore: donations.length === LIMIT || received.length === LIMIT,
+      totalPages: Math.max(
+        Math.ceil(totalDonationsCount / LIMIT),
+        Math.ceil(totalReceivedCount  / LIMIT),
+      ),
+      // ✅ hasMore دقيق — بناءً على العدد الكلي الحقيقي
+      hasMore: page * LIMIT < totalDonationsCount || page * LIMIT < totalReceivedCount,
     },
   };
 };
@@ -384,20 +391,28 @@ exports.getPublicProfileLogic = async (userId, page = 1) => {
   const LIMIT = 10;
   const skip  = (page - 1) * LIMIT;
 
-  const [user, donations, received, totalRatings] = await Promise.all([
-    userRepository.findById(userId),
-    Item.find({ donor: userId, status: { $ne: 'مخفي' } })
-      .select('title imageUrl status createdAt')
-      .sort({ createdAt: -1 })
-      .skip(skip).limit(LIMIT)
-      .lean(),
-    Item.find({ bookedBy: userId, status: 'تم التسليم' })
-      .select('title imageUrl status createdAt')
-      .sort({ createdAt: -1 })
-      .skip(skip).limit(LIMIT)
-      .lean(),
-        Rating.countDocuments({ ratee: userId }),
-  ]);
+  const [user, donations, received, totalRatings, totalDonationsCount, totalReceivedCount] =
+    await Promise.all([
+      userRepository.findById(userId),
+
+      Item.find({ donor: userId, status: { $ne: 'مخفي' } })
+        .select('title imageUrl status createdAt')
+        .sort({ createdAt: -1 })
+        .skip(skip).limit(LIMIT)
+        .lean(),
+
+      Item.find({ bookedBy: userId, status: 'تم التسليم' })
+        .select('title imageUrl status createdAt')
+        .sort({ createdAt: -1 })
+        .skip(skip).limit(LIMIT)
+        .lean(),
+
+      Rating.countDocuments({ ratee: userId }),
+
+      // ✅ العدد الكلي الحقيقي من DB
+      Item.countDocuments({ donor: userId, status: { $ne: 'مخفي' } }),
+      Item.countDocuments({ bookedBy: userId, status: 'تم التسليم' }),
+    ]);
 
   if (!user)         return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
   if (user.isBanned) return { statusCode: 403, body: { msg: 'هذا الحساب محظور' } };
@@ -415,14 +430,20 @@ exports.getPublicProfileLogic = async (userId, page = 1) => {
         createdAt:         user.createdAt,
       },
       stats: {
-        donationsCount: donations.length,
-        receivedCount:  received.length,
+        // ✅ العدد الحقيقي الكلي
+        donationsCount: totalDonationsCount,
+        receivedCount:  totalReceivedCount,
         totalRatings,
       },
       allDonations:      donations,
       completedRequests: received,
       page,
-      hasMore: donations.length === LIMIT || received.length === LIMIT,
+      totalPages: Math.max(
+        Math.ceil(totalDonationsCount / LIMIT),
+        Math.ceil(totalReceivedCount  / LIMIT),
+      ),
+      // ✅ hasMore دقيق
+      hasMore: page * LIMIT < totalDonationsCount || page * LIMIT < totalReceivedCount,
     },
   };
 };

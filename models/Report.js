@@ -27,6 +27,6 @@ const reportSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 // منع التبليغ المزدوج
-reportSchema.index({ reporter: 1, reportedUser: 1 }, { unique: true });
-
+// ✅ منع البلاغ المكرر على نفس الغرض
+reportSchema.index({ reporter: 1, reportedUser: 1, relatedItem: 1 }, { unique: true });
 module.exports = mongoose.model('Report', reportSchema);
