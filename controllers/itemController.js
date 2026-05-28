@@ -2,6 +2,8 @@
 const itemService = require('../services/itemService');
 const { validateCreateItem } = require('../dtos/itemDto');
 const Item = require('../models/Item');
+const { getIo } = require('../socket'); // ✅ أضف هذا السطر
+
 exports.getItems = async (req, res) => {
   try {
     const result = await itemService.getItemsLogic(req.query);
@@ -75,15 +77,15 @@ exports.cancelBooking = async (req, res) => {
 exports.completeDelivery = async (req, res) => {
   try {
     const result = await itemService.completeDeliveryLogic(req.params.id, req.user.id, req.body.otp);
+
+    // ✅ أعلم كل المتصلين بتحديث الـ Leaderboard بعد اكتمال التسليم
+    try { getIo().emit('leaderboard:update'); } catch {}
+
     res.json(result);
   } catch (err) {
     res.status(400).json({ msg: err.message || 'خطأ في التسليم' });
   }
 };
-
-
-
-
 
 exports.updateItem = async (req, res) => {
   try {
@@ -99,10 +101,7 @@ exports.deleteItem = async (req, res) => {
     const result = await itemService.deleteItemLogic(req.params.id, req.user.id, req.user.role);
     res.json(result);
   } catch (err) {
-    // 403 للصلاحيات، 404 للغرض غير موجود
     const status = err.message.includes('غير مصرح') ? 403 : 404;
     res.status(status).json({ msg: err.message || 'خطأ في الحذف' });
   }
 };
-
-
