@@ -23,6 +23,7 @@ const reportSchema = new mongoose.Schema({
   // ✅ نافذة الطعن للمتبرع (Phase 4)
   appealText:   { type: String },
   appealedAt:   { type: Date },
+  appealDeadline: { type: Date },
   resolvedAt:   { type: Date },
 }, { timestamps: true });
 

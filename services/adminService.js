@@ -3,6 +3,7 @@ const adminRepo      = require('../repositories/adminRepository');
 const userRepository = require('../repositories/userRepository');
 const AdminLog       = require('../models/AdminLog');
 const { notifyUser } = require('../utils/notifyUser');
+
 // ─── Stats ────────────────────────────────────────────────────
 exports.getStats = () => adminRepo.getDashboardStats();
 
@@ -16,11 +17,14 @@ exports.listUsers = async ({ page = 1, search = '', banned = '' }) => {
 };
 
 exports.banUser = async (userId, adminId, reason) => {
-  const user = await adminRepo.banUser(userId, reason, adminId);
+  const user = await adminRepo.banUser(userId, reason ?? "مخالفة قوانين المنصة", adminId);
   if (!user) throw Object.assign(new Error('المستخدم غير موجود'), { status: 404 });
   await adminRepo.logAdminAction({
-    adminId, action: 'BAN',          // ✅ كان 'ban_user'
-    targetId: userId, targetModel: 'User', reason,
+    adminId,
+    action: 'BAN',
+    targetId: userId,
+    targetModel: 'User',
+    reason: reason ?? "حظر يدوي من الأدمن", // ✅ سبب واضح
   });
   return user;
 };
@@ -29,8 +33,11 @@ exports.unbanUser = async (userId, adminId) => {
   const user = await adminRepo.unbanUser(userId);
   if (!user) throw Object.assign(new Error('المستخدم غير موجود'), { status: 404 });
   await adminRepo.logAdminAction({
-    adminId, action: 'UNBAN',        // ✅ كان 'unban_user'
-    targetId: userId, targetModel: 'User',
+    adminId,
+    action: 'UNBAN',
+    targetId: userId,
+    targetModel: 'User',
+    reason: "رفع الحظر يدوياً من الأدمن", // ✅ سبب واضح
   });
   return user;
 };
@@ -49,7 +56,7 @@ exports.deleteItem = async (itemId, adminId) => {
   const item = await Item.findByIdAndDelete(itemId);
   if (!item) throw Object.assign(new Error('الغرض غير موجود'), { status: 404 });
   await adminRepo.logAdminAction({
-    adminId, action: 'ITEM_HIDE',    // ✅ كان 'delete_item' — مش في الـ enum
+    adminId, action: 'ITEM_HIDE',
     targetId: itemId, targetModel: 'Item',
   });
   return item;
@@ -65,26 +72,39 @@ exports.listReports = async ({ page = 1 }) => {
   return { reports, total, page: +page, pages: Math.ceil(total / 20) };
 };
 
-exports.resolveReport = async (reportId, adminId, action) => {
-  const statusMap = {
-    warn:    'actioned',
-    ban:     'actioned',
-    dismiss: 'dismissed',
-  };
-  const newStatus = statusMap[action] ?? 'reviewed';
+exports.resolveReport = async (reportId, adminId, action, adminName) => {
+  const statusMap = { warn: 'actioned', ban: 'actioned', dismiss: 'dismissed' };
+  const newStatus  = statusMap[action] ?? 'reviewed';
+
   const report = await adminRepo.resolveReport(reportId, adminId, newStatus);
   if (!report) throw Object.assign(new Error('البلاغ غير موجود'), { status: 404 });
 
+  // ✅ جلب الأسماء للـ meta
+  const Report     = require('../models/Report');
+  const fullReport = await Report.findById(reportId)
+    .populate('reportedUser', 'name')
+    .populate('reporter',     'name');
+
+  const actionLabel = { warn: 'تحذير', ban: 'حظر', dismiss: 'رفض البلاغ' }[action] ?? action;
+
   await adminRepo.logAdminAction({
-    adminId, action: 'REPORT_ACTION',
-    targetId: reportId, targetModel: 'Report', reason: action,
+    adminId,
+    action:      'REPORT_ACTION',
+    targetId:    reportId,
+    targetModel: 'Report',
+    reason:      actionLabel,
+    meta: {
+      targetName: fullReport?.reportedUser?.name ?? '—',
+      reportedBy: fullReport?.reporter?.name     ?? '—',
+      reason:     fullReport?.reason             ?? '—',
+      action:     actionLabel,
+    },
   });
 
-  // ✅ إرسال notification للمُبلَّغ عنه
   if (action === 'warn' && report.reportedUser) {
     await notifyUser(report.reportedUser, {
       type:    'warning',
-      message: '⚠️ تلقيت تحذيراً من الإدارة بسبب بلاغ مقدم ضدك. يرجى الالتزام بقوانين المنصة.',
+      message: '⚠️ تلقيت تحذيراً من الإدارة بسبب بلاغ مقدم ضدك.',
     });
   }
 
@@ -98,12 +118,12 @@ exports.resolveReport = async (reportId, adminId, action) => {
       adminId, action: 'BAN',
       targetId: report.reportedUser, targetModel: 'User',
       reason: 'حظر تلقائي من معالجة بلاغ',
+      meta:   { targetName: fullReport?.reportedUser?.name },
     });
   }
 
   return report;
 };
-
 // ─── Audit Logs ───────────────────────────────────────────────
 exports.listAuditLogs = async ({ page = 1 }) => {
   const [logs, total] = await Promise.all([

@@ -25,6 +25,38 @@ exports.findItemForUpdate = (itemId, userId) =>
 // ─── حذف غرض ─────────────────────────────────────────────────
 exports.deleteItemById = (item) => item.deleteOne();
 
+// ─── helper: يربط reportId بكل item ──────────────────────────
+// reportedUserId → اختياري، يُضيّق البحث للمستلم فقط
+async function attachReportIds(items, reportedUserId) {
+  if (!items.length) return items;
+
+  const itemIds = items.map(i => i._id);
+
+  // ✅ نبحث بـ relatedItem فقط — نتجاهل البلاغات بدون غرض
+  const query = {
+    relatedItem: { $in: itemIds },
+    status:      'pending',
+  };
+  if (reportedUserId) query.reportedUser = reportedUserId;
+
+  const reports = await Report.find(query)
+    .select('relatedItem _id')
+    .lean();
+
+  // map: itemId → reportId (نأخذ أحدث بلاغ إن وُجد أكثر من واحد)
+  const reportMap = {};
+  reports.forEach(r => {
+    const key = r.relatedItem.toString();
+    // ✅ نحتفظ بأول بلاغ فقط (مرتّب بـ MongoDB default = insert order)
+    if (!reportMap[key]) reportMap[key] = r._id.toString();
+  });
+
+  return items.map(item => ({
+    ...item,
+    reportId: reportMap[item._id.toString()] ?? null,
+  }));
+}
+
 // ─── تبرعاتي كمتبرع ──────────────────────────────────────────
 exports.findDonationsByUser = async (userId) => {
   const items = await Item.find({ donor: userId })
@@ -33,29 +65,18 @@ exports.findDonationsByUser = async (userId) => {
     .sort({ createdAt: -1 })
     .lean();
 
-  // ✅ جلب البلاغات الـ pending على أغراضه
-  const itemIds = items.map(i => i._id);
-  const reports = await Report.find({
-    relatedItem: { $in: itemIds },
-    status:      'pending',
-  }).select('relatedItem').lean();
-
-  // ✅ map كل item بـ reportId تبعه
-  const reportMap = {};
-  reports.forEach(r => {
-    reportMap[r.relatedItem.toString()] = r._id.toString();
-  });
-
-  return items.map(item => ({
-    ...item,
-    reportId: reportMap[item._id.toString()] ?? null,
-  }));
+  // ✅ بدون reportedUserId — البلاغ على الغرض بغض النظر عن المُبلَّغ عنه
+  return attachReportIds(items, null);
 };
 
 // ─── طلبات الاستلام ───────────────────────────────────────────
-exports.findReceivedByUser = (userId) =>
-  Item.find({ bookedBy: userId })
+exports.findReceivedByUser = async (userId) => {
+  const items = await Item.find({ bookedBy: userId })
     .populate('donor',   'name avatar trustScore isVerifiedStudent')
     .populate('safeHub', 'name address city workingHours')
     .sort({ createdAt: -1 })
     .lean();
+
+  // ✅ userId كـ filter — البلاغ على المستلم تحديداً
+  return attachReportIds(items, userId);
+};

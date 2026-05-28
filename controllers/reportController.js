@@ -15,6 +15,7 @@ exports.createReport = async (req, res) => {
       itemId:         req.body.itemId,
       reason:         req.body.reason,
       details:        req.body.details,
+      appealDeadline: new Date(Date.now() + 24 * 60 * 60 * 1000)
     });
     return res.status(201).json({ msg: 'تم إرسال البلاغ ✅', report });
   } catch (err) {
@@ -38,3 +39,4 @@ exports.submitAppeal = async (req, res) => {
     return res.status(err.status ?? 500).json({ msg: err.message, code: err.code ?? 'SERVER_ERROR' });
   }
 };
+

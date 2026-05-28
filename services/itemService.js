@@ -38,7 +38,7 @@ const Report = require('../models/Report');
 exports.getMyItemsLogic = async (userId) => {
   const [user, myDonations, myRequests] = await Promise.all([
     User.findById(userId)
-      .select('name email trustScore quota isVerifiedStudent')
+      .select('name email trustScore quota isVerifiedStudent gamification')
       .lean(),
 
     Item.find({ donor: userId })
@@ -52,27 +52,42 @@ exports.getMyItemsLogic = async (userId) => {
       .lean(),
   ]);
 
-  // ✅ جلب الـ reports في نفس الـ Promise.all بدل query منفصل
+  // ✅ جلب ALL item IDs (donations + requests)
   const donationIds = myDonations.map((i) => i._id);
+  const requestIds  = myRequests.map((i) => i._id);
+  const allItemIds  = [...donationIds, ...requestIds];
 
+  // ✅ جلب reports حيث المستخدم هو المُبلَّغ عنه — سواء كمتبرع أو مستلم
   const reports = await Report.find({
-    relatedItem: { $in: donationIds },
-    status:      { $in: ['pending', 'actioned'] },
+    relatedItem:  { $in: allItemIds },
+    reportedUser: userId,                          // ← المهم: هو المُبلَّغ عنه
+    status:       { $in: ['pending', 'actioned'] },
   })
     .select('relatedItem')
     .lean();
 
-  // ✅ Map سريع O(n) بدل nested loop
+  // ✅ Map سريع O(n)
   const reportMap = new Map(
     reports.map((r) => [r.relatedItem.toString(), r._id.toString()])
   );
 
+  // ✅ donations — المتبرع قد يُبلَّغ عنه من المستلم
   const donationsWithReport = myDonations.map((item) => ({
     ...item,
     reportId: reportMap.get(item._id.toString()) ?? null,
   }));
 
-  return { user, myDonations: donationsWithReport, myRequests };
+  // ✅ requests — المستلم قد يُبلَّغ عنه من المتبرع
+  const requestsWithReport = myRequests.map((item) => ({
+    ...item,
+    reportId: reportMap.get(item._id.toString()) ?? null,
+  }));
+
+  return {
+    user,
+    myDonations: donationsWithReport,
+    myRequests:  requestsWithReport,   // ✅ الآن يحتوي على reportId
+  };
 };
 
 // ─── 3. تفاصيل غرض واحد ──────────────────────────────────────

@@ -5,6 +5,7 @@ const { requireAuth }   = require('../middlewares/auth');
 const validateObjectId  = require('../middlewares/validateObjectId');
 const reportController  = require('../controllers/reportController');
 
+
 // ✅ إنشاء بلاغ
 router.post('/',             requireAuth, reportController.createReport);
 

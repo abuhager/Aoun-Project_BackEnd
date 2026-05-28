@@ -65,10 +65,17 @@ exports.countItems = () => Item.countDocuments();
 
 // ── البلاغات ──────────────────────────────────────────────────
 exports.findPendingReports = ({ page = 1, limit = 20 } = {}) =>
-  Report.find({ status: 'pending' })
+  Report.find({
+    status: 'pending',
+    $or: [
+      { appealDeadline: { $lte: new Date() } },     
+      { appealText: { $exists: true, $ne: null } },  
+      { appealDeadline: { $exists: false } },         
+    ],
+  })
     .populate('reporter',     'name email')
     .populate('reportedUser', 'name email')
-    .populate('relatedItem',  'title')        // ✅ أضف
+    .populate('relatedItem',  'title')
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(limit)
@@ -84,18 +91,17 @@ exports.resolveReport = (reportId, adminId, status) =>
   );
 
 // ── السجلات ───────────────────────────────────────────────────
-exports.logAdminAction = ({ adminId, action, targetId, targetModel, reason }) =>
-  // ✅ كان يرسل 'details' — AdminLog model فيه 'reason' مش 'details'
-  AdminLog.create({ adminId, action, targetId, targetModel, reason });
+exports.logAdminAction = ({ adminId, action, targetId, targetModel, reason, meta }) =>
+  AdminLog.create({ adminId, action, targetId, targetModel, reason, meta });
 
-exports.findAdminLogs = ({ page = 1, limit = 20 } = {}) =>
-  AdminLog.find()
-    .populate('adminId', 'name email')
+exports.findAdminLogs = async ({ page = 1, limit = 20 }) => {
+  return AdminLog.find()
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(limit)
-    .lean();
-
+    .populate('adminId',  'name email')   // اسم الأدمن
+    .populate('targetId', 'name email title'); // اسم المستهدف (user أو item)
+};
 // ── الإحصائيات (Dashboard) ────────────────────────────────────
 exports.getDashboardStats = () =>
   Promise.all([

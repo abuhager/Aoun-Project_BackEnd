@@ -1,4 +1,3 @@
-// controllers/adminController.js
 const adminService = require('../services/adminService');
 const { validatePromote } = require('../dtos/adminDto');
 
@@ -83,7 +82,13 @@ exports.listReports = async (req, res) => {
 
 exports.resolveReport = async (req, res) => {
   try {
-    const report = await adminService.resolveReport(req.params.id, req.user.id, req.body.action);
+    const report = await adminService.resolveReport(
+      req.params.id,
+      req.user.id,
+      req.body.action,
+      // ✅ نمرر adminName للـ meta
+      req.user.name,
+    );
     res.json({ msg: 'تم معالجة البلاغ ✅', report });
   } catch (err) {
     res.status(err.status ?? 500).json({ msg: err.message });
@@ -100,7 +105,7 @@ exports.listAuditLogs = async (req, res) => {
   }
 };
 
-// ─── Stats (Dashboard overview) ───────────────────────────────
+// ─── Stats ────────────────────────────────────────────────────
 exports.getStats = async (req, res) => {
   try {
     const stats = await adminService.getStats();

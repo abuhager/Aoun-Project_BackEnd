@@ -11,13 +11,15 @@ const notificationSchema = new mongoose.Schema({
   type: {
     type: String,
     enum: [
-      'item_booked',       // حد حجز غرضك
-      'booking_cancelled', // حد ألغى حجزه
-      'waitlist_promoted', // وصل دورك من الـ Waitlist
-      'delivery_done',     // تم التسليم
-      'new_rating',        // حصلت على تقييم
-      'report_resolved',   // تم البت في بلاغك
-    ],
+  'item_booked',
+  'booking_cancelled',
+  'waitlist_promoted',
+  'delivery_done',
+  'new_rating',
+  'report_resolved',
+  'admin_warning',   // ✅ تحذير إداري
+  'admin_ban',       // ✅ حظر إداري
+],
     required: true,
   },
   title:   { type: String, required: true },
