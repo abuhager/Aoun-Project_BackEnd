@@ -2,6 +2,7 @@
 const Rating         = require('../models/Rating');
 const Item           = require('../models/Item');
 const User           = require('../models/User');
+
 const { notifyUser } = require('../utils/notifyUser');
 
 const calcTrustDelta = (score) => {
@@ -50,6 +51,8 @@ exports.submitRating = async ({ itemId, raterId, score, comment }) => {
     trustDelta,
   });
 
+    await Item.findByIdAndUpdate(itemId, { isRated: true });
+
   await User.findByIdAndUpdate(
     item.donor,
     { $inc: { trustScore: trustDelta } }
@@ -73,4 +76,20 @@ exports.getUserRatings = async (userId) => {
     .populate('rater', 'name avatar')
     .sort({ createdAt: -1 })
     .limit(20);
+};
+
+exports.getPendingRating = async (userId) => {
+  const bookedItems = await Item.find({
+    bookedBy: userId,
+    status:   'تم التسليم',
+  })
+    .populate('donor', 'name avatar')
+    .lean();
+
+  if (!bookedItems.length) return null;
+
+  const ratedItemIds = await Rating.find({ rater: userId }).distinct('item');
+  const ratedSet     = new Set(ratedItemIds.map(String));
+
+  return bookedItems.find((item) => !ratedSet.has(String(item._id))) || null;
 };

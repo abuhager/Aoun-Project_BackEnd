@@ -1,6 +1,5 @@
-// controllers/ratingController.js
-const ratingService          = require('../services/ratingService');
-const { validateRating }     = require('../dtos/ratingDto');
+const ratingService        = require('../services/ratingService');
+const { validateRating }   = require('../dtos/ratingDto');
 
 exports.submitRating = async (req, res) => {
   const { error } = validateRating(req.body);
@@ -24,6 +23,16 @@ exports.getUserRatings = async (req, res) => {
   try {
     const ratings = await ratingService.getUserRatings(req.params.id);
     return res.status(200).json({ ratings });
+  } catch (err) {
+    return res.status(500).json({ msg: err.message });
+  }
+};
+
+// ✅ جديد — الكنترولر بس يستدعي السيرفيس
+exports.getPendingRating = async (req, res) => {
+  try {
+    const pending = await ratingService.getPendingRating(req.user.id);
+    return res.json({ pendingRating: pending });
   } catch (err) {
     return res.status(500).json({ msg: err.message });
   }

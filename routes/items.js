@@ -20,7 +20,7 @@ const {
   getItemById,
   createItem,
   bookItem,
-getPendingRating,
+
   cancelBooking,
   completeDelivery,
   updateItem,
@@ -43,7 +43,6 @@ const bookingLimiter = rateLimit({
 // ── قراءة عامة ────────────────────────────────────────────────
 router.get('/',     getItems);
 router.get('/me',   requireAuth, getMyItems);
-
 router.get('/:id',  validateObjectId('id'), getItemById);
 
 
