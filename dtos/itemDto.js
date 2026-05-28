@@ -88,6 +88,7 @@ exports.toPublicItem = (item) => ({
 // للمتبرع — يرى بيانات الحاجز (email + phone) بدون OTP
 exports.toDonorItem = (item) => ({
   ...exports.toPublicItem(item),
+  reportId: item.reportId ?? null, // ✅ جديد
   bookedBy: item.bookedBy ? {
     _id:   item.bookedBy._id,
     name:  item.bookedBy.name,

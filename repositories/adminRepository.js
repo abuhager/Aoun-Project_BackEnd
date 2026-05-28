@@ -68,6 +68,7 @@ exports.findPendingReports = ({ page = 1, limit = 20 } = {}) =>
   Report.find({ status: 'pending' })
     .populate('reporter',     'name email')
     .populate('reportedUser', 'name email')
+    .populate('relatedItem',  'title')        // ✅ أضف
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(limit)

@@ -2,7 +2,7 @@
 const adminRepo      = require('../repositories/adminRepository');
 const userRepository = require('../repositories/userRepository');
 const AdminLog       = require('../models/AdminLog');
-
+const { notifyUser } = require('../utils/notifyUser');
 // ─── Stats ────────────────────────────────────────────────────
 exports.getStats = () => adminRepo.getDashboardStats();
 
@@ -66,25 +66,34 @@ exports.listReports = async ({ page = 1 }) => {
 };
 
 exports.resolveReport = async (reportId, adminId, action) => {
-  // ✅ map action → status المتوافق مع Report model enum
   const statusMap = {
     warn:    'actioned',
     ban:     'actioned',
     dismiss: 'dismissed',
   };
   const newStatus = statusMap[action] ?? 'reviewed';
-
   const report = await adminRepo.resolveReport(reportId, adminId, newStatus);
   if (!report) throw Object.assign(new Error('البلاغ غير موجود'), { status: 404 });
 
   await adminRepo.logAdminAction({
-    adminId, action: 'REPORT_ACTION', // ✅ كان `resolve_report:${action}`
+    adminId, action: 'REPORT_ACTION',
     targetId: reportId, targetModel: 'Report', reason: action,
   });
 
-  // ✅ إذا action = ban → احظر المُبلَّغ عنه تلقائياً
+  // ✅ إرسال notification للمُبلَّغ عنه
+  if (action === 'warn' && report.reportedUser) {
+    await notifyUser(report.reportedUser, {
+      type:    'warning',
+      message: '⚠️ تلقيت تحذيراً من الإدارة بسبب بلاغ مقدم ضدك. يرجى الالتزام بقوانين المنصة.',
+    });
+  }
+
   if (action === 'ban' && report.reportedUser) {
     await adminRepo.banUser(report.reportedUser, 'حظر من بلاغ مؤكد', adminId);
+    await notifyUser(report.reportedUser, {
+      type:    'ban',
+      message: '🚫 تم حظر حسابك من قبل الإدارة.',
+    });
     await adminRepo.logAdminAction({
       adminId, action: 'BAN',
       targetId: report.reportedUser, targetModel: 'User',
@@ -120,16 +129,13 @@ exports.promoteToLevel2 = async (targetId, adminId, reason = null) => {
 exports.demoteToLevel1 = async (targetId, adminId, reason = null) => {
   const user = await userRepository.findByIdForAdmin(targetId);
 
-  if (!user) throw Object.assign(new Error('المستخدم غير موجود'), { status: 404, code: 'USER_NOT_FOUND' });
+  if (!user) throw Object.assign(
+    new Error('المستخدم غير موجود'), { status: 404 }
+  );
 
-  if (user.isVerifiedStudent || user.phoneVerified) {
-    throw Object.assign(
-      new Error('لا يمكن خفض مستخدم وصل Level 2 تلقائياً'),
-      { status: 403, code: 'AUTO_VERIFIED_PROTECTED' }
-    );
-  }
-
-  if (user.trustLevel < 2) throw Object.assign(new Error('المستخدم في المستوى 1 بالفعل'), { status: 400, code: 'ALREADY_LEVEL1' });
+  if (user.trustLevel < 2) throw Object.assign(
+    new Error('المستخدم في المستوى 1 بالفعل'), { status: 400 }
+  );
 
   const updated = await userRepository.setTrustLevel(targetId, 1);
   await AdminLog.create({ adminId, targetId, action: 'DEMOTE', reason });
