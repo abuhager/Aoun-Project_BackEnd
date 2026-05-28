@@ -8,6 +8,8 @@ const Item           = require('../models/Item');
 const { generateOtp }              = require('../utils/otp');
 const { sendEmail, fireSendEmail } = require('../utils/sendEmail');
 const userRepository               = require('../repositories/userRepository');
+const { buildGamificationProfile } = require('../utils/gamification');
+
 const Rating = require('../models/Rating');
 const {
   generateAccessToken,
@@ -382,20 +384,19 @@ exports.getUserProfileLogic = async (userId, page = 1) => {
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
 
   const safeUser = {
-    _id:               user._id,
-    name:              user.name,
-    email:             user.email,
-    avatar:            user.avatar,
-    role:              user.role,
-    trustScore:        user.trustScore,
-    trustLevel:        user.trustLevel ?? 1,
-    quota:             user.quota,
-    isVerified:        user.isVerified,
-    isVerifiedStudent: user.isVerifiedStudent,
-    totalDonations:    user.totalDonations,
-    badges:            user.badges,
-    createdAt:         user.createdAt,
-  };
+  _id:               user._id,
+  name:              user.name,
+  email:             user.email,
+  avatar:            user.avatar,
+  role:              user.role,
+  trustLevel:        user.trustLevel ?? 1,
+  quota:             user.quota,
+  isVerified:        user.isVerified,
+  isVerifiedStudent: user.isVerifiedStudent,
+  badges:            user.badges,
+  createdAt:         user.createdAt,
+  gamification: buildGamificationProfile(user.trustScore, user.totalDonations), // ✅
+};
 
   return {
     statusCode: 200,
@@ -459,11 +460,11 @@ exports.getPublicProfileLogic = async (userId, page = 1) => {
       user: {
         name:              user.name,
         avatar:            user.avatar,
-        trustScore:        user.trustScore,
         trustLevel:        user.trustLevel ?? 1,
-        totalDonations:    user.totalDonations,
         isVerifiedStudent: user.isVerifiedStudent,
         createdAt:         user.createdAt,
+        gamification: buildGamificationProfile(user.trustScore, user.totalDonations), // ✅
+
       },
       stats: {
         // ✅ العدد الحقيقي الكلي
