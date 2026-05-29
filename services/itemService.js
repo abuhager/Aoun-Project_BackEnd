@@ -345,52 +345,72 @@ await notifyUser(item.donor, {
 
 // ─── 7. إتمام التسليم ─────────────────────────────────────────
 exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
-  // ── حراسة المدخلات ───────────────────────────────────────────
   if (!['recipient_confirm', 'donor_confirm'].includes(confirmationType)) {
     throw Object.assign(new Error('نوع التأكيد غير صحيح'), { status: 400 });
   }
 
   const item = await itemRepository.findItemForAction(itemId);
-  if (!item)
+  if (!item) {
     throw Object.assign(new Error('الغرض غير موجود'), { status: 404 });
+  }
 
-  if (item.status === 'تم التسليم')
+  if (item.status === 'تم التسليم') {
     throw Object.assign(new Error('تم تسليم هذا الغرض مسبقاً ✅'), { status: 400 });
+  }
 
-  if (item.status !== 'محجوز')
+  if (item.status !== 'محجوز') {
     throw Object.assign(new Error('الغرض غير محجوز حالياً'), { status: 400 });
+  }
 
   // ══════════════════════════════════════════════════════════════
   // الخطوة 1: المستلم يضغط "تأكيد الاستلام"
   // ══════════════════════════════════════════════════════════════
   if (confirmationType === 'recipient_confirm') {
-    if (item.bookedBy?.toString() !== userId.toString())
+    if (item.bookedBy?.toString() !== userId.toString()) {
       throw Object.assign(new Error('أنت لستَ الحاجز لهذا الغرض'), { status: 403 });
+    }
 
-    if (item.recipientConfirmed)
+    if (item.recipientConfirmed) {
       throw Object.assign(new Error('لقد أكّدت الاستلام مسبقاً ⏳'), { status: 400 });
+    }
 
-    await Item.findByIdAndUpdate(itemId, {
-      $set: { recipientConfirmed: true, recipientConfirmedAt: new Date() },
-    });
+    const updatedItem = await Item.findOneAndUpdate(
+      {
+        _id: itemId,
+        status: 'محجوز',
+        bookedBy: userId,
+        recipientConfirmed: { $ne: true },
+      },
+      {
+        $set: {
+          recipientConfirmed: true,
+          recipientConfirmedAt: new Date(),
+        },
+      },
+      { new: true }
+    ).lean();
 
-    // ✅ أرسل Socket.io للمتبرع ليؤكد التسليم
+    if (!updatedItem) {
+      throw Object.assign(new Error('تعذّر تسجيل تأكيد الاستلام — حاول مرة أخرى'), { status: 409 });
+    }
+
     try {
       const { getIo } = require('../socket');
       getIo()
-        .to(`user_${item.donor.toString()}`)
+        .to(`user:${item.donor.toString()}`)
         .emit('delivery:recipient_confirmed', {
-          itemId:    item._id.toString(),
+          itemId: item._id.toString(),
           itemTitle: item.title,
-          message:   `أكّد ${await _getReceiverName(userId)} استلام الغرض — اضغط "تأكيد التسليم" ✅`,
+          message: `أكّد المستلم استلام الغرض — اضغط "تأكيد التسليم" ✅`,
         });
     } catch (socketErr) {
-      console.warn('[Socket] تعذّر إرسال حدث التأكيد:', socketErr.message);
+      console.warn('[Socket] تعذّر إرسال حدث تأكيد الاستلام:', socketErr.message);
     }
 
     return {
-      msg:    'تم تأكيد الاستلام ✅ — في انتظار تأكيد المتبرع لإتمام العملية',
+      msg: 'تم تأكيد الاستلام ✅ — في انتظار تأكيد المتبرع لإتمام العملية',
       status: 'waiting_donor',
+      item: updatedItem,
     };
   }
 
@@ -398,54 +418,64 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
   // الخطوة 2: المتبرع يضغط "تأكيد التسليم"
   // ══════════════════════════════════════════════════════════════
   if (confirmationType === 'donor_confirm') {
-    if (item.donor?.toString() !== userId.toString())
+    if (item.donor?.toString() !== userId.toString()) {
       throw Object.assign(new Error('أنت لستَ المتبرع بهذا الغرض'), { status: 403 });
+    }
 
-    if (!item.recipientConfirmed)
+    if (!item.recipientConfirmed) {
       throw Object.assign(
         new Error('يجب أن يؤكد المستلم الاستلام أولاً ⏳'),
         { status: 400, code: 'RECIPIENT_NOT_CONFIRMED' }
       );
+    }
 
-    // ✅ Atomic Update — التسليم النهائي
+    const now = new Date();
+
     const updatedItem = await Item.findOneAndUpdate(
       {
-        _id:                itemId,
-        status:             'محجوز',
+        _id: itemId,
+        status: 'محجوز',
         recipientConfirmed: true,
+        donor: userId,
       },
       {
-        $set:   { status: 'تم التسليم', donorConfirmedAt: new Date() },
-        $unset: { deliveryOtp: '', bookedAt: '', recipientConfirmed: '' },
+        $set: {
+          status: 'تم التسليم',
+          donorConfirmedAt: now,
+          deliveredAt: now,
+        },
+        $unset: {
+          deliveryOtp: 1,
+        },
       },
       { new: true }
     ).lean();
 
-    if (!updatedItem)
+    if (!updatedItem) {
       throw Object.assign(new Error('تعذّر إتمام التسليم — حاول مرة أخرى'), { status: 409 });
+    }
 
-    // ✅ تحديث إحصائيات المتبرع
-    await User.findByIdAndUpdate(item.donor, { $inc: { totalDonations: 1 } });
+    await User.findByIdAndUpdate(item.donor, {
+      $inc: { totalDonations: 1 },
+    });
 
-    // ✅ أرسل Socket.io للمستلم (تأكيد نهائي)
     try {
       const { getIo } = require('../socket');
       getIo()
-        .to(`user_${item.bookedBy.toString()}`)
+        .to(`user:${item.bookedBy.toString()}`)
         .emit('delivery:completed', {
-          itemId:    item._id.toString(),
+          itemId: item._id.toString(),
           itemTitle: item.title,
-          message:   'تم تأكيد التسليم من المتبرع 🎉 — يرجى تقييم تجربتك',
+          message: 'تم تأكيد التسليم من المتبرع 🎉 — يرجى تقييم تجربتك',
         });
     } catch (socketErr) {
       console.warn('[Socket] تعذّر إرسال حدث الإتمام:', socketErr.message);
     }
 
-    // ✅ إيميل للمستلم
     const receiver = await User.findById(item.bookedBy).select('email name').lean();
     if (receiver?.email) {
       fireSendEmail({
-        email:   receiver.email,
+        email: receiver.email,
         subject: 'تم استلام الغرض بنجاح 🎁',
         message: `<div dir="rtl">
           <h2>مرحباً ${receiver.name}!</h2>
@@ -456,9 +486,9 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
     }
 
     return {
-      msg:    'تم التسليم بنجاح! 🎉',
+      msg: 'تم التسليم بنجاح! 🎉',
       status: 'delivered',
-      item:   updatedItem,
+      item: updatedItem,
     };
   }
 };

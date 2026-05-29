@@ -76,14 +76,25 @@ exports.cancelBooking = async (req, res) => {
 
 exports.completeDelivery = async (req, res) => {
   try {
-    const result = await itemService.completeDeliveryLogic(req.params.id, req.user.id, req.body.otp);
+    const result = await itemService.completeDeliveryLogic(
+      req.params.id,
+      req.user.id,
+      req.body.confirmationType
+    );
 
-    // ✅ أعلم كل المتصلين بتحديث الـ Leaderboard بعد اكتمال التسليم
-    try { getIo().emit('leaderboard:update'); } catch {}
+    // ✅ أعلم كل المتصلين بتحديث الـ Leaderboard بعد اكتمال التسليم النهائي فقط
+    if (result?.status === 'delivered') {
+      try {
+        getIo().emit('leaderboard:update');
+      } catch {}
+    }
 
     res.json(result);
   } catch (err) {
-    res.status(400).json({ msg: err.message || 'خطأ في التسليم' });
+    res.status(err.status || 500).json({
+      msg: err.message || 'خطأ في التسليم',
+      code: err.code || undefined,
+    });
   }
 };
 
