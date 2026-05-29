@@ -1,20 +1,30 @@
 const mongoose = require('mongoose');
 
 const adminLogSchema = new mongoose.Schema({
-  adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  adminId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+  },
 
-  targetId: { type: mongoose.Schema.Types.ObjectId, refPath: 'targetModel', default: null },
+  targetId: {
+    type: mongoose.Schema.Types.ObjectId,
+    refPath: 'targetModel',
+    default: null,
+  },
   targetModel: {
-    type:    String,
-    enum:    ['User', 'Item', 'Report', null],
+    type: String,
+    enum: ['User', 'Item', 'Report', null],
     default: null,
   },
 
   action: {
     type: String,
     enum: [
-      'PROMOTE', 'DEMOTE',
-      'BAN', 'UNBAN',
+      'PROMOTE',
+      'DEMOTE',
+      'BAN',
+      'UNBAN',
       'REPORT_ACTION',
       'ITEM_HIDE',
       'HUB_MANAGE',
@@ -22,11 +32,11 @@ const adminLogSchema = new mongoose.Schema({
     required: true,
   },
 
-  reason: { type: String, default: null },
+  reason:     { type: String, default: null },
+  targetName: { type: String, default: null },
+  adminNote:  { type: String, default: null },
 
-  // ✅ تفاصيل إضافية للعرض في صفحة اللوق
   meta: { type: mongoose.Schema.Types.Mixed, default: {} },
-
 }, { timestamps: true });
 
 module.exports = mongoose.model('AdminLog', adminLogSchema);

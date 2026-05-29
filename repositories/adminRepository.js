@@ -1,4 +1,3 @@
-// repositories/adminRepository.js
 const User     = require('../models/User');
 const Item     = require('../models/Item');
 const Report   = require('../models/Report');
@@ -7,11 +6,14 @@ const AdminLog = require('../models/AdminLog');
 // ── المستخدمون ────────────────────────────────────────────────
 exports.findAllUsers = ({ page = 1, limit = 20, search } = {}) => {
   const filter = search
-    ? { $or: [
-        { name:  new RegExp(search, 'i') },
-        { email: new RegExp(search, 'i') },
-      ]}
+    ? {
+        $or: [
+          { name:  new RegExp(search, 'i') },
+          { email: new RegExp(search, 'i') },
+        ],
+      }
     : {};
+
   return User.find(filter)
     .select('-password -refreshToken -verificationOtp -resetPasswordToken')
     .sort({ createdAt: -1 })
@@ -22,11 +24,14 @@ exports.findAllUsers = ({ page = 1, limit = 20, search } = {}) => {
 
 exports.countUsers = (search) => {
   const filter = search
-    ? { $or: [
-        { name:  new RegExp(search, 'i') },
-        { email: new RegExp(search, 'i') },
-      ]}
+    ? {
+        $or: [
+          { name:  new RegExp(search, 'i') },
+          { email: new RegExp(search, 'i') },
+        ],
+      }
     : {};
+
   return User.countDocuments(filter);
 };
 
@@ -34,22 +39,21 @@ exports.banUser = (userId, reason, bannedBy) =>
   User.findByIdAndUpdate(
     userId,
     { $set: { isBanned: true, banReason: reason, bannedBy } },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
 exports.unbanUser = (userId) =>
   User.findByIdAndUpdate(
     userId,
-    // ✅ كان $unset فقط — isBanned لازم يرجع false صريح
     { $set: { isBanned: false }, $unset: { banReason: '', bannedBy: '' } },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
 exports.adjustTrustScore = (userId, delta) =>
   User.findByIdAndUpdate(
     userId,
     { $inc: { trustScore: delta } },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
 // ── الأغراض ───────────────────────────────────────────────────
@@ -64,15 +68,17 @@ exports.findAllItems = ({ page = 1, limit = 20 } = {}) =>
 exports.countItems = () => Item.countDocuments();
 
 // ── البلاغات ──────────────────────────────────────────────────
+const pendingFilter = {
+  status: 'pending',
+  $or: [
+    { appealDeadline: { $lte: new Date() } },
+    { appealText: { $exists: true, $ne: null } },
+    { appealDeadline: { $exists: false } },
+  ],
+};
+
 exports.findPendingReports = ({ page = 1, limit = 20 } = {}) =>
-  Report.find({
-    status: 'pending',
-    $or: [
-      { appealDeadline: { $lte: new Date() } },     
-      { appealText: { $exists: true, $ne: null } },  
-      { appealDeadline: { $exists: false } },         
-    ],
-  })
+  Report.find(pendingFilter)
     .populate('reporter',     'name email')
     .populate('reportedUser', 'name email')
     .populate('relatedItem',  'title')
@@ -81,27 +87,46 @@ exports.findPendingReports = ({ page = 1, limit = 20 } = {}) =>
     .limit(limit)
     .lean();
 
+exports.countPendingReports = () => Report.countDocuments(pendingFilter);
+
 exports.resolveReport = (reportId, adminId, status) =>
   Report.findByIdAndUpdate(
     reportId,
-    // ✅ كان status: 'resolved' — مش موجود في الـ enum
-    // status القادم من adminService هو: 'actioned' أو 'dismissed' أو 'reviewed'
     { $set: { status, resolvedBy: adminId, resolvedAt: new Date() } },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
 // ── السجلات ───────────────────────────────────────────────────
-exports.logAdminAction = ({ adminId, action, targetId, targetModel, reason, meta }) =>
-  AdminLog.create({ adminId, action, targetId, targetModel, reason, meta });
+exports.logAdminAction = ({
+  adminId,
+  action,
+  targetId,
+  targetModel,
+  reason,
+  meta,
+  targetName,
+  adminNote,
+}) =>
+  AdminLog.create({
+    adminId,
+    action,
+    targetId,
+    targetModel,
+    reason,
+    meta,
+    targetName,
+    adminNote,
+  });
 
-exports.findAdminLogs = async ({ page = 1, limit = 20 }) => {
-  return AdminLog.find()
+exports.findAdminLogs = ({ page = 1, limit = 20 } = {}) =>
+  AdminLog.find()
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(limit)
-    .populate('adminId',  'name email')   // اسم الأدمن
-    .populate('targetId', 'name email title'); // اسم المستهدف (user أو item)
-};
+    .populate('adminId',  'name email')
+    .populate('targetId', 'name email title')
+    .lean();
+
 // ── الإحصائيات (Dashboard) ────────────────────────────────────
 exports.getDashboardStats = () =>
   Promise.all([
