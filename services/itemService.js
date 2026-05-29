@@ -394,23 +394,32 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
       throw Object.assign(new Error('تعذّر تسجيل تأكيد الاستلام — حاول مرة أخرى'), { status: 409 });
     }
 
+    // ✅ Socket → المتبرع
     try {
       const { getIo } = require('../socket');
       getIo()
         .to(`user:${item.donor.toString()}`)
         .emit('delivery:recipient_confirmed', {
-          itemId: item._id.toString(),
+          itemId:    item._id.toString(),
           itemTitle: item.title,
-          message: `أكّد المستلم استلام الغرض — اضغط "تأكيد التسليم" ✅`,
+          message:   `أكّد المستلم استلام الغرض — اضغط "تأكيد التسليم" ✅`,
         });
     } catch (socketErr) {
       console.warn('[Socket] تعذّر إرسال حدث تأكيد الاستلام:', socketErr.message);
     }
 
+    // ✅ In-app notification → المتبرع
+    await notifyUser(item.donor, {
+      type:   'recipient_confirmed',
+      title:  'المستلم أكّد الاستلام ✅',
+      body:   `أكّد المستلم استلام "${item.title}" — اضغط تأكيد التسليم لإتمام العملية`,
+      itemId: item._id,
+    });
+
     return {
-      msg: 'تم تأكيد الاستلام ✅ — في انتظار تأكيد المتبرع لإتمام العملية',
+      msg:    'تم تأكيد الاستلام ✅ — في انتظار تأكيد المتبرع لإتمام العملية',
       status: 'waiting_donor',
-      item: updatedItem,
+      item:   updatedItem,
     };
   }
 
@@ -433,20 +442,18 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
 
     const updatedItem = await Item.findOneAndUpdate(
       {
-        _id: itemId,
-        status: 'محجوز',
+        _id:                itemId,
+        status:             'محجوز',
         recipientConfirmed: true,
-        donor: userId,
+        donor:              userId,
       },
       {
         $set: {
-          status: 'تم التسليم',
+          status:          'تم التسليم',
           donorConfirmedAt: now,
-          deliveredAt: now,
+          deliveredAt:     now,
         },
-        $unset: {
-          deliveryOtp: 1,
-        },
+        $unset: { deliveryOtp: 1 },
       },
       { new: true }
     ).lean();
@@ -459,23 +466,45 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
       $inc: { totalDonations: 1 },
     });
 
+    // ✅ Socket → الطرفين
     try {
       const { getIo } = require('../socket');
-      getIo()
-        .to(`user:${item.bookedBy.toString()}`)
-        .emit('delivery:completed', {
-          itemId: item._id.toString(),
-          itemTitle: item.title,
-          message: 'تم تأكيد التسليم من المتبرع 🎉 — يرجى تقييم تجربتك',
-        });
+      const io = getIo();
+      const payload = { itemId: item._id.toString(), itemTitle: item.title };
+
+      io.to(`user:${item.bookedBy.toString()}`).emit('delivery:completed', {
+        ...payload,
+        message: 'تم تأكيد التسليم من المتبرع 🎉 — يرجى تقييم تجربتك',
+      });
+      io.to(`user:${item.donor.toString()}`).emit('delivery:completed', {
+        ...payload,
+        message: 'تم إتمام التسليم بنجاح 🎉 — شكراً لتبرعك 💚',
+      });
     } catch (socketErr) {
       console.warn('[Socket] تعذّر إرسال حدث الإتمام:', socketErr.message);
     }
 
+    // ✅ In-app notification → المستلم
+    await notifyUser(item.bookedBy, {
+      type:   'delivery_completed',
+      title:  'تم استلام غرضك بنجاح 🎁',
+      body:   `تم تأكيد استلامك لـ "${item.title}" — لا تنسَ تقييم المتبرع 💚`,
+      itemId: item._id,
+    });
+
+    // ✅ In-app notification → المتبرع
+    await notifyUser(item.donor, {
+      type:   'delivery_completed',
+      title:  'تم إتمام التسليم 🎉',
+      body:   `تم تسليم "${item.title}" بنجاح — شكراً لمساهمتك 💚`,
+      itemId: item._id,
+    });
+
+    // ✅ Email → المستلم
     const receiver = await User.findById(item.bookedBy).select('email name').lean();
     if (receiver?.email) {
       fireSendEmail({
-        email: receiver.email,
+        email:   receiver.email,
         subject: 'تم استلام الغرض بنجاح 🎁',
         message: `<div dir="rtl">
           <h2>مرحباً ${receiver.name}!</h2>
@@ -486,13 +515,12 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
     }
 
     return {
-      msg: 'تم التسليم بنجاح! 🎉',
+      msg:    'تم التسليم بنجاح! 🎉',
       status: 'delivered',
-      item: updatedItem,
+      item:   updatedItem,
     };
   }
 };
-
 // ─── 8. تعديل غرض ────────────────────────────────────────────
 exports.updateItemLogic = async (itemId, userId, updateData, file) => {
   const item = await itemRepository.findItemForUpdate(itemId, userId);

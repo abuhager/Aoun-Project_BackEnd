@@ -118,6 +118,17 @@ app.use((err, _req, res, _next) => {
     msg: isDev ? err.message : 'حدث خطأ داخلي في الخادم 🛠️',
     code: err.code || undefined,
   });
+  // Duplicate key (مثلاً email مكرر)
+if (err.code === 11000) {
+  const field = Object.keys(err.keyValue || {})[0] ?? 'حقل';
+  return res.status(409).json({ msg: `${field} مستخدم مسبقاً`, code: 'DUPLICATE_KEY' });
+}
+
+// Mongoose ValidationError يُرجع array من الأخطاء وليس رسالة واحدة
+if (err.name === 'ValidationError') {
+  const errors = Object.values(err.errors).map((e) => e.message);
+  return res.status(422).json({ msg: 'بيانات غير صالحة', errors, code: 'VALIDATION_ERROR' });
+}
 });
 
 module.exports = app;

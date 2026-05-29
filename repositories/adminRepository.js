@@ -1,15 +1,20 @@
+// repositories/adminRepository.js — النسخة المُصلَحة الكاملة
+
 const User     = require('../models/User');
 const Item     = require('../models/Item');
 const Report   = require('../models/Report');
 const AdminLog = require('../models/AdminLog');
+
+// ── مساعد: تهريب أحرف RegExp الخاصة لمنع هجمات ReDoS ──────────
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // ── المستخدمون ────────────────────────────────────────────────
 exports.findAllUsers = ({ page = 1, limit = 20, search } = {}) => {
   const filter = search
     ? {
         $or: [
-          { name:  new RegExp(search, 'i') },
-          { email: new RegExp(search, 'i') },
+          { name:  new RegExp(escapeRegex(search), 'i') }, // ✅ مُعالَج
+          { email: new RegExp(escapeRegex(search), 'i') }, // ✅ مُعالَج
         ],
       }
     : {};
@@ -26,8 +31,8 @@ exports.countUsers = (search) => {
   const filter = search
     ? {
         $or: [
-          { name:  new RegExp(search, 'i') },
-          { email: new RegExp(search, 'i') },
+          { name:  new RegExp(escapeRegex(search), 'i') }, // ✅ مُعالَج
+          { email: new RegExp(escapeRegex(search), 'i') }, // ✅ مُعالَج
         ],
       }
     : {};
@@ -142,7 +147,10 @@ exports.getDashboardStats = () =>
     deliveredItems,
     pendingReports,
   }));
-  exports.findPendingReportsWithCounts = async ({ page = 1, limit = 20, status = 'pending' } = {}) => {
+// ✅ السطر أعلاه ينتهي بـ ; — هذا يُصلح مشكلة الـ scope
+
+// ── البلاغات مع العدادات التراكمية ───────────────────────────
+exports.findPendingReportsWithCounts = async ({ page = 1, limit = 20, status = 'pending' } = {}) => {
   const skip = (page - 1) * limit;
 
   const reports = await Report.aggregate([
@@ -155,10 +163,10 @@ exports.getDashboardStats = () =>
     // 2. بيانات المُبلَّغ عنه
     {
       $lookup: {
-        from:       'users',
-        localField: 'reportedUser',
+        from:         'users',
+        localField:   'reportedUser',
         foreignField: '_id',
-        as:         'reportedUserData',
+        as:           'reportedUserData',
         pipeline: [{
           $project: { name: 1, email: 1, avatar: 1, isBanned: 1, trustLevel: 1, trustScore: 1 },
         }],
@@ -187,7 +195,7 @@ exports.getDashboardStats = () =>
       },
     },
 
-    // 5. ✅ العداد التراكمي — كل البلاغات ضد نفس المستخدم (بكل الحالات)
+    // 5. العداد التراكمي — كل البلاغات ضد نفس المستخدم (بكل الحالات)
     {
       $lookup: {
         from: 'reports',
@@ -200,7 +208,7 @@ exports.getDashboardStats = () =>
       },
     },
 
-    // 6. ✅ عداد البلاغات المعلقة فقط
+    // 6. عداد البلاغات المعلقة فقط
     {
       $lookup: {
         from: 'reports',
@@ -229,15 +237,12 @@ exports.getDashboardStats = () =>
         reporterData:     { $arrayElemAt: ['$reporterData',     0] },
         relatedItemData:  { $arrayElemAt: ['$relatedItemData',  0] },
 
-        // ✅ إجمالي البلاغات على الشخص (بكل الحالات)
         totalReportsAgainstUser: {
           $ifNull: [{ $arrayElemAt: ['$totalReportsLookup.total',  0] }, 0],
         },
-        // ✅ البلاغات المعلقة فقط
         pendingReportsAgainstUser: {
           $ifNull: [{ $arrayElemAt: ['$pendingReportsLookup.total', 0] }, 0],
         },
-        // ✅ علم خطر: أكثر من 3 بلاغات
         isRepeatOffender: {
           $gt: [
             { $ifNull: [{ $arrayElemAt: ['$totalReportsLookup.total', 0] }, 0] },
