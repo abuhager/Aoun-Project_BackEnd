@@ -7,6 +7,8 @@ const { generateOtp }        = require('../utils/otp');
 const { fireSendEmail }      = require('../utils/sendEmail');
 const { uploadToCloudinary } = require('../utils/uploadToCloudinary');
 const { notifyUser } = require('../utils/notifyUser');
+const { toPublicItem } = require('../dtos/itemDto');
+
 
 // ─── 1. جلب الأغراض (مع pagination) ─────────────────────────
 exports.getItemsLogic = async (query) => {
@@ -135,7 +137,7 @@ exports.bookItemLogic = async (itemId, userId) => {
   const user = await User.findOneAndUpdate(
     { _id: userId, quota: { $gt: 0 } },
     { $inc: { quota: -1 } },
-    { new: true }
+{ returnDocument: 'after' }
   );
   if (!user) throw new Error('لا تملك حصصاً متاحة لحجز أغراض جديدة 🚫');
 
