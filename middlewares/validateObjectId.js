@@ -1,19 +1,23 @@
-// middlewares/validateObjectId.js — ✅ FIXED: double validation
+// middlewares/validateObjectId.js
+// ✅ يُستخدَم في جميع الـ routes التي تأخذ :id أو أي param من DB
 const mongoose = require('mongoose');
 
-module.exports = function validateObjectId(paramName = 'id') {
-  return function (req, res, next) {
-    const value = req.params[paramName];
-
-    // ✅ التحقق المزدوج: يمنع strings زي "000000000000"
-    const isValid =
-      mongoose.Types.ObjectId.isValid(value) &&
-      new mongoose.Types.ObjectId(value).toString() === value;
-
-    if (!isValid) {
-      return res.status(400).json({ msg: 'المعرّف غير صالح' });
+/**
+ * validateObjectId('id')           → يتحقق من req.params.id
+ * validateObjectId('id', 'userId') → يتحقق من param متعدد
+ */
+const validateObjectId = (...params) =>
+  (req, res, next) => {
+    for (const param of params) {
+      const value = req.params[param];
+      if (value && !mongoose.Types.ObjectId.isValid(value)) {
+        return res.status(400).json({
+          msg:   `المعرّف "${param}" غير صحيح`,
+          field: param,
+        });
+      }
     }
-
     next();
   };
-};
+
+module.exports = validateObjectId;

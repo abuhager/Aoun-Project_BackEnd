@@ -15,6 +15,9 @@ const ratingRoutes = require('./routes/ratings');
 const reportRoutes = require('./routes/reports');
 const notificationRoutes = require('./routes/notifications');
 const leaderboardRoutes  = require('./routes/leaderboard');
+const settingsRoutes        = require('./routes/settings');
+const donationRequestRoutes = require('./routes/donationRequests');
+
 const app = express();
 
 // ── Trust Proxy ───────────────────────────────────────────────
@@ -54,6 +57,8 @@ app.use('/api/ratings', ratingRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/leaderboard',  leaderboardRoutes);
+app.use('/api/settings',           settingsRoutes);
+app.use('/api/donation-requests',  donationRequestRoutes);
 // ── Health Check ──────────────────────────────────────────────
 app.get('/health', (_req, res) =>
   res.json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() })

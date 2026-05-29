@@ -10,26 +10,36 @@ const { notifyUser } = require('../utils/notifyUser');
 
 // ─── 1. جلب الأغراض (مع pagination) ─────────────────────────
 exports.getItemsLogic = async (query) => {
+  const escapeRegex = require('../utils/escapeRegex');
+
   const page  = Math.max(1, parseInt(query.page)  || 1);
   const limit = Math.min(20, parseInt(query.limit) || 10);
   const skip  = (page - 1) * limit;
 
-  const filter = { status: { $in: ['متاح', 'محجوز'] } };
+  const filter = { status: 'متاح' };
+
+  // ✅ آمن من ReDoS
+  if (query.location) filter.location = new RegExp(escapeRegex(query.location), 'i');
+  if (query.search)   filter.title    = new RegExp(escapeRegex(query.search),   'i');
   if (query.category) filter.category = query.category;
-  if (query.location) filter.location = new RegExp(query.location, 'i');
-  if (query.search)   filter.title    = new RegExp(query.search,   'i');
 
   const [items, total] = await Promise.all([
     Item.find(filter)
-      .populate('donor', 'name avatar trustScore isVerifiedStudent')
+      .populate('donor',   'name avatar trustScore isVerifiedStudent')
+      .populate('safeHub', 'name address city')
       .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
+      .skip(skip).limit(limit)
+      .select('-deliveryOtp -waitlist -__v')
       .lean(),
-    Item.countDocuments(filter), // ✅ Fix: كان في النسخة الأصلية خطأ هنا
+    Item.countDocuments(filter),
   ]);
 
-  return { items, total, page, pages: Math.ceil(total / limit) };
+  return {
+    items: items.map(toPublicItem),
+    total,
+    page,
+    pages: Math.ceil(total / limit),
+  };
 };
 
 // ─── 2. أغراضي ───────────────────────────────────────────────
@@ -332,35 +342,123 @@ await notifyUser(item.donor, {
 };
 
 // ─── 7. إتمام التسليم ─────────────────────────────────────────
-exports.completeDeliveryLogic = async (itemId, userId, otp) => {
-  const item = await itemRepository.findItemForAction(itemId);
-  if (!item || item.donor.toString() !== userId.toString())
-    throw new Error('غير مصرح لك');
-  if (String(item.deliveryOtp).trim() !== String(otp).trim())
-    throw new Error('الرمز خطأ ❌');
-
-  // ✅ Fix Bug #6 — $unset بدل = undefined (لا يُحذف الحقل من DB بدون $unset)
-  const updatedItem = await Item.findByIdAndUpdate(
-    itemId,
-    {
-      $set:   { status: 'تم التسليم' },
-      $unset: { deliveryOtp: '', bookedAt: '' },
-    },
-    { new: true }
-  ).lean();
-
-  await User.findByIdAndUpdate(item.donor, { $inc: { totalDonations: 1 } });
-
-  const receiver = await User.findById(item.bookedBy).select('email').lean();
-  if (receiver) {
-    fireSendEmail({
-      email:   receiver.email,
-      subject: `تم استلام الغرض 🎁`,
-      message: `<div dir="rtl">شكراً لك! تم تأكيد استلامك للغرض. لا تنسَ تقييم المتبرع 💚</div>`,
-    });
+exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
+  // ── حراسة المدخلات ───────────────────────────────────────────
+  if (!['recipient_confirm', 'donor_confirm'].includes(confirmationType)) {
+    throw Object.assign(new Error('نوع التأكيد غير صحيح'), { status: 400 });
   }
 
-  return { msg: 'تم التسليم! 💚', item: updatedItem };
+  const item = await itemRepository.findItemForAction(itemId);
+  if (!item)
+    throw Object.assign(new Error('الغرض غير موجود'), { status: 404 });
+
+  if (item.status === 'تم التسليم')
+    throw Object.assign(new Error('تم تسليم هذا الغرض مسبقاً ✅'), { status: 400 });
+
+  if (item.status !== 'محجوز')
+    throw Object.assign(new Error('الغرض غير محجوز حالياً'), { status: 400 });
+
+  // ══════════════════════════════════════════════════════════════
+  // الخطوة 1: المستلم يضغط "تأكيد الاستلام"
+  // ══════════════════════════════════════════════════════════════
+  if (confirmationType === 'recipient_confirm') {
+    if (item.bookedBy?.toString() !== userId.toString())
+      throw Object.assign(new Error('أنت لستَ الحاجز لهذا الغرض'), { status: 403 });
+
+    if (item.recipientConfirmed)
+      throw Object.assign(new Error('لقد أكّدت الاستلام مسبقاً ⏳'), { status: 400 });
+
+    await Item.findByIdAndUpdate(itemId, {
+      $set: { recipientConfirmed: true, recipientConfirmedAt: new Date() },
+    });
+
+    // ✅ أرسل Socket.io للمتبرع ليؤكد التسليم
+    try {
+      const { getIo } = require('../socket');
+      getIo()
+        .to(`user_${item.donor.toString()}`)
+        .emit('delivery:recipient_confirmed', {
+          itemId:    item._id.toString(),
+          itemTitle: item.title,
+          message:   `أكّد ${await _getReceiverName(userId)} استلام الغرض — اضغط "تأكيد التسليم" ✅`,
+        });
+    } catch (socketErr) {
+      console.warn('[Socket] تعذّر إرسال حدث التأكيد:', socketErr.message);
+    }
+
+    return {
+      msg:    'تم تأكيد الاستلام ✅ — في انتظار تأكيد المتبرع لإتمام العملية',
+      status: 'waiting_donor',
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // الخطوة 2: المتبرع يضغط "تأكيد التسليم"
+  // ══════════════════════════════════════════════════════════════
+  if (confirmationType === 'donor_confirm') {
+    if (item.donor?.toString() !== userId.toString())
+      throw Object.assign(new Error('أنت لستَ المتبرع بهذا الغرض'), { status: 403 });
+
+    if (!item.recipientConfirmed)
+      throw Object.assign(
+        new Error('يجب أن يؤكد المستلم الاستلام أولاً ⏳'),
+        { status: 400, code: 'RECIPIENT_NOT_CONFIRMED' }
+      );
+
+    // ✅ Atomic Update — التسليم النهائي
+    const updatedItem = await Item.findOneAndUpdate(
+      {
+        _id:                itemId,
+        status:             'محجوز',
+        recipientConfirmed: true,
+      },
+      {
+        $set:   { status: 'تم التسليم', donorConfirmedAt: new Date() },
+        $unset: { deliveryOtp: '', bookedAt: '', recipientConfirmed: '' },
+      },
+      { new: true }
+    ).lean();
+
+    if (!updatedItem)
+      throw Object.assign(new Error('تعذّر إتمام التسليم — حاول مرة أخرى'), { status: 409 });
+
+    // ✅ تحديث إحصائيات المتبرع
+    await User.findByIdAndUpdate(item.donor, { $inc: { totalDonations: 1 } });
+
+    // ✅ أرسل Socket.io للمستلم (تأكيد نهائي)
+    try {
+      const { getIo } = require('../socket');
+      getIo()
+        .to(`user_${item.bookedBy.toString()}`)
+        .emit('delivery:completed', {
+          itemId:    item._id.toString(),
+          itemTitle: item.title,
+          message:   'تم تأكيد التسليم من المتبرع 🎉 — يرجى تقييم تجربتك',
+        });
+    } catch (socketErr) {
+      console.warn('[Socket] تعذّر إرسال حدث الإتمام:', socketErr.message);
+    }
+
+    // ✅ إيميل للمستلم
+    const receiver = await User.findById(item.bookedBy).select('email name').lean();
+    if (receiver?.email) {
+      fireSendEmail({
+        email:   receiver.email,
+        subject: 'تم استلام الغرض بنجاح 🎁',
+        message: `<div dir="rtl">
+          <h2>مرحباً ${receiver.name}!</h2>
+          <p>تم تأكيد استلامك لـ <strong>${item.title}</strong> بنجاح.</p>
+          <p>لا تنسَ تقييم المتبرع — تقييمك يساعد الجميع 💚</p>
+        </div>`,
+      });
+    }
+
+    return {
+      msg:    'تم التسليم بنجاح! 🎉',
+      status: 'delivered',
+      item:   updatedItem,
+    };
+  }
 };
 
 // ─── 8. تعديل غرض ────────────────────────────────────────────

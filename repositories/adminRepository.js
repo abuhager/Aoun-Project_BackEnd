@@ -142,3 +142,120 @@ exports.getDashboardStats = () =>
     deliveredItems,
     pendingReports,
   }));
+  exports.findPendingReportsWithCounts = async ({ page = 1, limit = 20, status = 'pending' } = {}) => {
+  const skip = (page - 1) * limit;
+
+  const reports = await Report.aggregate([
+    // 1. فلتر حسب الحالة
+    { $match: { status } },
+    { $sort:  { createdAt: -1 } },
+    { $skip:  skip },
+    { $limit: limit },
+
+    // 2. بيانات المُبلَّغ عنه
+    {
+      $lookup: {
+        from:       'users',
+        localField: 'reportedUser',
+        foreignField: '_id',
+        as:         'reportedUserData',
+        pipeline: [{
+          $project: { name: 1, email: 1, avatar: 1, isBanned: 1, trustLevel: 1, trustScore: 1 },
+        }],
+      },
+    },
+
+    // 3. بيانات المُبلِّغ
+    {
+      $lookup: {
+        from:         'users',
+        localField:   'reporter',
+        foreignField: '_id',
+        as:           'reporterData',
+        pipeline: [{ $project: { name: 1, avatar: 1, trustLevel: 1 } }],
+      },
+    },
+
+    // 4. الغرض المرتبط (اختياري)
+    {
+      $lookup: {
+        from:         'items',
+        localField:   'relatedItem',
+        foreignField: '_id',
+        as:           'relatedItemData',
+        pipeline: [{ $project: { title: 1, imageUrl: 1, status: 1 } }],
+      },
+    },
+
+    // 5. ✅ العداد التراكمي — كل البلاغات ضد نفس المستخدم (بكل الحالات)
+    {
+      $lookup: {
+        from: 'reports',
+        let:  { uid: '$reportedUser' },
+        pipeline: [
+          { $match: { $expr: { $eq: ['$reportedUser', '$$uid'] } } },
+          { $count: 'total' },
+        ],
+        as: 'totalReportsLookup',
+      },
+    },
+
+    // 6. ✅ عداد البلاغات المعلقة فقط
+    {
+      $lookup: {
+        from: 'reports',
+        let:  { uid: '$reportedUser' },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ['$reportedUser', '$$uid'] },
+                  { $eq: ['$status', 'pending'] },
+                ],
+              },
+            },
+          },
+          { $count: 'total' },
+        ],
+        as: 'pendingReportsLookup',
+      },
+    },
+
+    // 7. تسطيح النتائج
+    {
+      $addFields: {
+        reportedUserData: { $arrayElemAt: ['$reportedUserData', 0] },
+        reporterData:     { $arrayElemAt: ['$reporterData',     0] },
+        relatedItemData:  { $arrayElemAt: ['$relatedItemData',  0] },
+
+        // ✅ إجمالي البلاغات على الشخص (بكل الحالات)
+        totalReportsAgainstUser: {
+          $ifNull: [{ $arrayElemAt: ['$totalReportsLookup.total',  0] }, 0],
+        },
+        // ✅ البلاغات المعلقة فقط
+        pendingReportsAgainstUser: {
+          $ifNull: [{ $arrayElemAt: ['$pendingReportsLookup.total', 0] }, 0],
+        },
+        // ✅ علم خطر: أكثر من 3 بلاغات
+        isRepeatOffender: {
+          $gt: [
+            { $ifNull: [{ $arrayElemAt: ['$totalReportsLookup.total', 0] }, 0] },
+            3,
+          ],
+        },
+      },
+    },
+
+    // 8. إزالة الحقول المؤقتة
+    {
+      $project: {
+        totalReportsLookup:   0,
+        pendingReportsLookup: 0,
+      },
+    },
+  ]);
+
+  const total = await Report.countDocuments({ status });
+  return { reports, total };
+};
