@@ -1,9 +1,11 @@
+// app.js
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 
 const { globalLimiter } = require('./middlewares/rateLimiter');
+const errorHandler = require('./middlewares/errorHandler');
 
 const authRoutes = require('./routes/auth');
 const itemRoutes = require('./routes/items');
@@ -80,49 +82,15 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/donation-requests', donationRequestRoutes);
 app.use('/api/conversations', conversationRoutes);
 
+// 404 handler
 app.use((req, res) => {
   res.status(404).json({
     msg: `المسار غير موجود: ${req.method} ${req.originalUrl}`,
+    code: 'ROUTE_NOT_FOUND',
   });
 });
 
-app.use((err, _req, res, _next) => {
-  const isDev = process.env.NODE_ENV !== 'production';
-
-  console.error('[Error]', err.message);
-  if (isDev && err.stack) {
-    console.error(err.stack);
-  }
-
-  if (err.code === 11000) {
-    const field = Object.keys(err.keyValue || {})[0] ?? 'حقل';
-    return res.status(409).json({
-      msg: `${field} مستخدم مسبقاً`,
-      code: 'DUPLICATE_KEY',
-    });
-  }
-
-  if (err.name === 'ValidationError') {
-    const errors = Object.values(err.errors || {}).map((e) => e.message);
-    return res.status(422).json({
-      msg: 'بيانات غير صالحة',
-      errors,
-      code: 'VALIDATION_ERROR',
-    });
-  }
-
-  if (err.name === 'CastError') {
-    return res.status(400).json({ msg: 'معرّف غير صحيح' });
-  }
-
-  if (err.message?.includes('CORS')) {
-    return res.status(403).json({ msg: err.message });
-  }
-
-  return res.status(err.status || 500).json({
-    msg: isDev ? err.message : 'حدث خطأ داخلي في الخادم 🛠️',
-    code: err.code || undefined,
-  });
-});
+// Centralized error handler
+app.use(errorHandler);
 
 module.exports = app;

@@ -1,39 +1,47 @@
 // backend/dtos/itemDto.js
 const Joi = require('joi');
+const SystemSettings = require('../models/SystemSettings');
 
 // ============================================
 // 1. Validation
 // ============================================
 
-exports.validateCreateItem = (data) => {
+exports.validateCreateItem = async (data) => {
+  // جلب الإعدادات الديناميكية
+  const settings = await SystemSettings.getCached(); // استخدم الـ cache الموجود
+  const validCategories = settings.categories;
+
   const schema = Joi.object({
     title: Joi.string().min(3).max(100).required().messages({
-      'string.empty': 'اسم الغرض مطلوب',
-      'string.min':   'اسم الغرض يجب أن يكون 3 أحرف على الأقل',
+      'string.empty': 'العنوان مطلوب',
+      'string.min': 'اسم الغرض يجب أن يكون 3 أحرف على الأقل',
     }),
+    // ✅ الآن التصنيفات ديناميكية من قاعدة البيانات
     category: Joi.string()
-      .valid('كتب', 'إلكترونيات', 'أثاث', 'أخرى', 'ملابس')
+      .valid(...validCategories)
       .required()
       .messages({
         'string.empty': 'التصنيف مطلوب',
-        'any.only':     'التصنيف غير صحيح',
+        'any.only': `التصنيف غير صحيح. المتاح: ${validCategories.join(', ')}`,
       }),
-    description: Joi.string().allow('').max(500),
-    location:    Joi.string().required().messages({
-      'string.empty': 'الموقع مطلوب',
-    }),
-    condition: Joi.string().allow('').max(100),
-    safeHub:   Joi.string().hex().length(24).required().messages({ // ✅ هنا
+    safeHub: Joi.string().hex().length(24).required().messages({
       'string.empty': 'مركز التسليم مطلوب',
-      'any.required': 'مركز التسليم مطلوب',
     }),
-  }).unknown(true);
-  return schema.validate(data);
+    description: Joi.string().allow('').max(500),
+  });
+
+  return schema.validateAsync(data, { abortEarly: false });
 };
-exports.validateUpdateItem = (data) => {
+
+
+exports.validateUpdateItem = async (data) => {
+  // جلب الإعدادات الديناميكية
+  const settings = await SystemSettings.getCached();
+  const validCategories = settings.categories;
+
   const schema = Joi.object({
     title:       Joi.string().min(3).max(100),
-    category:    Joi.string().valid('كتب', 'إلكترونيات', 'أثاث', 'أخرى', 'ملابس'),
+    category:    Joi.string().valid(...validCategories),
     description: Joi.string().allow('').max(500),
     location:    Joi.string(),
     condition:   Joi.string().allow('').max(100),
@@ -42,7 +50,7 @@ exports.validateUpdateItem = (data) => {
       'string.length': 'معرّف المركز غير صحيح',
     }),
   }).unknown(true);
-  return schema.validate(data);
+  return schema.validateAsync(data, { abortEarly: false });
 };
 
 // ============================================

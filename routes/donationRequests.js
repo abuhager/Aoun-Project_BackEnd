@@ -7,7 +7,6 @@ const validateObjectId = require('../middlewares/validateObjectId');
 const drController = require('../controllers/donationRequestController');
 const { validateDonationRequest } = require('../dtos/donationRequestDto');
 
-// middleware تحقق من الـ DTO
 const validate = (fn) => (req, res, next) => {
   const { error } = fn(req.body);
   if (error) {
@@ -16,14 +15,9 @@ const validate = (fn) => (req, res, next) => {
   next();
 };
 
-// ── قراءة ────────────────────────────────────────────────────
-// ✅ لازم تكون محمية لأن getRequests يعتمد على req.user.id عند mine=true
 router.get('/', requireAuth, drController.getRequests);
-
-// ✅ endpoint إضافي للداشبورد أو quota summary
 router.get('/me', requireAuth, drController.getMyRequests);
 
-// ── كتابة ────────────────────────────────────────────────────
 router.post(
   '/',
   requireAuth,

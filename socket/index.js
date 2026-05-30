@@ -5,6 +5,24 @@ const Item = require('../models/Item');
 
 let io;
 
+const markRead = async (conversation, userId) => {
+  let changed = false;
+
+  conversation.messages.forEach((m) => {
+    if (m.sender.toString() !== userId.toString() && !m.read) {
+      m.read = true;
+      changed = true;
+    }
+  });
+
+  if (changed) {
+    conversation.lastActivity = new Date();
+    await conversation.save();
+  }
+
+  return changed;
+};
+
 const initSocket = (httpServer) => {
   io = new Server(httpServer, {
     cors: {
@@ -65,8 +83,14 @@ const initSocket = (httpServer) => {
 
         socket.join(`conv_${conversation._id}`);
 
+        await markRead(conversation, socket.userId);
+
         socket.emit('conversationJoined', {
           convId: conversation._id,
+        });
+
+        io.to(`conv_${conversation._id}`).emit('messagesRead', {
+          by: socket.userId,
         });
       } catch (err) {
         console.error('joinConversation:', err.message);

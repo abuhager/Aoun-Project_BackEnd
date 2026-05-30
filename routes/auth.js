@@ -1,16 +1,21 @@
-const express        = require('express');
-const router         = express.Router();
-const { requireAuth }  = require('../middlewares/auth');
-const authController   = require('../controllers/authController');
+// routes/auth.js
+const express = require('express');
+const router = express.Router();
+
+const { requireAuth } = require('../middlewares/auth');
+const authController = require('../controllers/authController');
 const validateObjectId = require('../middlewares/validateObjectId');
-const validateBody     = require('../middlewares/validateBody');
-const upload           = require('../middlewares/upload'); // ← جديد
+const validateBody = require('../middlewares/validateBody');
+
 const {
-  authLimiter, refreshLimiter,
-  registerLimiter, forgotPasswordLimiter, otpLimiter,
+  authLimiter,
+  refreshLimiter,
+  registerLimiter,
+  forgotPasswordLimiter,
+  otpLimiter,
 } = require('../middlewares/rateLimiter');
 
-router.post('/register',        registerLimiter,       validateBody('register'),       authController.register);
+router.post('/register',        registerLimiter,       validateBody('register'),        authController.register);
 router.post('/verify-email',    otpLimiter,            validateBody('verifyEmail'),     authController.verifyEmail);
 router.post('/login',           authLimiter,           validateBody('login'),           authController.login);
 router.post('/forgot-password', forgotPasswordLimiter, validateBody('forgotPassword'),  authController.forgotPassword);
@@ -23,8 +28,7 @@ router.get('/profile/:id',      validateObjectId('id'), authController.getPublic
 router.post('/refresh',         refreshLimiter,        authController.refreshToken);
 router.post('/logout',          requireAuth,           authController.logout);
 
-// ─── تعديل الملف الشخصي ───────────────────────────────────
-router.put('/me',          requireAuth, authController.updateMe);
-router.put('/me/password', requireAuth, authController.updatePassword);
+router.put('/me',               requireAuth,           validateBody('updateMe'),        authController.updateMe);
+router.put('/me/password',      requireAuth,           validateBody('updatePassword'),  authController.updatePassword);
 
 module.exports = router;

@@ -1,221 +1,140 @@
+// controllers/authController.js
 const authService = require('../services/authService');
-const {
-  validateRegister,
-  validateVerifyEmail,
-  validateLogin,
-  validateForgotPassword,
-  validateResetPassword,
-  validateUpdateMe,
-  validateUpdatePassword
-} = require('../dtos/authDto');
-const mongoose = require('mongoose');
+const asyncHandler = require('../utils/asyncHandler');
+const AppError = require('../utils/AppError');
+const userRepository = require('../repositories/userRepository');
+const upload = require('../middlewares/upload');
+
 const {
   REFRESH_COOKIE_OPTIONS,
   CLEAR_REFRESH_COOKIE_OPTIONS,
 } = require('../utils/tokenUtils');
-const multer  = require('multer');
-const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
-const bcrypt         = require('bcryptjs');
-const userRepository = require('../repositories/userRepository');
 
 // ─── 1. التسجيل ────────────────────────────────────────
-exports.register = async (req, res) => {
-  const { error } = validateRegister(req.body);
-  if (error) return res.status(400).json({ msg: error.details[0].message });
-
-  try {
-    const result = await authService.registerLogic(req.body);
-    return res.status(result.statusCode).json(result.body);
-  } catch (err) {
-    console.error(err.message);
-    return res.status(500).json({ msg: 'خطأ في السيرفر' });
-  }
-};
+exports.register = asyncHandler(async (req, res) => {
+  const result = await authService.registerLogic(req.body);
+  return res.status(result.statusCode).json(result.body);
+});
 
 // ─── 2. تأكيد الإيميل ─────────────────────────────────
-exports.verifyEmail = async (req, res) => {
-  const { error } = validateVerifyEmail(req.body);
-  if (error) return res.status(400).json({ msg: error.details[0].message });
-
-  try {
-    const result = await authService.verifyEmailLogic(req.body);
-    return res.status(result.statusCode).json(result.body);
-  } catch (err) {
-    console.error(err.message);
-    return res.status(500).json({ msg: 'خطأ في السيرفر أثناء تفعيل الحساب' });
-  }
-};
+exports.verifyEmail = asyncHandler(async (req, res) => {
+  const result = await authService.verifyEmailLogic(req.body);
+  return res.status(result.statusCode).json(result.body);
+});
 
 // ─── 3. تسجيل الدخول ──────────────────────────────────
-exports.login = async (req, res) => {
-  const { error } = validateLogin(req.body);
-  if (error) return res.status(400).json({ msg: error.details[0].message });
+exports.login = asyncHandler(async (req, res) => {
+  const result = await authService.loginLogic(req.body);
 
-  try {
-    const result = await authService.loginLogic(req.body);
-
-    // ازرع الكوكي لو اللوجين نجح
-    if (result.statusCode === 200 && result.refreshToken) {
-      res.cookie('refreshToken', result.refreshToken, REFRESH_COOKIE_OPTIONS);
-    }
-
-    return res.status(result.statusCode).json(result.body);
-  } catch (err) {
-    console.error(err.message);
-    return res.status(500).json({ msg: 'خطأ في السيرفر' });
+  if (result.statusCode === 200 && result.refreshToken) {
+    res.cookie('refreshToken', result.refreshToken, REFRESH_COOKIE_OPTIONS);
   }
-};
 
-// ─── 4. بروفايل المستخدم الخاص (GET /me) ───────────────
-exports.getUserProfile = async (req, res) => {
-  try {
-    const result = await authService.getUserProfileLogic(req.user.id);
-    return res.status(result.statusCode).json(result.body);
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ msg: 'خطأ في السيرفر' });
+  return res.status(result.statusCode).json(result.body);
+});
+
+// ─── 4. بروفايل المستخدم الخاص (GET /me/profile) ──────
+exports.getUserProfile = asyncHandler(async (req, res) => {
+  const result = await authService.getUserProfileLogic(req.user.id);
+  return res.status(result.statusCode).json(result.body);
+});
+
+// ─── 5. GET /me — minimal payload للـ AuthContext ─────
+exports.getMe = asyncHandler(async (req, res) => {
+  const user = await userRepository.findById(req.user.id);
+
+  if (!user) {
+    throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
   }
-};
-// ─── GET /me — minimal payload للـ AuthContext فقط ───────────
-exports.getMe = async (req, res) => {
-  try {
-    const user = await require('../repositories/userRepository')
-      .findById(req.user.id);
 
-    if (!user) return res.status(404).json({ msg: 'المستخدم غير موجود' });
+  return res.json({
+    _id:        user._id,
+    name:       user.name,
+    email:      user.email,
+    avatar:     user.avatar,
+    role:       user.role,
+    trustLevel: user.trustLevel ?? 1,
+    trustScore: user.trustScore ?? 0,
+    quota:      user.quota ?? 0,
+    isVerified: user.isVerified,
+  });
+});
 
-    // ✅ F5 Fix — 8 حقول فقط، لا donations، لا stats
-    res.json({
-      _id:        user._id,
-      name:       user.name,
-      email:      user.email,
-      avatar:     user.avatar,
-      role:       user.role,
-      trustLevel: user.trustLevel ?? 1,
-      trustScore: user.trustScore ?? 0,
-      quota:      user.quota ?? 0,
-      isVerified: user.isVerified,
-    });
-  } catch (err) {
-    res.status(500).json({ msg: 'خطأ في الخادم' });
-  }
-};
-// ─── 5. بروفايل عام (GET /profile/:id) ─────────────────────
-exports.getPublicProfile = async (req, res) => {
-  if (!mongoose.Types.ObjectId.isValid(req.params.id))
-    return res.status(400).json({ msg: 'معرف المستخدم غير صحيح' });
+// ─── 6. بروفايل عام (GET /profile/:id) ────────────────
+exports.getPublicProfile = asyncHandler(async (req, res) => {
+  const result = await authService.getPublicProfileLogic(req.params.id);
+  return res.status(result.statusCode).json(result.body);
+});
 
-  try {
-    const result = await authService.getPublicProfileLogic(req.params.id);
-    return res.status(result.statusCode).json(result.body);
-  } catch (err) {
-    console.error(err.message);
-    return res.status(500).json({ msg: 'خطأ في السيرفر' });
-  }
-};
+// ─── 7. نسيت كلمة المرور ──────────────────────────────
+exports.forgotPassword = asyncHandler(async (req, res) => {
+  const result = await authService.forgotPasswordLogic(req.body.email);
+  return res.status(result.statusCode).json(result.body);
+});
 
-// ─── 6. نسيت كلمة المرور ────────────────────────────────
-exports.forgotPassword = async (req, res) => {
-  const { error } = validateForgotPassword(req.body);
-  if (error) return res.status(400).json({ msg: error.details[0].message });
+// ─── 8. إعادة تعيين كلمة المرور ───────────────────────
+exports.resetPassword = asyncHandler(async (req, res) => {
+  const result = await authService.resetPasswordLogic(
+    req.body.token,
+    req.body.password
+  );
+  return res.status(result.statusCode).json(result.body);
+});
 
-  try {
-    const result = await authService.forgotPasswordLogic(req.body.email);
-    return res.status(result.statusCode).json(result.body);
-  } catch (err) {
-    return res.status(500).json({ msg: 'خطأ في السيرفر' });
-  }
-};
+// ─── 9. refreshToken ──────────────────────────────────
+exports.refreshToken = asyncHandler(async (req, res) => {
+  const result = await authService.refreshLogic(req.cookies?.refreshToken);
 
-// ─── 7. إعادة تعيين كلمة المرور ──────────────────────────
-exports.resetPassword = async (req, res) => {
-  const { error } = validateResetPassword(req.body);
-  if (error) return res.status(400).json({ msg: error.details[0].message });
-
-  try {
-    const result = await authService.resetPasswordLogic(
-      req.body.token,
-      req.body.password
-    );
-    return res.status(result.statusCode).json(result.body);
-  } catch (err) {
-    return res.status(500).json({ msg: 'خطأ في السيرفر' });
-  }
-};
-
-// ─── 8. refreshToken ─────────────────────────────────────
-exports.refreshToken = async (req, res) => {
-  try {
-    const result = await authService.refreshLogic(req.cookies?.refreshToken); // ✅ refreshLogic
-
-    if (result.clearCookie) {
-      res.clearCookie('refreshToken', CLEAR_REFRESH_COOKIE_OPTIONS);
-    }
-
-    if (result.statusCode === 200 && result.newRefreshToken) { // ✅ newRefreshToken
-      res.cookie('refreshToken', result.newRefreshToken, REFRESH_COOKIE_OPTIONS);
-    }
-
-    return res.status(result.statusCode).json(result.body);
-  } catch (err) {
-    console.error(err.message);
+  if (result.clearCookie) {
     res.clearCookie('refreshToken', CLEAR_REFRESH_COOKIE_OPTIONS);
-    return res.status(500).json({ msg: 'خطأ في السيرفر' });
   }
-};
 
-// ─── 9. logout ───────────────────────────────────────────
-exports.logout = async (req, res) => {
-  try {
-    const result = await authService.logoutLogic(req.user.id);
-    res.clearCookie('refreshToken', CLEAR_REFRESH_COOKIE_OPTIONS);
-    return res.status(result.statusCode).json(result.body);
-  } catch (err) {
-    console.error(err.message);
-    res.clearCookie('refreshToken', CLEAR_REFRESH_COOKIE_OPTIONS);
-    return res.status(500).json({ msg: 'خطأ في السيرفر' });
+  if (result.statusCode === 200 && result.newRefreshToken) {
+    res.cookie('refreshToken', result.newRefreshToken, REFRESH_COOKIE_OPTIONS);
   }
-};
-// ─── 10. PUT /me — تعديل البروفايل ───────────────────────────
+
+  return res.status(result.statusCode).json(result.body);
+});
+
+// ─── 10. logout ───────────────────────────────────────
+exports.logout = asyncHandler(async (req, res) => {
+  const result = await authService.logoutLogic(req.user.id);
+  res.clearCookie('refreshToken', CLEAR_REFRESH_COOKIE_OPTIONS);
+  return res.status(result.statusCode).json(result.body);
+});
+
+// ─── 11. PUT /me — تعديل البروفايل ────────────────────
 exports.updateMe = [
-  require('../middlewares/upload').single('avatar'),
-  async (req, res) => {
-    const { error } = validateUpdateMe(req.body);
-    if (error) return res.status(400).json({ msg: error.details[0].message });
-
+  upload.single('avatar'),
+  asyncHandler(async (req, res) => {
     const updates = {};
-    if (req.body.name?.trim())  updates.name  = req.body.name.trim();
-    if (req.body.phone?.trim()) updates.phone = req.body.phone.trim();
 
-    try {
-      const result = await authService.updateMeLogic(
-        req.user.id,
-        updates,
-        req.file?.buffer,
-        req.file?.mimetype,
-      );
-      return res.status(result.statusCode).json(result.body);
-    } catch (err) {
-      console.error(err.message);
-      return res.status(500).json({ msg: 'خطأ في السيرفر' });
+    if (req.body.name?.trim()) {
+      updates.name = req.body.name.trim();
     }
-  },
+
+    if (req.body.phone?.trim()) {
+      updates.phone = req.body.phone.trim();
+    }
+
+    const result = await authService.updateMeLogic(
+      req.user.id,
+      updates,
+      req.file?.buffer,
+      req.file?.mimetype
+    );
+
+    return res.status(result.statusCode).json(result.body);
+  }),
 ];
 
-// ─── 11. PUT /me/password — تغيير كلمة المرور ─────────────────
-exports.updatePassword = async (req, res) => {
-  const { error } = validateUpdatePassword(req.body);
-  if (error) return res.status(400).json({ msg: error.details[0].message });
+// ─── 12. PUT /me/password — تغيير كلمة المرور ────────
+exports.updatePassword = asyncHandler(async (req, res) => {
+  const result = await authService.updatePasswordLogic(
+    req.user.id,
+    req.body.currentPassword,
+    req.body.newPassword
+  );
 
-  try {
-    const result = await authService.updatePasswordLogic(
-      req.user.id,
-      req.body.currentPassword,
-      req.body.newPassword,
-    );
-    return res.status(result.statusCode).json(result.body);
-  } catch (err) {
-    console.error(err.message);
-    return res.status(500).json({ msg: 'خطأ في السيرفر' });
-  }
-};
+  return res.status(result.statusCode).json(result.body);
+});

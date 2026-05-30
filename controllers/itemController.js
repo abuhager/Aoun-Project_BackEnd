@@ -1,8 +1,6 @@
-// controllers/itemController.js
 const itemService = require('../services/itemService');
 const { validateCreateItem } = require('../dtos/itemDto');
-const Item = require('../models/Item');
-const { getIo } = require('../socket'); // ✅ أضف هذا السطر
+const { getIO } = require('../socket');
 
 exports.getItems = async (req, res) => {
   try {
@@ -16,8 +14,7 @@ exports.getItems = async (req, res) => {
 
 exports.getMyItems = async (req, res) => {
   try {
-    const userId = req.user.id
-    const result = await itemService.getMyItemsLogic(userId);
+    const result = await itemService.getMyItemsLogic(req.user.id);
     res.json(result);
   } catch (err) {
     console.error('Error in getMyItems:', err.message);
@@ -25,7 +22,6 @@ exports.getMyItems = async (req, res) => {
   }
 };
 
-// ✅ لا نفك الـ JWT يدوياً — OTP محذوف من كل response على أي حال
 exports.getItemById = async (req, res) => {
   try {
     const requesterId = req.user?.id || req.user?._id || null;
@@ -40,25 +36,24 @@ exports.getItemById = async (req, res) => {
 exports.createItem = async (req, res) => {
   try {
     const { error } = validateCreateItem(req.body);
-    if (error)
+    if (error) {
       return res.status(400).json({ success: false, message: error.details[0].message });
+    }
 
-    const userId = req.user.id;
-    const result = await itemService.createItemLogic(req.body, userId, req.file);
+    const result = await itemService.createItemLogic(req.body, req.user.id, req.file);
     res.status(201).json({ success: true, ...result });
   } catch (err) {
     console.error('Create item error:', err.message);
-    res.status(400).json({ success: false, message: err.message });
+    res.status(err.status || 400).json({ success: false, message: err.message });
   }
 };
 
 exports.bookItem = async (req, res) => {
   try {
-    const userId = req.user.id;
-    const result = await itemService.bookItemLogic(req.params.id, userId);
+    const result = await itemService.bookItemLogic(req.params.id, req.user.id);
     res.status(200).json({ success: true, ...result });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    res.status(err.status || 400).json({ success: false, message: err.message });
   }
 };
 
@@ -67,10 +62,7 @@ exports.cancelBooking = async (req, res) => {
     const result = await itemService.cancelBookingLogic(req.params.id, req.user.id.toString());
     res.json(result);
   } catch (err) {
-    const status =
-      err.message === 'الغرض غير موجود' ? 404 :
-      err.message === 'غير مصرح لك'     ? 403 : 500;
-    res.status(status).json({ msg: err.message || 'خطأ في السيرفر' });
+    res.status(err.status || 500).json({ msg: err.message || 'خطأ في السيرفر' });
   }
 };
 
@@ -82,10 +74,9 @@ exports.completeDelivery = async (req, res) => {
       req.body.confirmationType
     );
 
-    // ✅ أعلم كل المتصلين بتحديث الـ Leaderboard بعد اكتمال التسليم النهائي فقط
     if (result?.status === 'delivered') {
       try {
-        getIo().emit('leaderboard:update');
+        getIO().emit('leaderboard:update');
       } catch {}
     }
 
@@ -103,7 +94,7 @@ exports.updateItem = async (req, res) => {
     const result = await itemService.updateItemLogic(req.params.id, req.user.id, req.body, req.file);
     res.json(result);
   } catch (err) {
-    res.status(404).json({ msg: err.message || 'فشل التعديل' });
+    res.status(err.status || 404).json({ msg: err.message || 'فشل التعديل' });
   }
 };
 
@@ -112,7 +103,7 @@ exports.deleteItem = async (req, res) => {
     const result = await itemService.deleteItemLogic(req.params.id, req.user.id, req.user.role);
     res.json(result);
   } catch (err) {
-    const status = err.message.includes('غير مصرح') ? 403 : 404;
+    const status = err.status || (err.message.includes('غير مصرح') ? 403 : 404);
     res.status(status).json({ msg: err.message || 'خطأ في الحذف' });
   }
 };

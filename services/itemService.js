@@ -1,38 +1,44 @@
-// services/itemService.js
-const cloudinary     = require('../config/cloudinary');
-const Item           = require('../models/Item');
-const User           = require('../models/User');
+const mongoose = require('mongoose');
+const cloudinary = require('../config/cloudinary');
+const Item = require('../models/Item');
+const User = require('../models/User');
+const Report = require('../models/Report');
+const SystemSettings = require('../models/SystemSettings');
 const itemRepository = require('../repositories/itemRepository');
-const { generateOtp }        = require('../utils/otp');
-const { fireSendEmail }      = require('../utils/sendEmail');
+const { generateOtp } = require('../utils/otp');
+const { fireSendEmail } = require('../utils/sendEmail');
 const { uploadToCloudinary } = require('../utils/uploadToCloudinary');
 const { notifyUser } = require('../utils/notifyUser');
 const { toPublicItem } = require('../dtos/itemDto');
-const escapeRegex = (str) =>
-  str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').slice(0, 100);
 
-// ─── 1. جلب الأغراض (مع pagination) ─────────────────────────
+const escapeRegex = (str = '') =>
+  String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').slice(0, 100);
+
+const restoreQuota = async (userId, amount = 1, session = null) => {
+  if (!userId || amount <= 0) return;
+  await User.findByIdAndUpdate(userId, { $inc: { quota: amount } }, session ? { session } : {});
+};
+
+const getUserRoom = (userId) => `user_${userId}`;
+
 exports.getItemsLogic = async (query) => {
-  const escapeRegex = require('../utils/escapeRegex');
-
-  const page  = Math.max(1, parseInt(query.page)  || 1);
-  const limit = Math.min(20, parseInt(query.limit) || 10);
-  const skip  = (page - 1) * limit;
+  const page = Math.max(1, parseInt(query.page, 10) || 1);
+  const limit = Math.min(20, Math.max(1, parseInt(query.limit, 10) || 10));
+  const skip = (page - 1) * limit;
 
   const filter = { status: 'متاح' };
 
-  // ✅ آمن من ReDoS
-  
-if (query.location) filter.location = new RegExp(escapeRegex(query.location), 'i');
-if (query.search)   filter.title    = new RegExp(escapeRegex(query.search),   'i');
-  if (query.category) filter.category = query.category;
+  if (query.location) filter.location = new RegExp(escapeRegex(query.location), 'i');
+  if (query.search) filter.title = new RegExp(escapeRegex(query.search), 'i');
+  if (query.category && query.category !== 'all') filter.category = query.category;
 
   const [items, total] = await Promise.all([
     Item.find(filter)
-      .populate('donor',   'name avatar trustScore isVerifiedStudent')
-      .populate('safeHub', 'name address city')
+      .populate('donor', 'name avatar trustScore isVerifiedStudent trustLevel')
+      .populate('safeHub', 'name address city workingHours')
       .sort({ createdAt: -1 })
-      .skip(skip).limit(limit)
+      .skip(skip)
+      .limit(limit)
       .select('-deliveryOtp -waitlist -__v')
       .lean(),
     Item.countDocuments(filter),
@@ -46,329 +52,328 @@ if (query.search)   filter.title    = new RegExp(escapeRegex(query.search),   'i
   };
 };
 
-// ─── 2. أغراضي ───────────────────────────────────────────────
-const Report = require('../models/Report');
-
 exports.getMyItemsLogic = async (userId) => {
   const [user, myDonations, myRequests] = await Promise.all([
-    User.findById(userId)
-      .select('name email trustScore quota isVerifiedStudent gamification')
-      .lean(),
-
-    Item.find({ donor: userId })
-      .populate('bookedBy', 'name avatar')
-      .sort({ createdAt: -1 })
-      .lean(),
-
-    Item.find({ bookedBy: userId })
-      .populate('donor', 'name avatar')
-      .sort({ createdAt: -1 })
-      .lean(),
+    User.findById(userId).select('name email trustScore quota isVerifiedStudent gamification').lean(),
+    Item.find({ donor: userId }).populate('bookedBy', 'name avatar').sort({ createdAt: -1 }).lean(),
+    Item.find({ bookedBy: userId }).populate('donor', 'name avatar').sort({ createdAt: -1 }).lean(),
   ]);
 
-  // ✅ جلب ALL item IDs (donations + requests)
   const donationIds = myDonations.map((i) => i._id);
-  const requestIds  = myRequests.map((i) => i._id);
-  const allItemIds  = [...donationIds, ...requestIds];
+  const requestIds = myRequests.map((i) => i._id);
+  const allItemIds = [...donationIds, ...requestIds];
 
-  // ✅ جلب reports حيث المستخدم هو المُبلَّغ عنه — سواء كمتبرع أو مستلم
   const reports = await Report.find({
-    relatedItem:  { $in: allItemIds },
-    reportedUser: userId,                          // ← المهم: هو المُبلَّغ عنه
-    status:       { $in: ['pending', 'actioned'] },
-  })
-    .select('relatedItem')
-    .lean();
+    relatedItem: { $in: allItemIds },
+    reportedUser: userId,
+    status: { $in: ['pending', 'actioned'] },
+  }).select('relatedItem').lean();
 
-  // ✅ Map سريع O(n)
-  const reportMap = new Map(
-    reports.map((r) => [r.relatedItem.toString(), r._id.toString()])
-  );
-
-  // ✅ donations — المتبرع قد يُبلَّغ عنه من المستلم
-  const donationsWithReport = myDonations.map((item) => ({
-    ...item,
-    reportId: reportMap.get(item._id.toString()) ?? null,
-  }));
-
-  // ✅ requests — المستلم قد يُبلَّغ عنه من المتبرع
-  const requestsWithReport = myRequests.map((item) => ({
-    ...item,
-    reportId: reportMap.get(item._id.toString()) ?? null,
-  }));
+  const reportMap = new Map(reports.map((r) => [r.relatedItem.toString(), r._id.toString()]));
 
   return {
     user,
-    myDonations: donationsWithReport,
-    myRequests:  requestsWithReport,   // ✅ الآن يحتوي على reportId
+    myDonations: myDonations.map((item) => ({ ...item, reportId: reportMap.get(item._id.toString()) ?? null })),
+    myRequests: myRequests.map((item) => ({ ...item, reportId: reportMap.get(item._id.toString()) ?? null })),
   };
 };
 
-// ─── 3. تفاصيل غرض واحد ──────────────────────────────────────
 exports.getItemByIdLogic = async (itemId, requesterId) => {
   const item = await itemRepository.findItemDetails(itemId);
-  if (!item) throw new Error('الغرض غير موجود');
+  if (!item) throw Object.assign(new Error('الغرض غير موجود'), { status: 404 });
 
-  const obj     = item.toObject ? item.toObject() : { ...item };
+  const obj = item.toObject ? item.toObject() : { ...item };
   const isDonor = requesterId && obj.donor?._id?.toString() === requesterId;
   if (!isDonor) delete obj.deliveryOtp;
 
   return obj;
 };
 
-// ─── 4. إنشاء غرض ────────────────────────────────────────────
 exports.createItemLogic = async (body, userId, file) => {
-  if (!file) throw new Error('الصورة مطلوبة');
+  if (!file) throw Object.assign(new Error('الصورة مطلوبة'), { status: 400 });
+
+  const [user, settings, activeCount] = await Promise.all([
+    User.findById(userId).select('trustLevel isVerified quota').lean(),
+    SystemSettings.getCached(),
+    Item.countDocuments({ donor: userId, status: { $in: ['متاح', 'محجوز'] } }),
+  ]);
+
+  if (!user?.isVerified) {
+    throw Object.assign(new Error('يجب تفعيل حسابك أولاً ✅'), { status: 403 });
+  }
+
+  const maxItems = user.trustLevel >= 2
+    ? (settings.level2Quota ?? 4)
+    : (settings.defaultQuota ?? 2);
+
+  if (activeCount >= maxItems) {
+    throw Object.assign(
+      new Error(`لا يمكنك نشر أكثر من ${maxItems} غرض نشط في نفس الوقت`),
+      { status: 429, code: 'ITEM_LIMIT_EXCEEDED' }
+    );
+  }
+
+  if (body.category && settings.categories?.length && !settings.categories.includes(body.category)) {
+    throw Object.assign(new Error(`التصنيف "${body.category}" غير مدعوم`), { status: 400 });
+  }
 
   const uploadResult = await uploadToCloudinary(file.buffer);
 
   const item = await Item.create({
-    ...body,
-    donor:        userId,
-    imageUrl:     uploadResult.secure_url,
+    title: body.title?.trim(),
+    description: body.description?.trim(),
+    category: body.category,
+    location: body.location?.trim(),
+    condition: body.condition,
+    safeHub: body.safeHub,
+    donor: userId,
+    imageUrl: uploadResult.secure_url,
     cloudinaryId: uploadResult.public_id,
   });
 
   return { msg: 'تم إضافة الغرض بنجاح 🎉', item };
 };
 
-// ─── 5. حجز غرض (مع atomic $inc) ────────────────────────────
 exports.bookItemLogic = async (itemId, userId) => {
+  const session = await mongoose.startSession();
 
-  // Step 1: atomic quota check
-  const user = await User.findOneAndUpdate(
-    { _id: userId, quota: { $gt: 0 } },
-    { $inc: { quota: -1 } },
-{ returnDocument: 'after' }
-  );
-  if (!user) throw new Error('لا تملك حصصاً متاحة لحجز أغراض جديدة 🚫');
+  try {
+    let result;
 
-  // Step 2: pre-checks
-  const item = await itemRepository.findItemForAction(itemId);
-  if (!item) {
-    await User.findByIdAndUpdate(userId, { $inc: { quota: 1 } });
-    throw new Error('الغرض غير موجود');
-  }
-  if (item.donor.toString() === userId) {
-    await User.findByIdAndUpdate(userId, { $inc: { quota: 1 } });
-    throw new Error('لا يمكنك حجز غرضك الخاص');
-  }
-  if (item.cancelledBy?.some(id => id.toString() === userId)) {
-    await User.findByIdAndUpdate(userId, { $inc: { quota: 1 } });
-    throw new Error('لا يمكنك الحجز مجدداً لأنك ألغيت الحجز مسبقاً');
-  }
+    await session.withTransaction(async () => {
+      const item = await Item.findById(itemId)
+        .select('title status donor bookedBy waitlist cancelledBy safeHub')
+        .populate('safeHub', 'name address city workingHours')
+        .session(session);
 
-  // Step 3: ATOMIC booking
-  if (item.status === 'متاح') {
-    const newOtp = generateOtp();
-
-    const booked = await Item.findOneAndUpdate(
-      { _id: itemId, status: 'متاح' },
-      {
-        $set: {
-          status:      'محجوز',
-          bookedBy:    userId,
-          deliveryOtp: newOtp,
-          bookedAt:    new Date(),
-        },
-      },
-      { new: true }
-    ).populate('safeHub', 'name address city workingHours');
-
-    if (!booked) {
-      const alreadyInWaitlist = item.waitlist?.some(w => w.user.toString() === userId);
-      if (!alreadyInWaitlist) {
-        await Item.findByIdAndUpdate(itemId, {
-          $push: { waitlist: { user: userId, joinedAt: new Date() } },
-        });
-        return { status: 'waitlist', msg: 'تمت إضافتك لقائمة الانتظار ⏳' };
+      if (!item) throw Object.assign(new Error('الغرض غير موجود'), { status: 404 });
+      if (item.donor.toString() === userId) {
+        throw Object.assign(new Error('لا يمكنك حجز غرضك الخاص'), { status: 400 });
       }
-      await User.findByIdAndUpdate(userId, { $inc: { quota: 1 } });
-      throw new Error('أنت بالفعل في قائمة الانتظار');
-    }
+      if (item.cancelledBy?.some((id) => id.toString() === userId)) {
+        throw Object.assign(new Error('لا يمكنك الحجز مجدداً لأنك ألغيت الحجز مسبقاً'), { status: 400 });
+      }
 
-    const hubSection = booked.safeHub
-      ? `<hr/>
-         <p>📍 <b>مركز التسليم:</b> ${booked.safeHub.name}</p>
-         <p>🏙️ ${booked.safeHub.city} — ${booked.safeHub.address}</p>
-         <p>🕐 أوقات العمل: ${booked.safeHub.workingHours}</p>`
-      : `<p>📦 سيتم التنسيق مع المتبرع مباشرة</p>`;
+      if (item.status !== 'متاح') {
+        const alreadyInWaitlist = item.waitlist?.some((w) => w.user.toString() === userId);
+        if (alreadyInWaitlist) {
+          throw Object.assign(new Error('أنت بالفعل في قائمة الانتظار'), { status: 409 });
+        }
 
-      await notifyUser(item.donor, {
-  type:   'item_booked',
-  title:  'تم حجز غرضك! 🎉',
-  body:   `قام شخص ما بحجز "${item.title}"`,
-  itemId: item._id,
-});
+        await Item.findOneAndUpdate(
+          { _id: itemId, 'waitlist.user': { $ne: userId } },
+          { $push: { waitlist: { user: userId, joinedAt: new Date() } } },
+          { session }
+        );
 
-    fireSendEmail({
-      email:   user.email,
-      subject: 'تم حجز الغرض 🎉',
-      message: `
-        <div dir="rtl">
-          <p>تم حجز <b>${booked.title}</b> بنجاح!</p>
-          <p>🔑 رمز الاستلام: <b style="font-size:1.4em">${newOtp}</b></p>
-          <p>⏱️ لديك <b>72 ساعة</b> لاستلام الغرض</p>
-          ${hubSection}
-        </div>
-      `,
-    });
+        result = { status: 'waitlist', msg: 'تمت إضافتك لقائمة الانتظار ⏳' };
+        return;
+      }
 
-    return { status: 'booked', msg: 'تم الحجز بنجاح 🎉' };
-  }
-
-  // Step 4: Waitlist
-  const alreadyInWaitlist = item.waitlist?.some(w => w.user.toString() === userId);
-  if (alreadyInWaitlist) {
-    await User.findByIdAndUpdate(userId, { $inc: { quota: 1 } });
-    throw new Error('أنت بالفعل في قائمة الانتظار');
-  }
-
-  await Item.findOneAndUpdate(
-  { _id: itemId, 'waitlist.user': { $ne: userId } }, // شرط: ليس في الـ waitlist
-  { $push: { waitlist: { user: userId, joinedAt: new Date() } } },
-);
-
-
-  return { status: 'waitlist', msg: 'تمت إضافتك لقائمة الانتظار ⏳' };
-};
-
-// ─── 6. إلغاء الحجز ──────────────────────────────────────────
-exports.cancelBookingLogic = async (itemId, userId) => {
-  const item = await itemRepository.findItemForAction(itemId);
-  if (!item) throw new Error('الغرض غير موجود');
-
-  const isBooker = item.bookedBy && item.bookedBy.toString() === userId;
-  const isDonor  = item.donor.toString() === userId;
-  const inWait   = item.waitlist?.some(w => w.user.toString() === userId);
-
-  if (!isBooker && !isDonor && !inWait) throw new Error('غير مصرح لك');
-
-  // انسحاب من الطابور فقط
-  if (inWait && !isBooker && !isDonor) {
-    await Item.findByIdAndUpdate(item._id, {
-      $pull: { waitlist: { user: userId } },
-    });
-    await User.findByIdAndUpdate(userId, { $inc: { quota: 1 } });
-    return { msg: 'تم انسحابك من قائمة الانتظار 🚶‍♂️' };
-  }
-
-  const previousBooker = item.bookedBy;
-
-  // يوجد Waitlist — حاول تمرير الدور
-  if (item.waitlist?.length > 0) {
-    const topWaiting = item.waitlist.slice(0, 3);
-
-    for (const waiting of topWaiting) {
-      // ✅ Step 1: خصم كوتا المستخدم التالي atomically
-      const nextValidUser = await User.findOneAndUpdate(
-        { _id: waiting.user, quota: { $gt: 0 } },
+      const bookedUser = await User.findOneAndUpdate(
+        { _id: userId, quota: { $gt: 0 } },
         { $inc: { quota: -1 } },
-        { new: true }
+        { new: true, session }
       );
 
-      if (!nextValidUser) {
-        await Item.findByIdAndUpdate(item._id, {
-          $pull: { waitlist: { user: waiting.user } },
-        });
-        continue;
+      if (!bookedUser) {
+        throw Object.assign(new Error('لا تملك حصصاً متاحة لحجز أغراض جديدة 🚫'), { status: 403 });
       }
 
-      // ✅ Step 2: احجز الغرض بشرط أن nextValidUser لا يزال في الـ waitlist
-      // هذا يمنع Race Condition
-      const newOtp  = generateOtp();
-      const updated = await Item.findOneAndUpdate(
-        {
-          _id:             item._id,
-          'waitlist.user': nextValidUser._id, // ✅ تأكد أنه لا يزال في القائمة
-        },
+      const otp = generateOtp();
+      const booked = await Item.findOneAndUpdate(
+        { _id: itemId, status: 'متاح' },
         {
           $set: {
-            status:      'محجوز',
-            bookedBy:    nextValidUser._id,
-            deliveryOtp: newOtp,
-            bookedAt:    new Date(),
+            status: 'محجوز',
+            bookedBy: userId,
+            deliveryOtp: otp,
+            bookedAt: new Date(),
+            recipientConfirmed: false,
+            recipientConfirmedAt: null,
+            donorConfirmedAt: null,
+            deliveredAt: null,
           },
-          $addToSet: { cancelledBy: previousBooker },
-          $pull:     { waitlist: { user: nextValidUser._id } },
         },
-        { new: true }
-      );
+        { new: true, session }
+      ).populate('safeHub', 'name address city workingHours');
 
-      // ✅ Step 3: لو فشل الحجز (غادر الـ waitlist بين الخطوتين)
-      if (!updated) {
-        await User.findByIdAndUpdate(nextValidUser._id, { $inc: { quota: 1 } });
-        continue;
+      if (!booked) {
+        await restoreQuota(userId, 1, session);
+        throw Object.assign(new Error('الغرض لم يعد متاحاً — جرّب غرضاً آخر'), { status: 409 });
       }
 
-      // ✅ Step 4: نجح الحجز — أعد كوتا الحاجز السابق وأبلغ المستخدم الجديد
-      if (previousBooker) {
-        await User.findByIdAndUpdate(previousBooker, { $inc: { quota: 1 } });
-      }
+      const hubSection = booked.safeHub
+        ? `<hr/><p>📍 <b>مركز التسليم:</b> ${booked.safeHub.name}</p><p>🏙️ ${booked.safeHub.city} — ${booked.safeHub.address}</p><p>🕐 أوقات العمل: ${booked.safeHub.workingHours}</p>`
+        : `<p>📦 سيتم التنسيق مع المتبرع مباشرة</p>`;
 
-await notifyUser(nextValidUser._id, {
-  type:   'waitlist_promoted',
-  title:  'وصل دورك! 🔔',
-  body:   `أصبح "${item.title}" محجوزاً لك`,
-  itemId: item._id,
-});
+      result = {
+        status: 'booked',
+        msg: 'تم الحجز بنجاح 🎉',
+        donorId: item.donor.toString(),
+        itemTitle: booked.title,
+        itemId: booked._id.toString(),
+        userEmail: bookedUser.email,
+        otp,
+        hubSection,
+      };
+    });
 
-      fireSendEmail({
-        email:   nextValidUser.email,
-        subject: `الدور وصلك في "عون" 🎉`,
-        message: `<div dir="rtl">
-          أصبح الغرض محجوزاً لك!
-          رمز الاستلام: <b style="font-size:1.4em">${newOtp}</b>
-          <p>لديك 72 ساعة لإتمام الاستلام ⏱️</p>
-        </div>`,
+    if (result?.status === 'booked') {
+      await notifyUser(result.donorId, {
+        type: 'item_booked',
+        title: 'تم حجز غرضك! 🎉',
+        body: `قام شخص ما بحجز "${result.itemTitle}"`,
+        itemId: result.itemId,
       });
 
-      return { msg: 'تم إلغاء الحجز وتمرير الدور للشخص التالي 🔄' };
+      if (result.userEmail) {
+        fireSendEmail({
+          email: result.userEmail,
+          subject: 'تم حجز الغرض 🎉',
+          message: `<div dir="rtl"><p>تم حجز <b>${result.itemTitle}</b> بنجاح!</p><p>🔑 رمز الاستلام: <b style="font-size:1.4em">${result.otp}</b></p><p>⏱️ لديك <b>72 ساعة</b> لاستلام الغرض</p>${result.hubSection}</div>`,
+        });
+      }
     }
+
+    return result;
+  } finally {
+    await session.endSession();
   }
-
-  // لا يوجد Waitlist صالح — أعد الغرض متاحاً
-  await Item.findByIdAndUpdate(item._id, {
-    $set:      { status: 'متاح', bookedBy: null, bookedAt: null },
-    $unset:    { deliveryOtp: '' },
-    $addToSet: { cancelledBy: previousBooker },
-  });
-
-  if (previousBooker) {
-    await User.findByIdAndUpdate(previousBooker, { $inc: { quota: 1 } });
-  }
-await notifyUser(item.donor, {
-  type:   'booking_cancelled',
-  title:  'تم إلغاء الحجز',
-  body:   `غرضك "${item.title}" متاح مجدداً`,
-  itemId: item._id,
-});
-
-  return { msg: 'تم إلغاء الحجز والقطعة متاحة الآن ✅' };
 };
 
-// ─── 7. إتمام التسليم ─────────────────────────────────────────
+exports.cancelBookingLogic = async (itemId, userId) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let result;
+
+    await session.withTransaction(async () => {
+      const item = await Item.findById(itemId).session(session);
+      if (!item) throw Object.assign(new Error('الغرض غير موجود'), { status: 404 });
+
+      const isBooker = item.bookedBy && item.bookedBy.toString() === userId;
+      const isDonor = item.donor.toString() === userId;
+      const inWait = item.waitlist?.some((w) => w.user.toString() === userId);
+
+      if (!isBooker && !isDonor && !inWait) {
+        throw Object.assign(new Error('غير مصرح لك'), { status: 403 });
+      }
+
+      if (inWait && !isBooker && !isDonor) {
+        await Item.findByIdAndUpdate(
+          item._id,
+          { $pull: { waitlist: { user: userId } } },
+          { session }
+        );
+        await restoreQuota(userId, 1, session);
+        result = { msg: 'تم انسحابك من قائمة الانتظار 🚶‍♂️' };
+        return;
+      }
+
+      const previousBooker = item.bookedBy?.toString() ?? null;
+      const waitlistUsers = item.waitlist?.map((w) => w.user.toString()) ?? [];
+
+      if (waitlistUsers.length > 0) {
+        for (const nextUserId of waitlistUsers.slice(0, 5)) {
+          const nextUser = await User.findOneAndUpdate(
+            { _id: nextUserId, quota: { $gt: 0 } },
+            { $inc: { quota: -1 } },
+            { new: true, session }
+          );
+
+          if (!nextUser) {
+            await Item.findByIdAndUpdate(item._id, { $pull: { waitlist: { user: nextUserId } } }, { session });
+            continue;
+          }
+
+          const newOtp = generateOtp();
+          const updated = await Item.findOneAndUpdate(
+            { _id: item._id, 'waitlist.user': nextUser._id },
+            {
+              $set: {
+                status: 'محجوز',
+                bookedBy: nextUser._id,
+                deliveryOtp: newOtp,
+                bookedAt: new Date(),
+                recipientConfirmed: false,
+                recipientConfirmedAt: null,
+                donorConfirmedAt: null,
+                deliveredAt: null,
+              },
+              $addToSet: { cancelledBy: previousBooker },
+              $pull: { waitlist: { user: nextUser._id } },
+            },
+            { new: true, session }
+          );
+
+          if (!updated) {
+            await restoreQuota(nextUser._id, 1, session);
+            continue;
+          }
+
+          if (previousBooker) {
+            await restoreQuota(previousBooker, 1, session);
+          }
+
+          result = {
+            msg: 'تم إلغاء الحجز وتمرير الدور للمستخدم التالي ✅',
+            reassignedTo: nextUser._id.toString(),
+            title: item.title,
+          };
+          return;
+        }
+      }
+
+      await Item.findByIdAndUpdate(
+        item._id,
+        {
+          $set: {
+            status: 'متاح',
+            bookedBy: null,
+            bookedAt: null,
+            recipientConfirmed: false,
+            recipientConfirmedAt: null,
+            donorConfirmedAt: null,
+            deliveredAt: null,
+          },
+          $unset: { deliveryOtp: 1 },
+          ...(previousBooker ? { $addToSet: { cancelledBy: previousBooker } } : {}),
+        },
+        { session }
+      );
+
+      if (previousBooker) {
+        await restoreQuota(previousBooker, 1, session);
+      }
+
+      result = { msg: 'تم إلغاء الحجز والقطعة متاحة الآن ✅' };
+    });
+
+    if (result?.reassignedTo) {
+      await notifyUser(result.reassignedTo, {
+        type: 'waitlist_promoted',
+        title: 'أصبح الغرض لك الآن 🎉',
+        body: `أصبحت الأول في الدور على "${result.title}" وتم تثبيت الحجز لك تلقائياً`,
+      });
+    }
+
+    return result;
+  } finally {
+    await session.endSession();
+  }
+};
+
 exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
   if (!['recipient_confirm', 'donor_confirm'].includes(confirmationType)) {
     throw Object.assign(new Error('نوع التأكيد غير صحيح'), { status: 400 });
   }
 
   const item = await itemRepository.findItemForAction(itemId);
-  if (!item) {
-    throw Object.assign(new Error('الغرض غير موجود'), { status: 404 });
-  }
+  if (!item) throw Object.assign(new Error('الغرض غير موجود'), { status: 404 });
+  if (item.status === 'تم التسليم') throw Object.assign(new Error('تم تسليم هذا الغرض مسبقاً ✅'), { status: 400 });
+  if (item.status !== 'محجوز') throw Object.assign(new Error('الغرض غير محجوز حالياً'), { status: 400 });
 
-  if (item.status === 'تم التسليم') {
-    throw Object.assign(new Error('تم تسليم هذا الغرض مسبقاً ✅'), { status: 400 });
-  }
-
-  if (item.status !== 'محجوز') {
-    throw Object.assign(new Error('الغرض غير محجوز حالياً'), { status: 400 });
-  }
-
-  // ══════════════════════════════════════════════════════════════
-  // الخطوة 1: المستلم يضغط "تأكيد الاستلام"
-  // ══════════════════════════════════════════════════════════════
   if (confirmationType === 'recipient_confirm') {
     if (item.bookedBy?.toString() !== userId.toString()) {
       throw Object.assign(new Error('أنت لستَ الحاجز لهذا الغرض'), { status: 403 });
@@ -398,162 +403,161 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
       throw Object.assign(new Error('تعذّر تسجيل تأكيد الاستلام — حاول مرة أخرى'), { status: 409 });
     }
 
-    // ✅ Socket → المتبرع
     try {
-      const { getIo } = require('../socket');
-      getIo()
-        .to(`user:${item.donor.toString()}`)
-        .emit('delivery:recipient_confirmed', {
-          itemId:    item._id.toString(),
-          itemTitle: item.title,
-          message:   `أكّد المستلم استلام الغرض — اضغط "تأكيد التسليم" ✅`,
-        });
+      const { getIO } = require('../socket');
+      getIO().to(getUserRoom(item.donor.toString())).emit('delivery:recipient_confirmed', {
+        itemId: item._id.toString(),
+        itemTitle: item.title,
+        message: 'أكّد المستلم استلام الغرض — اضغط "تأكيد التسليم" ✅',
+      });
     } catch (socketErr) {
       console.warn('[Socket] تعذّر إرسال حدث تأكيد الاستلام:', socketErr.message);
     }
 
-    // ✅ In-app notification → المتبرع
     await notifyUser(item.donor, {
-      type:   'recipient_confirmed',
-      title:  'المستلم أكّد الاستلام ✅',
-      body:   `أكّد المستلم استلام "${item.title}" — اضغط تأكيد التسليم لإتمام العملية`,
+      type: 'recipient_confirmed',
+      title: 'المستلم أكّد الاستلام ✅',
+      body: `أكّد المستلم استلام "${item.title}" — اضغط تأكيد التسليم لإتمام العملية`,
       itemId: item._id,
     });
 
     return {
-      msg:    'تم تأكيد الاستلام ✅ — في انتظار تأكيد المتبرع لإتمام العملية',
+      msg: 'تم تأكيد الاستلام ✅ — في انتظار تأكيد المتبرع لإتمام العملية',
       status: 'waiting_donor',
-      item:   updatedItem,
+      item: updatedItem,
     };
   }
 
-  // ══════════════════════════════════════════════════════════════
-  // الخطوة 2: المتبرع يضغط "تأكيد التسليم"
-  // ══════════════════════════════════════════════════════════════
-  if (confirmationType === 'donor_confirm') {
-    if (item.donor?.toString() !== userId.toString()) {
-      throw Object.assign(new Error('أنت لستَ المتبرع بهذا الغرض'), { status: 403 });
-    }
-
-    if (!item.recipientConfirmed) {
-      throw Object.assign(
-        new Error('يجب أن يؤكد المستلم الاستلام أولاً ⏳'),
-        { status: 400, code: 'RECIPIENT_NOT_CONFIRMED' }
-      );
-    }
-
-    const now = new Date();
-
-    const updatedItem = await Item.findOneAndUpdate(
-      {
-        _id:                itemId,
-        status:             'محجوز',
-        recipientConfirmed: true,
-        donor:              userId,
-      },
-      {
-        $set: {
-          status:          'تم التسليم',
-          donorConfirmedAt: now,
-          deliveredAt:     now,
-        },
-        $unset: { deliveryOtp: 1 },
-      },
-      { new: true }
-    ).lean();
-
-    if (!updatedItem) {
-      throw Object.assign(new Error('تعذّر إتمام التسليم — حاول مرة أخرى'), { status: 409 });
-    }
-
-    await User.findByIdAndUpdate(item.donor, {
-      $inc: { totalDonations: 1 },
-    });
-
-    // ✅ Socket → الطرفين
-    try {
-      const { getIo } = require('../socket');
-      const io = getIo();
-      const payload = { itemId: item._id.toString(), itemTitle: item.title };
-
-      io.to(`user:${item.bookedBy.toString()}`).emit('delivery:completed', {
-        ...payload,
-        message: 'تم تأكيد التسليم من المتبرع 🎉 — يرجى تقييم تجربتك',
-      });
-      io.to(`user:${item.donor.toString()}`).emit('delivery:completed', {
-        ...payload,
-        message: 'تم إتمام التسليم بنجاح 🎉 — شكراً لتبرعك 💚',
-      });
-    } catch (socketErr) {
-      console.warn('[Socket] تعذّر إرسال حدث الإتمام:', socketErr.message);
-    }
-
-    // ✅ In-app notification → المستلم
-    await notifyUser(item.bookedBy, {
-      type:   'delivery_completed',
-      title:  'تم استلام غرضك بنجاح 🎁',
-      body:   `تم تأكيد استلامك لـ "${item.title}" — لا تنسَ تقييم المتبرع 💚`,
-      itemId: item._id,
-    });
-
-    // ✅ In-app notification → المتبرع
-    await notifyUser(item.donor, {
-      type:   'delivery_completed',
-      title:  'تم إتمام التسليم 🎉',
-      body:   `تم تسليم "${item.title}" بنجاح — شكراً لمساهمتك 💚`,
-      itemId: item._id,
-    });
-
-    // ✅ Email → المستلم
-    const receiver = await User.findById(item.bookedBy).select('email name').lean();
-    if (receiver?.email) {
-      fireSendEmail({
-        email:   receiver.email,
-        subject: 'تم استلام الغرض بنجاح 🎁',
-        message: `<div dir="rtl">
-          <h2>مرحباً ${receiver.name}!</h2>
-          <p>تم تأكيد استلامك لـ <strong>${item.title}</strong> بنجاح.</p>
-          <p>لا تنسَ تقييم المتبرع — تقييمك يساعد الجميع 💚</p>
-        </div>`,
-      });
-    }
-
-    return {
-      msg:    'تم التسليم بنجاح! 🎉',
-      status: 'delivered',
-      item:   updatedItem,
-    };
+  if (item.donor?.toString() !== userId.toString()) {
+    throw Object.assign(new Error('أنت لستَ المتبرع بهذا الغرض'), { status: 403 });
   }
+
+  if (!item.recipientConfirmed) {
+    throw Object.assign(new Error('يجب أن يؤكد المستلم الاستلام أولاً ⏳'), {
+      status: 400,
+      code: 'RECIPIENT_NOT_CONFIRMED',
+    });
+  }
+
+  const settings = await SystemSettings.getCached();
+  const now = new Date();
+
+  const updatedItem = await Item.findOneAndUpdate(
+    {
+      _id: itemId,
+      status: 'محجوز',
+      recipientConfirmed: true,
+      donor: userId,
+    },
+    {
+      $set: {
+        status: 'تم التسليم',
+        donorConfirmedAt: now,
+        deliveredAt: now,
+      },
+      $unset: { deliveryOtp: 1 },
+    },
+    { new: true }
+  ).lean();
+
+  if (!updatedItem) {
+    throw Object.assign(new Error('تعذّر إتمام التسليم — حاول مرة أخرى'), { status: 409 });
+  }
+
+  await User.findByIdAndUpdate(item.donor, {
+    $inc: {
+      totalDonations: 1,
+      trustScore: settings.trustScorePerDonation ?? 5,
+      quota: settings.donorQuotaReward ?? 1,
+    },
+  });
+
+  try {
+    const { getIO } = require('../socket');
+    const io = getIO();
+    const payload = { itemId: item._id.toString(), itemTitle: item.title };
+
+    io.to(getUserRoom(item.bookedBy.toString())).emit('delivery:completed', {
+      ...payload,
+      message: 'تم تأكيد التسليم من المتبرع 🎉 — يرجى تقييم تجربتك',
+    });
+    io.to(getUserRoom(item.donor.toString())).emit('delivery:completed', {
+      ...payload,
+      message: 'تم إتمام التسليم بنجاح 🎉 — شكراً لتبرعك 💚',
+    });
+  } catch (socketErr) {
+    console.warn('[Socket] تعذّر إرسال حدث الإتمام:', socketErr.message);
+  }
+
+  await Promise.all([
+    notifyUser(item.bookedBy, {
+      type: 'delivery_completed',
+      title: 'تم استلام غرضك بنجاح 🎁',
+      body: `تم تأكيد استلامك لـ "${item.title}" — لا تنسَ تقييم المتبرع 💚`,
+      itemId: item._id,
+    }),
+    notifyUser(item.donor, {
+      type: 'delivery_completed',
+      title: 'تم إتمام التسليم 🎉',
+      body: `تم تسليم "${item.title}" بنجاح — شكراً لمساهمتك 💚`,
+      itemId: item._id,
+    }),
+  ]);
+
+  const receiver = await User.findById(item.bookedBy).select('email name').lean();
+  if (receiver?.email) {
+    fireSendEmail({
+      email: receiver.email,
+      subject: 'تم استلام الغرض بنجاح 🎁',
+      message: `<div dir="rtl"><h2>مرحباً ${receiver.name}!</h2><p>تم تأكيد استلامك لـ <strong>${item.title}</strong> بنجاح.</p><p>لا تنسَ تقييم المتبرع — تقييمك يساعد الجميع 💚</p></div>`,
+    });
+  }
+
+  return {
+    msg: 'تم التسليم بنجاح! 🎉',
+    status: 'delivered',
+    item: updatedItem,
+  };
 };
-// ─── 8. تعديل غرض ────────────────────────────────────────────
+
 exports.updateItemLogic = async (itemId, userId, updateData, file) => {
   const item = await itemRepository.findItemForUpdate(itemId, userId);
-  if (!item) throw new Error('الغرض غير موجود أو لا تملك صلاحية تعديله');
+  if (!item) throw Object.assign(new Error('الغرض غير موجود أو لا تملك صلاحية تعديله'), { status: 404 });
+
+  const settings = await SystemSettings.getCached();
+  if (updateData.category && settings.categories?.length && !settings.categories.includes(updateData.category)) {
+    throw Object.assign(new Error(`التصنيف "${updateData.category}" غير مدعوم`), { status: 400 });
+  }
 
   if (file) {
     if (item.cloudinaryId) {
       await cloudinary.uploader.destroy(item.cloudinaryId).catch(console.error);
     }
     const uploadResult = await uploadToCloudinary(file.buffer);
-    item.imageUrl     = uploadResult.secure_url;
+    item.imageUrl = uploadResult.secure_url;
     item.cloudinaryId = uploadResult.public_id;
   }
 
-  Object.assign(item, updateData);
+  Object.assign(item, {
+    ...updateData,
+    title: updateData.title?.trim() ?? item.title,
+    description: updateData.description?.trim() ?? item.description,
+    location: updateData.location?.trim() ?? item.location,
+  });
+
   await item.save();
   return { msg: 'تم التعديل بنجاح ✨', item };
 };
 
-// ─── 9. حذف غرض ──────────────────────────────────────────────
 exports.deleteItemLogic = async (itemId, userId, userRole) => {
   const item = await Item.findById(itemId);
 
-  if (!item || (item.donor.toString() !== userId.toString() && userRole !== 'admin'))
-    throw new Error('غير مصرح لك بحذف هذا الغرض');
+  if (!item || (item.donor.toString() !== userId.toString() && userRole !== 'admin')) {
+    throw Object.assign(new Error('غير مصرح لك بحذف هذا الغرض'), { status: 403 });
+  }
 
-  // ✅ Fix Bug #5 — منع حذف غرض تم تسليمه
   if (item.status === 'تم التسليم') {
-    throw new Error('لا يمكن حذف غرض تم تسليمه — يُحفظ كسجل دائم في النظام 🔒');
+    throw Object.assign(new Error('لا يمكن حذف غرض تم تسليمه — يُحفظ كسجل دائم في النظام 🔒'), { status: 400 });
   }
 
   if (item.cloudinaryId) {
@@ -563,14 +567,14 @@ exports.deleteItemLogic = async (itemId, userId, userRole) => {
   if (item.status === 'محجوز' && item.bookedBy) {
     await Promise.all([
       User.findByIdAndUpdate(item.bookedBy, { $inc: { quota: 1 } }),
-      User.findByIdAndUpdate(item.donor,    { $inc: { trustScore: -3 } }),
+      User.findByIdAndUpdate(item.donor, { $inc: { trustScore: -3 } }),
     ]);
 
     const receiver = await User.findById(item.bookedBy).select('email').lean();
-    if (receiver) {
+    if (receiver?.email) {
       fireSendEmail({
-        email:   receiver.email,
-        subject: `تحديث بخصوص حجزك ⚠️`,
+        email: receiver.email,
+        subject: 'تحديث بخصوص حجزك ⚠️',
         message: `<div dir="rtl">نأسف لإبلاغك بأن المتبرع حذف الغرض (<b>${item.title}</b>). تم استرداد حصتك تلقائياً 💚</div>`,
       });
     }

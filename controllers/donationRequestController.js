@@ -1,47 +1,23 @@
 // controllers/donationRequestController.js
 const drService = require('../services/donationRequestService');
+const asyncHandler = require('../utils/asyncHandler');
 
-exports.getRequests = async (req, res) => {
-  try {
-    const result = await drService.getDonationRequestsLogic(req.query, req.user.id);
-    res.json(result);
-  } catch (err) {
-    res.status(err.status ?? 500).json({
-      msg: err.message || 'حدث خطأ أثناء جلب الطلبات',
-    });
-  }
-};
+exports.getRequests = asyncHandler(async (req, res) => {
+  const result = await drService.getDonationRequestsLogic(req.query, req.user.id);
+  res.json(result);
+});
 
-exports.getMyRequests = async (req, res) => {
-  try {
-    const result = await drService.getMyRequestsLogic(req.user.id);
-    res.json(result);
-  } catch (err) {
-    res.status(err.status ?? 500).json({
-      msg: err.message || 'حدث خطأ أثناء جلب طلباتك',
-    });
-  }
-};
+exports.getMyRequests = asyncHandler(async (req, res) => {
+  const result = await drService.getMyRequestsLogic(req.user.id);
+  res.json(result);
+});
 
-exports.createRequest = async (req, res) => {
-  try {
-    const result = await drService.createRequestLogic(req.body, req.user.id);
-    res.status(201).json(result);
-  } catch (err) {
-    res.status(err.status ?? 500).json({
-      msg: err.message || 'حدث خطأ أثناء إنشاء الطلب',
-      code: err.code,
-    });
-  }
-};
+exports.createRequest = asyncHandler(async (req, res) => {
+  const result = await drService.createRequestLogic(req.body, req.user.id);
+  res.status(201).json(result);
+});
 
-exports.cancelRequest = async (req, res) => {
-  try {
-    const result = await drService.cancelRequestLogic(req.params.id, req.user.id);
-    res.json(result);
-  } catch (err) {
-    res.status(err.status ?? 500).json({
-      msg: err.message || 'حدث خطأ أثناء إلغاء الطلب',
-    });
-  }
-};
+exports.cancelRequest = asyncHandler(async (req, res) => {
+  const result = await drService.cancelRequestLogic(req.params.id, req.user.id);
+  res.json(result);
+});

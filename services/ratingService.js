@@ -1,104 +1,103 @@
 // services/ratingService.js
-const Rating         = require('../models/Rating');
-const Item           = require('../models/Item');
-const User           = require('../models/User');
-
+const ratingRepository = require('../repositories/ratingRepository');
 const { notifyUser } = require('../utils/notifyUser');
+const AppError = require('../utils/AppError');
 
 const calcTrustDelta = (score) => {
-  if (score >= 9) return  2;
-  if (score >= 7) return  1;
-  if (score >= 5) return  0;
+  if (score >= 9) return 2;
+  if (score >= 7) return 1;
+  if (score >= 5) return 0;
   if (score >= 3) return -1;
   return -2;
 };
 
 exports.submitRating = async ({ itemId, raterId, score, comment }) => {
+  const item = await ratingRepository.findItemById(itemId);
 
-  const item = await Item.findById(itemId);
+  if (!item) {
+    throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+  }
 
-  if (!item)
-    throw Object.assign(new Error('الغرض غير موجود'), { status: 404, code: 'ITEM_NOT_FOUND' });
-
-  if (item.status !== 'تم التسليم')
-    throw Object.assign(
-      new Error('لا يمكن التقييم قبل اكتمال التسليم'),
-      { status: 403, code: 'HANDOVER_NOT_COMPLETE' }
+  if (item.status !== 'تم التسليم') {
+    throw new AppError(
+      'لا يمكن التقييم قبل اكتمال التسليم',
+      403,
+      'HANDOVER_NOT_COMPLETE'
     );
+  }
 
-  // ✅ Fix 11.3 — تقييم ثنائي: المتبرع يقيّم المستلم والمستلم يقيّم المتبرع
-  const isDonor    = item.donor.toString()     === raterId.toString();
+  const isDonor = item.donor.toString() === raterId.toString();
   const isReceiver = item.bookedBy?.toString() === raterId.toString();
 
-  if (!isDonor && !isReceiver)
-    throw Object.assign(
-      new Error('فقط المتبرع أو المستلم يمكنه تقييم هذا الغرض'),
-      { status: 403, code: 'NOT_PARTICIPANT' }
+  if (!isDonor && !isReceiver) {
+    throw new AppError(
+      'فقط المتبرع أو المستلم يمكنه تقييم هذا الغرض',
+      403,
+      'NOT_PARTICIPANT'
     );
+  }
 
-  // ✅ Fix 11.3 — ratee دائماً الطرف الآخر
   const ratee = isDonor ? item.bookedBy : item.donor;
 
-  const exists = await Rating.findOne({ item: itemId, rater: raterId });
-  if (exists)
-    throw Object.assign(
-      new Error('لقد قيّمت هذا الغرض مسبقاً ✅'),
-      { status: 409, code: 'ALREADY_RATED' }
+  if (!ratee) {
+    throw new AppError(
+      'لا يوجد طرف آخر صالح للتقييم لهذا الغرض',
+      400,
+      'RATEE_NOT_FOUND'
     );
+  }
+
+  const exists = await ratingRepository.findExistingRating({ itemId, raterId });
+
+  if (exists) {
+    throw new AppError(
+      'لقد قيّمت هذا الغرض مسبقاً ✅',
+      409,
+      'ALREADY_RATED'
+    );
+  }
 
   const trustDelta = calcTrustDelta(score);
 
-  const rating = await Rating.create({
-    item:                itemId,
-    rater:               raterId,
-    ratee,                          // ✅ Fix 11.3 — الطرف الآخر ديناميكياً
+  const rating = await ratingRepository.createRating({
+    item: itemId,
+    rater: raterId,
+    ratee,
     score,
     comment,
     isHandoverConfirmed: true,
     trustDelta,
   });
 
-  await Item.findByIdAndUpdate(itemId, { isRated: true });
-
-  // ✅ Fix 11.3 — تحديث trustScore للطرف المُقيَّم (مش دائماً المتبرع)
-  await User.findByIdAndUpdate(ratee, { $inc: { trustScore: trustDelta } });
-
-  // ✅ Fix 11.3 — إشعار الطرف المُقيَّم
-  await notifyUser(ratee, {
-    type:   'new_rating',
-    title:  'حصلت على تقييم جديد ⭐',
-    body:   `تقييمك على "${item.title}": ${score}/10`,
-    itemId: item._id,
-  });
+  await Promise.all([
+    ratingRepository.markItemRated(itemId),
+    ratingRepository.incrementUserTrustScore(ratee, trustDelta),
+    notifyUser(ratee, {
+      type: 'new_rating',
+      title: 'حصلت على تقييم جديد ⭐',
+      body: `تقييمك على "${item.title}": ${score}/10`,
+      itemId: item._id,
+    }),
+  ]);
 
   return rating;
 };
 
 exports.getUserRatings = async (userId) => {
-  return Rating.find({ ratee: userId })
-    .select('score comment createdAt item rater')
-    .populate('item',  'title')
-    .populate('rater', 'name avatar')
-    .sort({ createdAt: -1 })
-    .limit(20);
+  return ratingRepository.findRatingsForUser(userId);
 };
 
-// ✅ Fix 11.3 — getPendingRating يشمل المتبرع والمستلم معاً
 exports.getPendingRating = async (userId) => {
   const [asDonor, asReceiver] = await Promise.all([
-    Item.find({ donor: userId,    status: 'تم التسليم' })
-      .populate('bookedBy', 'name avatar')
-      .lean(),
-    Item.find({ bookedBy: userId, status: 'تم التسليم' })
-      .populate('donor', 'name avatar')
-      .lean(),
+    ratingRepository.findDeliveredItemsAsDonor(userId),
+    ratingRepository.findDeliveredItemsAsReceiver(userId),
   ]);
 
   const allItems = [...asDonor, ...asReceiver];
   if (!allItems.length) return null;
 
-  const ratedItemIds = await Rating.find({ rater: userId }).distinct('item');
-  const ratedSet     = new Set(ratedItemIds.map(String));
+  const ratedItemIds = await ratingRepository.findRatedItemIdsByRater(userId);
+  const ratedSet = new Set(ratedItemIds.map(String));
 
   return allItems.find((item) => !ratedSet.has(String(item._id))) || null;
 };

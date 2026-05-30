@@ -1,147 +1,129 @@
-const adminService = require("../services/adminService");
-const { validatePromote } = require("../dtos/adminDto");
+// controllers/adminController.js
+const adminService = require('../services/adminService');
+const asyncHandler = require('../utils/asyncHandler');
+const AppError = require('../utils/AppError');
+const { validatePromote } = require('../dtos/adminDto');
 
 // ─── Users ────────────────────────────────────────────────────
-exports.promoteUser = async (req, res) => {
+exports.promoteUser = asyncHandler(async (req, res) => {
   const { error } = validatePromote(req.body);
-  if (error) return res.status(400).json({ msg: error.details[0].message });
-
-  try {
-    const user = await adminService.promoteToLevel2(
-      req.params.id,
-      req.user.id,
-      req.body.reason,
-      req.body.adminNote
-    );
-    return res.status(200).json({ msg: `تمت ترقية ${user.name} ✅`, user });
-  } catch (err) {
-    return res.status(err.status ?? 500).json({ msg: err.message });
+  if (error) {
+    throw new AppError(error.details[0].message, 400, 'VALIDATION_ERROR');
   }
-};
 
-exports.demoteUser = async (req, res) => {
+  const user = await adminService.promoteToLevel2(
+    req.params.id,
+    req.user.id,
+    req.body.reason,
+    req.body.adminNote
+  );
+
+  return res.status(200).json({
+    msg: `تمت ترقية ${user.name} ✅`,
+    user,
+  });
+});
+
+exports.demoteUser = asyncHandler(async (req, res) => {
   const { error } = validatePromote(req.body);
-  if (error) return res.status(400).json({ msg: error.details[0].message });
-
-  try {
-    const user = await adminService.demoteToLevel1(
-      req.params.id,
-      req.user.id,
-      req.body.reason,
-      req.body.adminNote
-    );
-    return res.status(200).json({ msg: `تم خفض ${user.name}`, user });
-  } catch (err) {
-    return res.status(err.status ?? 500).json({ msg: err.message });
+  if (error) {
+    throw new AppError(error.details[0].message, 400, 'VALIDATION_ERROR');
   }
-};
 
-exports.listUsers = async (req, res) => {
-  try {
-    const result = await adminService.listUsers(req.query);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ msg: err.message });
-  }
-};
+  const user = await adminService.demoteToLevel1(
+    req.params.id,
+    req.user.id,
+    req.body.reason,
+    req.body.adminNote
+  );
 
-exports.banUser = async (req, res) => {
-  try {
-    const user = await adminService.banUser(
-      req.params.id,
-      req.user.id,
-      req.body.reason,
-      req.body.adminNote
-    );
-    res.json({ msg: `تم حظر ${user.name}`, user });
-  } catch (err) {
-    res.status(err.status ?? 500).json({ msg: err.message });
-  }
-};
+  return res.status(200).json({
+    msg: `تم خفض ${user.name}`,
+    user,
+  });
+});
 
-exports.unbanUser = async (req, res) => {
-  try {
-    const user = await adminService.unbanUser(
-      req.params.id,
-      req.user.id,
-      req.body.adminNote
-    );
-    res.json({ msg: `تم رفع الحظر عن ${user.name}`, user });
-  } catch (err) {
-    res.status(err.status ?? 500).json({ msg: err.message });
-  }
-};
+exports.listUsers = asyncHandler(async (req, res) => {
+  const result = await adminService.listUsers(req.query);
+  res.json(result);
+});
+
+exports.banUser = asyncHandler(async (req, res) => {
+  const user = await adminService.banUser(
+    req.params.id,
+    req.user.id,
+    req.body.reason,
+    req.body.adminNote
+  );
+
+  res.json({
+    msg: `تم حظر ${user.name}`,
+    user,
+  });
+});
+
+exports.unbanUser = asyncHandler(async (req, res) => {
+  const user = await adminService.unbanUser(
+    req.params.id,
+    req.user.id,
+    req.body.adminNote
+  );
+
+  res.json({
+    msg: `تم رفع الحظر عن ${user.name}`,
+    user,
+  });
+});
 
 // ─── Items ────────────────────────────────────────────────────
-exports.listItems = async (req, res) => {
-  try {
-    const result = await adminService.listItems(req.query);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ msg: err.message });
+exports.listItems = asyncHandler(async (req, res) => {
+  const result = await adminService.listItems(req.query);
+  res.json(result);
+});
+
+exports.deleteItem = asyncHandler(async (req, res) => {
+  if (!req.body.adminNote || !req.body.adminNote.trim()) {
+    throw new AppError('تعليق الحذف مطلوب', 400, 'ADMIN_NOTE_REQUIRED');
   }
-};
 
-exports.deleteItem = async (req, res) => {
-  try {
-    if (!req.body.adminNote || !req.body.adminNote.trim()) {
-      return res.status(400).json({ msg: "تعليق الحذف مطلوب" });
-    }
+  await adminService.deleteItem(
+    req.params.id,
+    req.user.id,
+    req.body.adminNote.trim()
+  );
 
-    await adminService.deleteItem(
-      req.params.id,
-      req.user.id,
-      req.body.adminNote.trim()
-    );
-
-    res.json({ msg: "تم حذف الغرض ✅" });
-  } catch (err) {
-    res.status(err.status ?? 500).json({ msg: err.message });
-  }
-};
+  res.json({ msg: 'تم حذف الغرض ✅' });
+});
 
 // ─── Reports ──────────────────────────────────────────────────
-exports.listReports = async (req, res) => {
-  try {
-    const result = await adminService.listReports(req.query);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ msg: err.message });
-  }
-};
+exports.listReports = asyncHandler(async (req, res) => {
+  const result = await adminService.listReports(req.query);
+  res.json(result);
+});
 
-exports.resolveReport = async (req, res) => {
-  try {
-    const report = await adminService.resolveReport(
-      req.params.id,
-      req.user.id,
-      req.body.action,
-      req.user.name,
-      req.body.adminNote
-    );
+exports.resolveReport = asyncHandler(async (req, res) => {
+  const report = await adminService.resolveReport(
+    req.params.id,
+    req.user.id,
+    req.body.action,
+    req.user.name,
+    req.body.adminNote
+  );
 
-    res.json({ msg: 'تم معالجة البلاغ ✅', report });
-  } catch (err) {
-    res.status(err.status ?? 500).json({ msg: err.message });
-  }
-};
+  res.json({
+    msg: 'تم معالجة البلاغ ✅',
+    report,
+  });
+});
 
 // ─── Audit Log ────────────────────────────────────────────────
-exports.listAuditLogs = async (req, res) => {
-  try {
-    const result = await adminService.listAuditLogs(req.query);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ msg: err.message });
-  }
-};
+exports.listAuditLogs = asyncHandler(async (req, res) => {
+  const result = await adminService.listAuditLogs(req.query);
+  res.json(result);
+});
 
 // ─── Stats ────────────────────────────────────────────────────
-exports.getStats = async (req, res) => {
-  try {
-    const stats = await adminService.getStats();
-    res.json(stats);
-  } catch (err) {
-    res.status(500).json({ msg: err.message });
-  }
-};
+exports.getStats = asyncHandler(async (_req, res) => {
+  const stats = await adminService.getStats();
+  res.json(stats);
+});

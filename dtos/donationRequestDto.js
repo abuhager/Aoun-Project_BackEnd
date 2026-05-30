@@ -1,14 +1,32 @@
-// dtos/donationRequestDto.js
-const Joi = require('joi');
+const mongoose = require('mongoose');
 
-exports.validateDonationRequest = (data) =>
-  Joi.object({
-    title:       Joi.string().min(3).max(100).required()
-                   .messages({ 'string.empty': 'عنوان الطلب مطلوب' }),
-    description: Joi.string().allow('').max(500),
-    category:    Joi.string().min(1).required()
-                   .messages({ 'string.empty': 'التصنيف مطلوب' }),
-    location:    Joi.string().min(2).max(100).required()
-                   .messages({ 'string.empty': 'الموقع مطلوب' }),
-    urgency:     Joi.string().valid('low', 'medium', 'high').default('medium'),
-  }).options({ stripUnknown: true }).validate(data);
+const donationRequestSchema = new mongoose.Schema({
+  requester: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  title: { type: String, required: true, trim: true, maxlength: 100 },
+  category: { type: String, required: true, trim: true, maxlength: 50 },
+  description: { type: String, maxlength: 500, trim: true },
+  location: { type: String, required: true, trim: true, maxlength: 100 },
+  urgency: {
+    type: String,
+    enum: ['low', 'medium', 'high'],
+    default: 'medium',
+  },
+  status: {
+    type: String,
+    enum: ['active', 'fulfilled', 'expired', 'cancelled'],
+    default: 'active',
+  },
+  month: { type: String, index: true },
+  expiresAt: { type: Date, index: true },
+}, { timestamps: true });
+
+donationRequestSchema.index({ requester: 1, month: 1, status: 1 });
+donationRequestSchema.index({ status: 1, expiresAt: 1 });
+donationRequestSchema.index({ category: 1, status: 1 });
+
+donationRequestSchema.pre(/^find/, function(next) {
+  this.where({});
+  next();
+});
+
+module.exports = mongoose.model('DonationRequest', donationRequestSchema);
