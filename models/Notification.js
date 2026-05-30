@@ -11,17 +11,18 @@ const notificationSchema = new mongoose.Schema({
   type: {
   type: String,
   enum: [
-    'item_booked',
-    'booking_cancelled',
-    'waitlist_promoted',
-    'delivery_done',         // ✅ القديم (إبقه للتوافق)
-    'delivery_completed',    // ✅ جديد — إتمام التسليم
-    'recipient_confirmed',   // ✅ جديد — المستلم أكّد الاستلام
-    'new_rating',
-    'report_resolved',
-    'admin_warning',
-    'admin_ban',
-  ],
+  'item_booked',
+  'booking_cancelled',
+  'waitlist_promoted',
+  'delivery_done',
+  'delivery_completed',
+  'recipient_confirmed',
+  'new_rating',
+  'report_resolved',
+  'admin_warning',
+  'admin_ban',
+  'new_message',   
+],
   required: true,
 },
   title:   { type: String, required: true },

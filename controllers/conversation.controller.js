@@ -237,7 +237,7 @@ exports.sendMessage = async (req, res) => {
           createdAt: notif.createdAt,
         });
       } catch (notifErr) {
-        console.error('notification error:', notifErr);
+          console.error('notification error:', notifErr.message, notifErr);
       }
     }
 
