@@ -16,26 +16,23 @@ const notificationRoutes = require('./routes/notifications');
 const leaderboardRoutes = require('./routes/leaderboard');
 const settingsRoutes = require('./routes/settings');
 const donationRequestRoutes = require('./routes/donationRequests');
+const conversationRoutes = require('./routes/conversations');
 
 const app = express();
 
-// ── Trust Proxy ───────────────────────────────────────────────
 app.set('trust proxy', 1);
 
-// ── Allowed Origins ───────────────────────────────────────────
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map((o) => o.trim())
   .filter(Boolean);
 
-// ── Security Headers ──────────────────────────────────────────
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
   })
 );
 
-// ── CORS ──────────────────────────────────────────────────────
 const corsOptions = {
   origin(origin, cb) {
     if (!origin) return cb(null, true);
@@ -55,15 +52,12 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// ── Parsers & Cookies ─────────────────────────────────────────
 app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 app.use(cookieParser());
 
-// ── Rate Limiting ─────────────────────────────────────────────
 app.use(globalLimiter);
 
-// ── Health Check ──────────────────────────────────────────────
 app.get('/health', (_req, res) => {
   res.status(200).json({
     status: 'ok',
@@ -73,7 +67,6 @@ app.get('/health', (_req, res) => {
   });
 });
 
-// ── API Routes ────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
 app.use('/api/items', itemRoutes);
 app.use('/api/phone', phoneRoutes);
@@ -85,15 +78,14 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/donation-requests', donationRequestRoutes);
+app.use('/api/conversations', conversationRoutes);
 
-// ── 404 Handler ───────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({
     msg: `المسار غير موجود: ${req.method} ${req.originalUrl}`,
   });
 });
 
-// ── Global Error Handler ──────────────────────────────────────
 app.use((err, _req, res, _next) => {
   const isDev = process.env.NODE_ENV !== 'production';
 
@@ -102,8 +94,21 @@ app.use((err, _req, res, _next) => {
     console.error(err.stack);
   }
 
+  if (err.code === 11000) {
+    const field = Object.keys(err.keyValue || {})[0] ?? 'حقل';
+    return res.status(409).json({
+      msg: `${field} مستخدم مسبقاً`,
+      code: 'DUPLICATE_KEY',
+    });
+  }
+
   if (err.name === 'ValidationError') {
-    return res.status(400).json({ msg: err.message });
+    const errors = Object.values(err.errors || {}).map((e) => e.message);
+    return res.status(422).json({
+      msg: 'بيانات غير صالحة',
+      errors,
+      code: 'VALIDATION_ERROR',
+    });
   }
 
   if (err.name === 'CastError') {
@@ -118,17 +123,6 @@ app.use((err, _req, res, _next) => {
     msg: isDev ? err.message : 'حدث خطأ داخلي في الخادم 🛠️',
     code: err.code || undefined,
   });
-  // Duplicate key (مثلاً email مكرر)
-if (err.code === 11000) {
-  const field = Object.keys(err.keyValue || {})[0] ?? 'حقل';
-  return res.status(409).json({ msg: `${field} مستخدم مسبقاً`, code: 'DUPLICATE_KEY' });
-}
-
-// Mongoose ValidationError يُرجع array من الأخطاء وليس رسالة واحدة
-if (err.name === 'ValidationError') {
-  const errors = Object.values(err.errors).map((e) => e.message);
-  return res.status(422).json({ msg: 'بيانات غير صالحة', errors, code: 'VALIDATION_ERROR' });
-}
 });
 
 module.exports = app;

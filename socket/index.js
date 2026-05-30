@@ -1,55 +1,103 @@
 const { Server } = require('socket.io');
-const { verifyAccessToken } = require('../utils/tokenUtils');
+const jwt = require('jsonwebtoken');
+const Conversation = require('../models/Conversation');
+const Item = require('../models/Item');
 
 let io;
 
-function initSocket(server) {
-  const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
-    .split(',')
-    .map((o) => o.trim())
-    .filter(Boolean);
-
-  io = new Server(server, {
+const initSocket = (httpServer) => {
+  io = new Server(httpServer, {
     cors: {
-      origin: ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS : 'http://localhost:3000',
+      origin: process.env.CLIENT_URL || 'http://localhost:3000',
       credentials: true,
     },
   });
 
+  io.use((socket, next) => {
+    const token = socket.handshake.auth?.token;
+    if (!token) return next(new Error('AUTH_REQUIRED'));
+
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      socket.userId = decoded.user.id;
+      socket.userName = decoded.user.name;
+      next();
+    } catch {
+      next(new Error('INVALID_TOKEN'));
+    }
+  });
+
   io.on('connection', (socket) => {
-    socket.on('join', (token) => {
-      // ✅ M2 — تحقق من JWT بدل قبول userId مباشرة
-      if (!token) return socket.emit('auth_error', { msg: 'توكن مطلوب 🔒' });
+    socket.join(`user_${socket.userId}`);
 
+    socket.on('joinConversation', async ({ itemId, convId }) => {
       try {
-        const decoded = verifyAccessToken(token);
-        const userId  = decoded.user.id;
+        let conversation = null;
 
-        if (decoded.user.isBanned) {
-          return socket.emit('auth_error', { msg: 'حسابك محظور 🚫' });
+        if (convId) {
+          conversation = await Conversation.findById(convId);
+        } else if (itemId) {
+          const item = await Item.findById(itemId).select('donor bookedBy');
+          if (!item) return socket.emit('error', { msg: 'الغرض غير موجود' });
+
+          const uid = socket.userId.toString();
+          const isDonor = item.donor.toString() === uid;
+          const isBooker = item.bookedBy?.toString() === uid;
+
+          if (!isDonor && !isBooker) {
+            return socket.emit('error', { msg: 'غير مصرح' });
+          }
+
+          conversation = await Conversation.findOne({ item: itemId });
         }
 
-        socket.join(`user:${userId}`);
-        socket.emit('joined', { userId }); // ✅ تأكيد الانضمام للفرونت
-      } catch (err) {
-        const isExpired = err.name === 'TokenExpiredError';
-        socket.emit('auth_error', {
-          msg:  isExpired ? 'انتهت صلاحية الجلسة ⏰' : 'توكن غير صالح ⚠️',
-          code: isExpired ? 'TOKEN_EXPIRED'           : 'INVALID_TOKEN',
+        if (!conversation) {
+          return socket.emit('error', { msg: 'المحادثة غير موجودة' });
+        }
+
+        const isParticipant = conversation.participants
+          .map((p) => p.toString())
+          .includes(socket.userId.toString());
+
+        if (!isParticipant) {
+          return socket.emit('error', { msg: 'غير مصرح' });
+        }
+
+        socket.join(`conv_${conversation._id}`);
+
+        socket.emit('conversationJoined', {
+          convId: conversation._id,
         });
+      } catch (err) {
+        console.error('joinConversation:', err.message);
+        socket.emit('error', { msg: 'خطأ في السيرفر' });
       }
     });
 
-    socket.on('disconnect', () => {});
+    socket.on('typing', ({ convId }) => {
+      socket.to(`conv_${convId}`).emit('userTyping', {
+        userId: socket.userId,
+        name: socket.userName,
+      });
+    });
+
+    socket.on('stopTyping', ({ convId }) => {
+      socket.to(`conv_${convId}`).emit('userStopTyping', {
+        userId: socket.userId,
+      });
+    });
+
+    socket.on('readMessages', ({ convId }) => {
+      io.to(`conv_${convId}`).emit('messagesRead', { by: socket.userId });
+    });
   });
 
-  console.log('✅ Socket.io جاهز');
   return io;
-}
+};
 
-function getIo() {
-  if (!io) throw new Error('Socket.io لم يُهيَّأ بعد — استدعِ initSocket أولاً');
+const getIO = () => {
+  if (!io) throw new Error('Socket.io not initialized');
   return io;
-}
+};
 
-module.exports = { initSocket, getIo };
+module.exports = { initSocket, getIO };
