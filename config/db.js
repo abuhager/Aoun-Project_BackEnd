@@ -18,9 +18,12 @@ const connectDB = async () => {
 
 const gracefulShutdown = (signal) => {
   console.log(`\n[${signal}] إيقاف تشغيل الخادم بشكل آمن...`);
-  mongoose.connection.close(false, () => {
+  // ✅ Fix: mongoose v7+ لا يقبل callback — استخدم Promise
+  mongoose.connection.close().then(() => {
     console.log('✅ اتصال MongoDB مُغلَق');
     process.exit(0);
+  }).catch(() => {
+    process.exit(1);
   });
 };
 

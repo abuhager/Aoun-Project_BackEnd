@@ -25,7 +25,6 @@ const ItemSchema = new mongoose.Schema(
 
     category: {
       type: String,
-      enum: ['ملابس', 'أثاث', 'إلكترونيات', 'كتب', 'أدوات', 'أخرى'],
       default: 'أخرى',
     },
 

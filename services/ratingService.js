@@ -26,11 +26,18 @@ exports.submitRating = async ({ itemId, raterId, score, comment }) => {
       { status: 403, code: 'HANDOVER_NOT_COMPLETE' }
     );
 
-  if (item.bookedBy?.toString() !== raterId.toString())
+  // ✅ Fix 11.3 — تقييم ثنائي: المتبرع يقيّم المستلم والمستلم يقيّم المتبرع
+  const isDonor    = item.donor.toString()     === raterId.toString();
+  const isReceiver = item.bookedBy?.toString() === raterId.toString();
+
+  if (!isDonor && !isReceiver)
     throw Object.assign(
-      new Error('فقط المستلم يمكنه تقييم هذا الغرض'),
-      { status: 403, code: 'NOT_RECEIVER' }
+      new Error('فقط المتبرع أو المستلم يمكنه تقييم هذا الغرض'),
+      { status: 403, code: 'NOT_PARTICIPANT' }
     );
+
+  // ✅ Fix 11.3 — ratee دائماً الطرف الآخر
+  const ratee = isDonor ? item.bookedBy : item.donor;
 
   const exists = await Rating.findOne({ item: itemId, rater: raterId });
   if (exists)
@@ -44,22 +51,20 @@ exports.submitRating = async ({ itemId, raterId, score, comment }) => {
   const rating = await Rating.create({
     item:                itemId,
     rater:               raterId,
-    ratee:               item.donor,
+    ratee,                          // ✅ Fix 11.3 — الطرف الآخر ديناميكياً
     score,
     comment,
     isHandoverConfirmed: true,
     trustDelta,
   });
 
-    await Item.findByIdAndUpdate(itemId, { isRated: true });
+  await Item.findByIdAndUpdate(itemId, { isRated: true });
 
-  await User.findByIdAndUpdate(
-    item.donor,
-    { $inc: { trustScore: trustDelta } }
-  );
+  // ✅ Fix 11.3 — تحديث trustScore للطرف المُقيَّم (مش دائماً المتبرع)
+  await User.findByIdAndUpdate(ratee, { $inc: { trustScore: trustDelta } });
 
-  // ✅ أبلغ المتبرع بالتقييم
-  await notifyUser(item.donor, {
+  // ✅ Fix 11.3 — إشعار الطرف المُقيَّم
+  await notifyUser(ratee, {
     type:   'new_rating',
     title:  'حصلت على تقييم جديد ⭐',
     body:   `تقييمك على "${item.title}": ${score}/10`,
@@ -78,18 +83,22 @@ exports.getUserRatings = async (userId) => {
     .limit(20);
 };
 
+// ✅ Fix 11.3 — getPendingRating يشمل المتبرع والمستلم معاً
 exports.getPendingRating = async (userId) => {
-  const bookedItems = await Item.find({
-    bookedBy: userId,
-    status:   'تم التسليم',
-  })
-    .populate('donor', 'name avatar')
-    .lean();
+  const [asDonor, asReceiver] = await Promise.all([
+    Item.find({ donor: userId,    status: 'تم التسليم' })
+      .populate('bookedBy', 'name avatar')
+      .lean(),
+    Item.find({ bookedBy: userId, status: 'تم التسليم' })
+      .populate('donor', 'name avatar')
+      .lean(),
+  ]);
 
-  if (!bookedItems.length) return null;
+  const allItems = [...asDonor, ...asReceiver];
+  if (!allItems.length) return null;
 
   const ratedItemIds = await Rating.find({ rater: userId }).distinct('item');
   const ratedSet     = new Set(ratedItemIds.map(String));
 
-  return bookedItems.find((item) => !ratedSet.has(String(item._id))) || null;
+  return allItems.find((item) => !ratedSet.has(String(item._id))) || null;
 };

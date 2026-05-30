@@ -224,9 +224,11 @@ exports.bookItemLogic = async (itemId, userId) => {
     throw new Error('أنت بالفعل في قائمة الانتظار');
   }
 
-  await Item.findByIdAndUpdate(itemId, {
-    $push: { waitlist: { user: userId, joinedAt: new Date() } },
-  });
+  await Item.findOneAndUpdate(
+  { _id: itemId, 'waitlist.user': { $ne: userId } }, // شرط: ليس في الـ waitlist
+  { $push: { waitlist: { user: userId, joinedAt: new Date() } } },
+);
+
 
   return { status: 'waitlist', msg: 'تمت إضافتك لقائمة الانتظار ⏳' };
 };

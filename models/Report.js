@@ -1,18 +1,12 @@
 const mongoose = require('mongoose');
 
-const REPORT_REASONS = [
-  'لم يُسلّم الغرض',
-  'معلومات مضللة',
-  'سلوك غير لائق',
-  'غرض مختلف عن الوصف',
-  'أخرى',
-];
+
 
 const reportSchema = new mongoose.Schema({
   reporter:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   reportedUser: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   relatedItem:  { type: mongoose.Schema.Types.ObjectId, ref: 'Item' },
-  reason:       { type: String, enum: REPORT_REASONS, required: true },
+  reason: { type: String, required: true, maxlength: 100 },
   details:      { type: String, maxlength: 500 },
   status: {
     type:    String,
@@ -29,5 +23,5 @@ const reportSchema = new mongoose.Schema({
 
 // منع التبليغ المزدوج
 // ✅ منع البلاغ المكرر على نفس الغرض
-reportSchema.index({ reporter: 1, reportedUser: 1, relatedItem: 1 }, { unique: true });
+reportSchema.index({ reporter: 1, reportedUser: 1, relatedItem: 1 , status: 1 }, { unique: true });
 module.exports = mongoose.model('Report', reportSchema);
