@@ -1,20 +1,16 @@
 // controllers/settingsController.js
 const settingsService = require('../services/settingsService');
+const asyncHandler = require('../utils/asyncHandler');
 
-exports.getSettings = async (req, res) => {
-  try {
-    const settings = await settingsService.getSettings();
-    res.json(settings);
-  } catch (err) {
-    res.status(err.status ?? 500).json({ msg: err.message });
-  }
-};
+exports.getSettings = asyncHandler(async (req, res) => {
+  const settings = await settingsService.getSettings();
+  res.json(settings);
+});
 
-exports.updateSettings = async (req, res) => {
-  try {
-    const updated = await settingsService.updateSettings(req.body);
-    res.json({ msg: 'تم تحديث الإعدادات ✅', settings: updated });
-  } catch (err) {
-    res.status(err.status ?? 500).json({ msg: err.message });
-  }
-};
+exports.updateSettings = asyncHandler(async (req, res) => {
+  const updated = await settingsService.updateSettings(req.body);
+  res.json({
+    msg: 'تم تحديث الإعدادات ✅',
+    settings: updated,
+  });
+});

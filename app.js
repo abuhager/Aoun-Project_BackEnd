@@ -6,6 +6,7 @@ const cookieParser = require('cookie-parser');
 
 const { globalLimiter } = require('./middlewares/rateLimiter');
 const errorHandler = require('./middlewares/errorHandler');
+const AppError = require('./utils/AppError');
 
 const authRoutes = require('./routes/auth');
 const itemRoutes = require('./routes/items');
@@ -23,6 +24,7 @@ const conversationRoutes = require('./routes/conversations');
 const app = express();
 
 app.set('trust proxy', 1);
+app.disable('x-powered-by');
 
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
@@ -43,7 +45,13 @@ const corsOptions = {
       return cb(null, true);
     }
 
-    return cb(new Error(`CORS: Origin غير مصرح به — ${origin}`));
+    return cb(
+      new AppError(
+        `CORS: Origin غير مصرح به — ${origin}`,
+        403,
+        'CORS_ORIGIN_DENIED'
+      )
+    );
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -82,15 +90,18 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/donation-requests', donationRequestRoutes);
 app.use('/api/conversations', conversationRoutes);
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    msg: `المسار غير موجود: ${req.method} ${req.originalUrl}`,
-    code: 'ROUTE_NOT_FOUND',
-  });
+// 404 → مرره للـ centralized error handler
+app.use((req, _res, next) => {
+  next(
+    new AppError(
+      `المسار غير موجود: ${req.method} ${req.originalUrl}`,
+      404,
+      'ROUTE_NOT_FOUND'
+    )
+  );
 });
 
-// Centralized error handler
+// Centralized error handler — لازم يكون الأخير
 app.use(errorHandler);
 
 module.exports = app;

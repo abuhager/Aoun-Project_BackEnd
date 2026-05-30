@@ -4,24 +4,18 @@ const router = express.Router();
 
 const { requireAuth } = require('../middlewares/auth');
 const validateObjectId = require('../middlewares/validateObjectId');
+const validateBody = require('../middlewares/validateBody');
 const drController = require('../controllers/donationRequestController');
-const { validateDonationRequest } = require('../dtos/donationRequestDto');
 
-const validate = (fn) => (req, res, next) => {
-  const { error } = fn(req.body);
-  if (error) {
-    return res.status(400).json({ msg: error.details[0].message });
-  }
-  next();
-};
-
+// ── قراءة ────────────────────────────────────────────────────
 router.get('/', requireAuth, drController.getRequests);
 router.get('/me', requireAuth, drController.getMyRequests);
 
+// ── كتابة ────────────────────────────────────────────────────
 router.post(
   '/',
   requireAuth,
-  validate(validateDonationRequest),
+  validateBody('createDonationRequest'),
   drController.createRequest
 );
 

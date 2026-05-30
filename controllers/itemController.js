@@ -1,109 +1,73 @@
+// controllers/itemController.js
 const itemService = require('../services/itemService');
-const { validateCreateItem } = require('../dtos/itemDto');
-const { getIO } = require('../socket');
+const asyncHandler = require('../utils/asyncHandler');
+const { getIO } = require('../socket/socketHandler');
 
-exports.getItems = async (req, res) => {
-  try {
-    const result = await itemService.getItemsLogic(req.query);
-    res.json(result);
-  } catch (err) {
-    console.error('Pagination Error:', err.message);
-    res.status(500).json({ msg: 'خطأ في السيرفر أثناء جلب الأغراض' });
+exports.getItems = asyncHandler(async (req, res) => {
+  const result = await itemService.getItemsLogic(req.query);
+  res.json(result);
+});
+
+exports.getMyItems = asyncHandler(async (req, res) => {
+  const result = await itemService.getMyItemsLogic(req.user.id);
+  res.json(result);
+});
+
+exports.getItemById = asyncHandler(async (req, res) => {
+  const requesterId = req.user?.id || req.user?._id || null;
+  const result = await itemService.getItemByIdLogic(req.params.id, requesterId);
+  res.json(result);
+});
+
+exports.createItem = asyncHandler(async (req, res) => {
+  const result = await itemService.createItemLogic(req.body, req.user.id, req.file);
+  res.status(201).json({ success: true, ...result });
+});
+
+exports.bookItem = asyncHandler(async (req, res) => {
+  const result = await itemService.bookItemLogic(req.params.id, req.user.id);
+  res.status(200).json({ success: true, ...result });
+});
+
+exports.cancelBooking = asyncHandler(async (req, res) => {
+  const result = await itemService.cancelBookingLogic(
+    req.params.id,
+    req.user.id.toString()
+  );
+  res.json(result);
+});
+
+exports.completeDelivery = asyncHandler(async (req, res) => {
+  const result = await itemService.completeDeliveryLogic(
+    req.params.id,
+    req.user.id,
+    req.body.confirmationType
+  );
+
+  if (result?.status === 'delivered') {
+    try {
+getIO().emit('leaderboard:update');
+    } catch (_) {}
   }
-};
 
-exports.getMyItems = async (req, res) => {
-  try {
-    const result = await itemService.getMyItemsLogic(req.user.id);
-    res.json(result);
-  } catch (err) {
-    console.error('Error in getMyItems:', err.message);
-    res.status(500).json({ msg: 'خطأ في السيرفر أثناء جلب بياناتي' });
-  }
-};
+  res.json(result);
+});
 
-exports.getItemById = async (req, res) => {
-  try {
-    const requesterId = req.user?.id || req.user?._id || null;
-    const result = await itemService.getItemByIdLogic(req.params.id, requesterId);
-    res.json(result);
-  } catch (err) {
-    const status = err.message === 'الغرض غير موجود' ? 404 : 500;
-    res.status(status).json({ msg: err.message || 'خطأ في السيرفر' });
-  }
-};
+exports.updateItem = asyncHandler(async (req, res) => {
+  const result = await itemService.updateItemLogic(
+    req.params.id,
+    req.user.id,
+    req.body,
+    req.file
+  );
+  res.json(result);
+});
 
-exports.createItem = async (req, res) => {
-  try {
-    const { error } = validateCreateItem(req.body);
-    if (error) {
-      return res.status(400).json({ success: false, message: error.details[0].message });
-    }
-
-    const result = await itemService.createItemLogic(req.body, req.user.id, req.file);
-    res.status(201).json({ success: true, ...result });
-  } catch (err) {
-    console.error('Create item error:', err.message);
-    res.status(err.status || 400).json({ success: false, message: err.message });
-  }
-};
-
-exports.bookItem = async (req, res) => {
-  try {
-    const result = await itemService.bookItemLogic(req.params.id, req.user.id);
-    res.status(200).json({ success: true, ...result });
-  } catch (err) {
-    res.status(err.status || 400).json({ success: false, message: err.message });
-  }
-};
-
-exports.cancelBooking = async (req, res) => {
-  try {
-    const result = await itemService.cancelBookingLogic(req.params.id, req.user.id.toString());
-    res.json(result);
-  } catch (err) {
-    res.status(err.status || 500).json({ msg: err.message || 'خطأ في السيرفر' });
-  }
-};
-
-exports.completeDelivery = async (req, res) => {
-  try {
-    const result = await itemService.completeDeliveryLogic(
-      req.params.id,
-      req.user.id,
-      req.body.confirmationType
-    );
-
-    if (result?.status === 'delivered') {
-      try {
-        getIO().emit('leaderboard:update');
-      } catch {}
-    }
-
-    res.json(result);
-  } catch (err) {
-    res.status(err.status || 500).json({
-      msg: err.message || 'خطأ في التسليم',
-      code: err.code || undefined,
-    });
-  }
-};
-
-exports.updateItem = async (req, res) => {
-  try {
-    const result = await itemService.updateItemLogic(req.params.id, req.user.id, req.body, req.file);
-    res.json(result);
-  } catch (err) {
-    res.status(err.status || 404).json({ msg: err.message || 'فشل التعديل' });
-  }
-};
-
-exports.deleteItem = async (req, res) => {
-  try {
-    const result = await itemService.deleteItemLogic(req.params.id, req.user.id, req.user.role);
-    res.json(result);
-  } catch (err) {
-    const status = err.status || (err.message.includes('غير مصرح') ? 403 : 404);
-    res.status(status).json({ msg: err.message || 'خطأ في الحذف' });
-  }
-};
+exports.deleteItem = asyncHandler(async (req, res) => {
+  const result = await itemService.deleteItemLogic(
+    req.params.id,
+    req.user.id,
+    req.user.role
+  );
+  res.json(result);
+});

@@ -1,106 +1,121 @@
-const { Server }     = require('socket.io');
-const jwt            = require('jsonwebtoken');
-const Conversation   = require('../models/Conversation');
-const Item           = require('../models/Item');
-const User           = require('../models/User');
+// socket/socketHandler.js
+const { Server } = require('socket.io');
+const jwt = require('jsonwebtoken');
+const Conversation = require('../models/Conversation');
+const Item = require('../models/Item');
 
 let io;
 
+function getAllowedOrigins() {
+  return (process.env.ALLOWED_ORIGINS || process.env.CLIENT_URL || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+}
+
 const initSocket = (httpServer) => {
+  const allowedOrigins = getAllowedOrigins();
+
   io = new Server(httpServer, {
     cors: {
-      origin:      process.env.CLIENT_URL || 'http://localhost:3000',
+      origin(origin, cb) {
+        if (!origin) return cb(null, true);
+        if (allowedOrigins.includes(origin)) return cb(null, true);
+        return cb(new Error(`CORS_ORIGIN_DENIED:${origin}`));
+      },
       credentials: true,
     },
   });
 
-  // ─── Middleware: تحقق JWT ──────────────────────────────────
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) return next(new Error('AUTH_REQUIRED'));
 
     try {
-      const decoded   = jwt.verify(token, process.env.JWT_SECRET);
-      socket.userId   = decoded.user.id;
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      socket.userId = decoded.user.id;
       socket.userName = decoded.user.name;
       next();
-    } catch {
-      next(new Error('INVALID_TOKEN'));
+    } catch (err) {
+      if (err.name === 'TokenExpiredError') {
+        return next(new Error('TOKEN_EXPIRED'));
+      }
+      return next(new Error('INVALID_TOKEN'));
     }
   });
 
   io.on('connection', (socket) => {
-    // انضم لـ personal room (للإشعارات)
     socket.join(`user_${socket.userId}`);
 
-    // ─── 1. فتح محادثة ──────────────────────────────────────
     socket.on('joinConversation', async ({ itemId }) => {
       try {
         const item = await Item.findById(itemId).select('donor bookedBy');
         if (!item) return socket.emit('error', { msg: 'الغرض غير موجود' });
 
+        if (!item.bookedBy) {
+          return socket.emit('error', { msg: 'لا يمكن فتح محادثة قبل وجود حجز' });
+        }
+
         const uid = socket.userId.toString();
-        const isDonor  = item.donor.toString()    === uid;
-        const isBooker = item.bookedBy?.toString() === uid;
+        const isDonor = item.donor.toString() === uid;
+        const isBooker = item.bookedBy.toString() === uid;
 
-        if (!isDonor && !isBooker)
+        if (!isDonor && !isBooker) {
           return socket.emit('error', { msg: 'غير مصرح' });
+        }
 
-        // أنشئ أو افتح المحادثة
         let conv = await Conversation.findOne({ item: itemId });
         if (!conv) {
           conv = await Conversation.create({
-            item:         itemId,
+            item: itemId,
             participants: [item.donor, item.bookedBy],
           });
         }
 
         socket.join(`conv_${conv._id}`);
 
-        // أرسل آخر 50 رسالة
-        const messages = conv.messages.slice(-50).map(m => ({
-          _id:       m._id,
-          sender:    m.sender,
-          text:      m.text,
-          read:      m.read,
+        const messages = conv.messages.slice(-50).map((m) => ({
+          _id: m._id,
+          sender: m.sender,
+          text: m.text,
+          read: m.read,
           createdAt: m.createdAt,
         }));
 
         socket.emit('conversationJoined', {
-          convId:   conv._id,
+          convId: conv._id,
           messages,
         });
 
-        // علّم رسائل الطرف الثاني كمقروءة
         await markRead(conv, socket.userId);
         io.to(`conv_${conv._id}`).emit('messagesRead', { by: socket.userId });
-
       } catch (err) {
         console.error('joinConversation:', err.message);
         socket.emit('error', { msg: 'خطأ في السيرفر' });
       }
     });
 
-    // ─── 2. إرسال رسالة ─────────────────────────────────────
     socket.on('sendMessage', async ({ convId, text }) => {
-      if (!text?.trim() || text.length > 1000)
+      if (!text?.trim() || text.length > 1000) {
         return socket.emit('error', { msg: 'نص غير صالح' });
+      }
 
       try {
         const conv = await Conversation.findById(convId);
         if (!conv) return socket.emit('error', { msg: 'المحادثة غير موجودة' });
 
         const isParticipant = conv.participants
-          .map(p => p.toString())
+          .map((p) => p.toString())
           .includes(socket.userId.toString());
 
-        if (!isParticipant)
+        if (!isParticipant) {
           return socket.emit('error', { msg: 'غير مصرح' });
+        }
 
         const message = {
-          sender:    socket.userId,
-          text:      text.trim(),
-          read:      false,
+          sender: socket.userId,
+          text: text.trim(),
+          read: false,
           createdAt: new Date(),
         };
 
@@ -110,40 +125,37 @@ const initSocket = (httpServer) => {
 
         const savedMsg = conv.messages[conv.messages.length - 1];
 
-        // أرسل للغرفة كلها
         io.to(`conv_${convId}`).emit('newMessage', {
-          _id:       savedMsg._id,
-          sender:    socket.userId,
+          _id: savedMsg._id,
+          sender: socket.userId,
           senderName: socket.userName,
-          text:      savedMsg.text,
-          read:      false,
+          text: savedMsg.text,
+          read: false,
           createdAt: savedMsg.createdAt,
         });
 
-        // إشعار للطرف الثاني (personal room)
-        const otherId = conv.participants
-          .find(p => p.toString() !== socket.userId.toString());
+        const otherId = conv.participants.find(
+          (p) => p.toString() !== socket.userId.toString()
+        );
 
         if (otherId) {
           io.to(`user_${otherId}`).emit('notification', {
-            type:   'NEW_MESSAGE',
+            type: 'NEW_MESSAGE',
             convId,
-            text:   text.trim().slice(0, 60),
+            text: text.trim().slice(0, 60),
             sender: socket.userName,
           });
         }
-
       } catch (err) {
         console.error('sendMessage:', err.message);
         socket.emit('error', { msg: 'خطأ في الإرسال' });
       }
     });
 
-    // ─── 3. جاري الكتابة ────────────────────────────────────
     socket.on('typing', ({ convId }) => {
       socket.to(`conv_${convId}`).emit('userTyping', {
         userId: socket.userId,
-        name:   socket.userName,
+        name: socket.userName,
       });
     });
 
@@ -153,11 +165,11 @@ const initSocket = (httpServer) => {
       });
     });
 
-    // ─── 4. قراءة الرسائل ────────────────────────────────────
     socket.on('readMessages', async ({ convId }) => {
       try {
         const conv = await Conversation.findById(convId);
         if (!conv) return;
+
         await markRead(conv, socket.userId);
         io.to(`conv_${convId}`).emit('messagesRead', { by: socket.userId });
       } catch (err) {
@@ -165,24 +177,25 @@ const initSocket = (httpServer) => {
       }
     });
 
-    socket.on('disconnect', () => {
-      // تلقائي — Socket.io يزيله من كل الغرف
-    });
+    socket.on('disconnect', () => {});
   });
 
   return io;
 };
 
-// ─── Helper: علّم رسائل المستخدم الثاني كمقروءة ──────────────
 const markRead = async (conv, userId) => {
   let updated = false;
-  conv.messages.forEach(m => {
+
+  conv.messages.forEach((m) => {
     if (m.sender.toString() !== userId.toString() && !m.read) {
-      m.read   = true;
-      updated  = true;
+      m.read = true;
+      updated = true;
     }
   });
-  if (updated) await conv.save();
+
+  if (updated) {
+    await conv.save();
+  }
 };
 
 const getIO = () => {

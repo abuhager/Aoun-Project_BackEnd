@@ -1,50 +1,28 @@
-// controllers/hubController.js — PATCHED ✅
-// التغيير: إضافة getAllAdmin handler
-
+// controllers/hubController.js
 const hubService = require('../services/hubService');
+const asyncHandler = require('../utils/asyncHandler');
 
-exports.getHubs = async (req, res) => {
-  try {
-    const { statusCode, body } = await hubService.getAllHubs();
-    res.status(statusCode).json(body);
-  } catch {
-    res.status(500).json({ msg: 'خطأ في جلب المراكز' });
-  }
-};
+exports.getHubs = asyncHandler(async (req, res) => {
+  const { statusCode, body } = await hubService.getAllHubs();
+  res.status(statusCode).json(body);
+});
 
-// ✅ جديد — للأدمن
-exports.getAllAdmin = async (req, res) => {
-  try {
-    const { statusCode, body } = await hubService.getAllHubsAdmin();
-    res.status(statusCode).json(body);
-  } catch {
-    res.status(500).json({ msg: 'خطأ في جلب المراكز' });
-  }
-};
+exports.getAllAdmin = asyncHandler(async (req, res) => {
+  const { statusCode, body } = await hubService.getAllHubsAdmin();
+  res.status(statusCode).json(body);
+});
 
-exports.createHub = async (req, res) => {
-  try {
-    const { statusCode, body } = await hubService.createHub(req.body, req.user.id);
-    res.status(statusCode).json(body);
-  } catch {
-    res.status(500).json({ msg: 'خطأ في إنشاء المركز' });
-  }
-};
+exports.createHub = asyncHandler(async (req, res) => {
+  const { statusCode, body } = await hubService.createHub(req.body, req.user.id);
+  res.status(statusCode).json(body);
+});
 
-exports.updateHub = async (req, res) => {
-  try {
-    const { statusCode, body } = await hubService.updateHub(req.params.id, req.body);
-    res.status(statusCode).json(body);
-  } catch {
-    res.status(500).json({ msg: 'خطأ في تحديث المركز' });
-  }
-};
+exports.updateHub = asyncHandler(async (req, res) => {
+  const { statusCode, body } = await hubService.updateHub(req.params.id, req.body);
+  res.status(statusCode).json(body);
+});
 
-exports.deactivateHub = async (req, res) => {
-  try {
-    const { statusCode, body } = await hubService.deactivateHub(req.params.id);
-    res.status(statusCode).json(body);
-  } catch {
-    res.status(500).json({ msg: 'خطأ في تعطيل المركز' });
-  }
-};
+exports.deactivateHub = asyncHandler(async (req, res) => {
+  const { statusCode, body } = await hubService.deactivateHub(req.params.id);
+  res.status(statusCode).json(body);
+});

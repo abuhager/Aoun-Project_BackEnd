@@ -1,46 +1,96 @@
 // middlewares/errorHandler.js
-module.exports = (err, _req, res, _next) => {
-  const isDev = process.env.NODE_ENV !== 'production';
+const Joi = require('joi');
+const AppError = require('../utils/AppError');
 
-  console.error('[Error]', err.message);
-  if (isDev && err.stack) {
-    console.error(err.stack);
+const isProduction = process.env.NODE_ENV === 'production';
+
+function normalizeError(err) {
+  if (!err) {
+    return new AppError('خطأ غير معروف في الخادم', 500, 'UNKNOWN_ERROR');
   }
 
-  if (err.code === 11000) {
-    const field = Object.keys(err.keyValue || {})[0] ?? 'حقل';
-    return res.status(409).json({
-      msg: `${field} مستخدم مسبقاً`,
-      code: 'DUPLICATE_KEY',
-    });
+  if (err instanceof AppError) {
+    return err;
+  }
+
+  if (err.isJoi || err instanceof Joi.ValidationError) {
+    return new AppError(
+      'بيانات غير صالحة',
+      422,
+      'VALIDATION_ERROR',
+      err.details?.map((d) => d.message) || null
+    );
   }
 
   if (err.name === 'ValidationError') {
-    const errors = Object.values(err.errors || {}).map((e) => e.message);
-    return res.status(422).json({
-      msg: 'بيانات غير صالحة',
-      errors,
-      code: 'VALIDATION_ERROR',
-    });
+    return new AppError(
+      'فشل التحقق من البيانات',
+      422,
+      'MONGOOSE_VALIDATION_ERROR',
+      Object.values(err.errors || {}).map((e) => e.message)
+    );
   }
 
   if (err.name === 'CastError') {
-    return res.status(400).json({
-      msg: 'معرّف غير صحيح',
-      code: 'INVALID_ID',
+    return new AppError(
+      'معرّف أو قيمة غير صالحة',
+      400,
+      'INVALID_IDENTIFIER'
+    );
+  }
+
+  if (err.code === 11000) {
+    const fields = Object.keys(err.keyValue || {});
+    return new AppError(
+      `القيمة موجودة مسبقاً${fields.length ? `: ${fields.join(', ')}` : ''}`,
+      409,
+      'DUPLICATE_KEY'
+    );
+  }
+
+  if (err.name === 'JsonWebTokenError') {
+    return new AppError('رمز الدخول غير صالح', 401, 'INVALID_TOKEN');
+  }
+
+  if (err.name === 'TokenExpiredError') {
+    return new AppError('انتهت صلاحية رمز الدخول', 401, 'TOKEN_EXPIRED');
+  }
+
+  return new AppError(
+    err.message || 'حدث خطأ داخلي في الخادم',
+    err.statusCode || err.status || 500,
+    err.code || 'SERVER_ERROR'
+  );
+}
+
+function errorHandler(err, req, res, next) {
+  const normalized = normalizeError(err);
+
+  if (!isProduction) {
+    console.error('❌ Error:', {
+      message: normalized.message,
+      code: normalized.code,
+      statusCode: normalized.statusCode,
+      stack: err?.stack,
+      path: req.originalUrl,
+      method: req.method,
     });
   }
 
-  if (err.message?.includes('CORS')) {
-    return res.status(403).json({
-      msg: err.message,
-      code: 'CORS_BLOCKED',
-    });
+  const response = {
+    msg: normalized.message,
+    code: normalized.code,
+  };
+
+  if (normalized.details) {
+    response.errors = normalized.details;
   }
 
-  return res.status(err.status || err.statusCode || 500).json({
-    msg: isDev ? err.message : 'حدث خطأ داخلي في الخادم 🛠️',
-    code: err.code || 'SERVER_ERROR',
-    ...(isDev && err.details ? { details: err.details } : {}),
-  });
-};
+  if (!isProduction) {
+    response.stack = err?.stack;
+  }
+
+  res.status(normalized.statusCode).json(response);
+}
+
+module.exports = errorHandler;
