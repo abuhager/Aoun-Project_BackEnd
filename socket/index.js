@@ -1,4 +1,5 @@
 const { Server } = require('socket.io');
+const { verifyAccessToken } = require('../utils/tokenUtils');
 
 let io;
 
@@ -16,8 +17,27 @@ function initSocket(server) {
   });
 
   io.on('connection', (socket) => {
-    socket.on('join', (userId) => {
-      if (userId) socket.join(`user:${userId}`);
+    socket.on('join', (token) => {
+      // ✅ M2 — تحقق من JWT بدل قبول userId مباشرة
+      if (!token) return socket.emit('auth_error', { msg: 'توكن مطلوب 🔒' });
+
+      try {
+        const decoded = verifyAccessToken(token);
+        const userId  = decoded.user.id;
+
+        if (decoded.user.isBanned) {
+          return socket.emit('auth_error', { msg: 'حسابك محظور 🚫' });
+        }
+
+        socket.join(`user:${userId}`);
+        socket.emit('joined', { userId }); // ✅ تأكيد الانضمام للفرونت
+      } catch (err) {
+        const isExpired = err.name === 'TokenExpiredError';
+        socket.emit('auth_error', {
+          msg:  isExpired ? 'انتهت صلاحية الجلسة ⏰' : 'توكن غير صالح ⚠️',
+          code: isExpired ? 'TOKEN_EXPIRED'           : 'INVALID_TOKEN',
+        });
+      }
     });
 
     socket.on('disconnect', () => {});

@@ -8,7 +8,8 @@ const { fireSendEmail }      = require('../utils/sendEmail');
 const { uploadToCloudinary } = require('../utils/uploadToCloudinary');
 const { notifyUser } = require('../utils/notifyUser');
 const { toPublicItem } = require('../dtos/itemDto');
-
+const escapeRegex = (str) =>
+  str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').slice(0, 100);
 
 // ─── 1. جلب الأغراض (مع pagination) ─────────────────────────
 exports.getItemsLogic = async (query) => {
@@ -21,8 +22,9 @@ exports.getItemsLogic = async (query) => {
   const filter = { status: 'متاح' };
 
   // ✅ آمن من ReDoS
-  if (query.location) filter.location = new RegExp(escapeRegex(query.location), 'i');
-  if (query.search)   filter.title    = new RegExp(escapeRegex(query.search),   'i');
+  
+if (query.location) filter.location = new RegExp(escapeRegex(query.location), 'i');
+if (query.search)   filter.title    = new RegExp(escapeRegex(query.search),   'i');
   if (query.category) filter.category = query.category;
 
   const [items, total] = await Promise.all([

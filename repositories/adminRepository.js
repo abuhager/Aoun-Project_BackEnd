@@ -1,20 +1,28 @@
-// repositories/adminRepository.js — النسخة المُصلَحة الكاملة
+// repositories/adminRepository.js — النسخة النهائية والمُحصّنة بالكامل
 
 const User     = require('../models/User');
 const Item     = require('../models/Item');
 const Report   = require('../models/Report');
 const AdminLog = require('../models/AdminLog');
 
-// ── مساعد: تهريب أحرف RegExp الخاصة لمنع هجمات ReDoS ──────────
-const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// ── مساعد: تهريب أحرف RegExp وتحديد الطول لمنع هجمات ReDoS ──────────
+const getSafeSearchRegex = (search) => {
+  if (!search) return null;
+  // 1. تحديد طول المدخلات (بحد أقصى 100 حرف) لمنع العمليات الطويلة جداً
+  const truncated = String(search).slice(0, 100);
+  // 2. تهريب الأحرف الخاصة بـ Regex
+  const escaped = truncated.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(escaped, 'i');
+};
 
 // ── المستخدمون ────────────────────────────────────────────────
 exports.findAllUsers = ({ page = 1, limit = 20, search } = {}) => {
-  const filter = search
+  const searchRegex = getSafeSearchRegex(search);
+  const filter = searchRegex
     ? {
         $or: [
-          { name:  new RegExp(escapeRegex(search), 'i') }, // ✅ مُعالَج
-          { email: new RegExp(escapeRegex(search), 'i') }, // ✅ مُعالَج
+          { name:  searchRegex }, // ✅ مُعالَج ومحمي من الـ ReDoS وطول النص
+          { email: searchRegex }, // ✅ مُعالَج ومحمي من الـ ReDoS وطول النص
         ],
       }
     : {};
@@ -28,11 +36,12 @@ exports.findAllUsers = ({ page = 1, limit = 20, search } = {}) => {
 };
 
 exports.countUsers = (search) => {
-  const filter = search
+  const searchRegex = getSafeSearchRegex(search);
+  const filter = searchRegex
     ? {
         $or: [
-          { name:  new RegExp(escapeRegex(search), 'i') }, // ✅ مُعالَج
-          { email: new RegExp(escapeRegex(search), 'i') }, // ✅ مُعالَج
+          { name:  searchRegex },
+          { email: searchRegex },
         ],
       }
     : {};
@@ -147,7 +156,6 @@ exports.getDashboardStats = () =>
     deliveredItems,
     pendingReports,
   }));
-// ✅ السطر أعلاه ينتهي بـ ; — هذا يُصلح مشكلة الـ scope
 
 // ── البلاغات مع العدادات التراكمية ───────────────────────────
 exports.findPendingReportsWithCounts = async ({ page = 1, limit = 20, status = 'pending' } = {}) => {
