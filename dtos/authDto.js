@@ -45,3 +45,21 @@ exports.validateResetPassword = (body) => {
 
   return schema.validate(body);
 };
+
+
+// ─── validateUpdateMe ──────────────────────────────────────────
+exports.validateUpdateMe = (data) =>
+  Joi.object({
+    name:  Joi.string().min(2).max(60).optional(),
+    phone: Joi.string().pattern(/^[0-9]{9,15}$/).optional().allow(''),
+  }).validate(data);
+
+// ─── validateUpdatePassword ────────────────────────────────────
+exports.validateUpdatePassword = (data) =>
+  Joi.object({
+    currentPassword: Joi.string().required().messages({ 'any.required': 'كلمة المرور الحالية مطلوبة' }),
+    newPassword:     Joi.string().min(6).required().messages({
+      'string.min':   'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل',
+      'any.required': 'كلمة المرور الجديدة مطلوبة',
+    }),
+  }).validate(data);

@@ -5,12 +5,18 @@ const {
   validateLogin,
   validateForgotPassword,
   validateResetPassword,
+  validateUpdateMe,
+  validateUpdatePassword
 } = require('../dtos/authDto');
 const mongoose = require('mongoose');
 const {
   REFRESH_COOKIE_OPTIONS,
   CLEAR_REFRESH_COOKIE_OPTIONS,
 } = require('../utils/tokenUtils');
+const multer  = require('multer');
+const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const bcrypt         = require('bcryptjs');
+const userRepository = require('../repositories/userRepository');
 
 // ─── 1. التسجيل ────────────────────────────────────────
 exports.register = async (req, res) => {
@@ -167,6 +173,49 @@ exports.logout = async (req, res) => {
   } catch (err) {
     console.error(err.message);
     res.clearCookie('refreshToken', CLEAR_REFRESH_COOKIE_OPTIONS);
+    return res.status(500).json({ msg: 'خطأ في السيرفر' });
+  }
+};
+// ─── 10. PUT /me — تعديل البروفايل ───────────────────────────
+exports.updateMe = [
+  require('../middlewares/upload').single('avatar'),
+  async (req, res) => {
+    const { error } = validateUpdateMe(req.body);
+    if (error) return res.status(400).json({ msg: error.details[0].message });
+
+    const updates = {};
+    if (req.body.name?.trim())  updates.name  = req.body.name.trim();
+    if (req.body.phone?.trim()) updates.phone = req.body.phone.trim();
+
+    try {
+      const result = await authService.updateMeLogic(
+        req.user.id,
+        updates,
+        req.file?.buffer,
+        req.file?.mimetype,
+      );
+      return res.status(result.statusCode).json(result.body);
+    } catch (err) {
+      console.error(err.message);
+      return res.status(500).json({ msg: 'خطأ في السيرفر' });
+    }
+  },
+];
+
+// ─── 11. PUT /me/password — تغيير كلمة المرور ─────────────────
+exports.updatePassword = async (req, res) => {
+  const { error } = validateUpdatePassword(req.body);
+  if (error) return res.status(400).json({ msg: error.details[0].message });
+
+  try {
+    const result = await authService.updatePasswordLogic(
+      req.user.id,
+      req.body.currentPassword,
+      req.body.newPassword,
+    );
+    return res.status(result.statusCode).json(result.body);
+  } catch (err) {
+    console.error(err.message);
     return res.status(500).json({ msg: 'خطأ في السيرفر' });
   }
 };

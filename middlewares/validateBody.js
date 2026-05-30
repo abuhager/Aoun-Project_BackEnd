@@ -57,7 +57,7 @@ const schemas = {
   // ──────────── reports ─────────────────────────────────────────
   createReport: Joi.object({
     reportedUser: Joi.string().hex().length(24).required(),
-    reason:       Joi.string().min(5).max(300).required().trim(),
+    reason:       Joi.string().min(3).max(300).required().trim(),
     details:      Joi.string().max(1000).optional().allow('').trim(),
     relatedItem:  Joi.string().hex().length(24).optional(),
   }),
@@ -69,7 +69,7 @@ const schemas = {
   // ──────────── ratings ─────────────────────────────────────────
   submitRating: Joi.object({
     itemId:  Joi.string().hex().length(24).required(),
-    score:   Joi.number().integer().min(1).max(5).required(),
+    score: Joi.number().integer().min(1).max(10).required(),
     comment: Joi.string().max(500).optional().allow('').trim(),
   }),
 

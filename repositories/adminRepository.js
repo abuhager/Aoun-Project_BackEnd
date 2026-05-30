@@ -91,16 +91,30 @@ const pendingFilter = {
   ],
 };
 
-exports.findPendingReports = ({ page = 1, limit = 20 } = {}) =>
-  Report.find(pendingFilter)
-    .populate('reporter',     'name email')
-    .populate('reportedUser', 'name email')
+exports.findPendingReports = async ({ page = 1, limit = 20 } = {}) => {
+  const reports = await Report.find(pendingFilter)
+    .populate('reporter',     'name email phone')
+    .populate('reportedUser', 'name email phone isBanned')
     .populate('relatedItem',  'title')
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(limit)
     .lean();
 
+  const reportedIds = reports.map(r => r.reportedUser?._id).filter(Boolean);
+
+  const counts = await Report.aggregate([
+    { $match: { reportedUser: { $in: reportedIds } } },
+    { $group: { _id: '$reportedUser', count: { $sum: 1 } } },
+  ]);
+
+  const countMap = Object.fromEntries(counts.map(c => [c._id.toString(), c.count]));
+
+  return reports.map(r => ({
+    ...r,
+    totalReportsAgainstUser: countMap[r.reportedUser?._id?.toString()] ?? 0,
+  }));
+};
 exports.countPendingReports = () => Report.countDocuments(pendingFilter);
 
 exports.resolveReport = (reportId, adminId, status) =>

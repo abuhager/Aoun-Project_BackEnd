@@ -68,3 +68,6 @@ exports.findByIdForAdmin = (id) =>
 exports.setTrustLevel = (id, level) =>
   User.findByIdAndUpdate(id, { trustLevel: level }, { new: true })
       .select('name email trustLevel isVerifiedStudent phoneVerified isBanned');
+      
+exports.findByIdWithPassword = (id) =>
+  User.findById(id).select('+password');

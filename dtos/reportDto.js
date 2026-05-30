@@ -5,10 +5,10 @@ const REASONS = ['لم يُسلّم الغرض','معلومات مضللة','س�
 
 exports.validateReport = (body) =>
   Joi.object({
-    reportedUserId: Joi.string().hex().length(24).required(),
-    itemId:         Joi.string().hex().length(24).optional(),
-    reason:         Joi.string().valid(...REASONS).required(),
-    details:        Joi.string().max(500).optional(),
+    reportedUser: Joi.string().hex().length(24).required(),
+    relatedItem:  Joi.string().hex().length(24).optional(),
+    reason:       Joi.string().valid(...REASONS).required(),
+    details:      Joi.string().max(500).optional(),
   }).validate(body);
 
 exports.validateAppeal = (body) =>

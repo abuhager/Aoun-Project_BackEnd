@@ -553,3 +553,76 @@ exports.resetPasswordLogic = async (token, newPassword) => {
 
   return { statusCode: 200, body: { msg: 'تم تغيير كلمة المرور بنجاح! ✅' } };
 };
+// ─── 10. تعديل البروفايل (PUT /me) ────────────────────────────
+exports.updateMeLogic = async (userId, updates, fileBuffer, fileMimetype) => {
+  const user = await userRepository.findById(userId);
+  if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
+
+  // تطبيق الحقول النصية
+  if (updates.name)  user.name  = updates.name;
+  if (updates.phone) user.phone = updates.phone;
+
+  // رفع الصورة على Cloudinary إذا وُجد buffer
+  if (fileBuffer) {
+    try {
+      const cloudinary = require('../utils/cloudinary');
+      const result = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder:         'aoun/avatars',
+            resource_type:  'image',
+            transformation: [{ width: 400, height: 400, crop: 'fill', gravity: 'face' }],
+          },
+          (err, res) => (err ? reject(err) : resolve(res))
+        );
+        const { Readable } = require('stream');
+        Readable.from(fileBuffer).pipe(stream);
+      });
+      user.avatar = result.secure_url;
+    } catch (uploadErr) {
+      console.error('Cloudinary upload error:', uploadErr.message);
+      // لا نوقف العملية إذا فشل الرفع فقط
+    }
+  }
+
+  await user.save();
+
+  return {
+    statusCode: 200,
+    body: {
+      msg: 'تم تحديث الملف الشخصي بنجاح ✅',
+      user: {
+        _id:        user._id,
+        name:       user.name,
+        email:      user.email,
+        phone:      user.phone,
+        avatar:     user.avatar,
+        role:       user.role,
+        trustLevel: user.trustLevel ?? 1,
+        trustScore: user.trustScore ?? 0,
+        quota:      user.quota ?? 0,
+        isVerified: user.isVerified,
+      },
+    },
+  };
+};
+
+// ─── 11. تغيير كلمة المرور (PUT /me/password) ─────────────────
+exports.updatePasswordLogic = async (userId, currentPassword, newPassword) => {
+  const user = await userRepository.findByIdWithPassword(userId);
+  if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
+
+  const isMatch = await bcrypt.compare(currentPassword, user.password);
+  if (!isMatch)
+    return { statusCode: 400, body: { msg: 'كلمة المرور الحالية غير صحيحة' } };
+
+  const isSame = await bcrypt.compare(newPassword, user.password);
+  if (isSame)
+    return { statusCode: 400, body: { msg: 'كلمة المرور الجديدة يجب أن تختلف عن الحالية' } };
+
+  const salt    = await bcrypt.genSalt(12);
+  user.password = await bcrypt.hash(newPassword, salt);
+  await user.save();
+
+  return { statusCode: 200, body: { msg: 'تم تغيير كلمة المرور بنجاح ✅' } };
+};
