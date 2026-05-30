@@ -5,7 +5,6 @@ const User = require('../models/User');
 const Report = require('../models/Report');
 const SystemSettings = require('../models/SystemSettings');
 
-const SystemSettings = require('../models/SystemSettings');
 const itemRepository = require('../repositories/itemRepository');
 const AppError = require('../utils/AppError');
 const SafeHub = require('../models/SafeHub');
