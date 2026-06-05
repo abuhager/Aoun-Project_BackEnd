@@ -123,10 +123,6 @@ const initCronJobs = () => {
           { trustLevel: 2, isBanned: false },
           { $set: { quota: settings.level2Quota } }
         ),
-        User.updateMany(
-          { trustLevel: { $gte: 3 }, isBanned: false },
-          { $set: { quota: settings.level3Quota } }
-        ),
       ]);
 
       const totalUpdated = r1.modifiedCount + r2.modifiedCount + r3.modifiedCount;

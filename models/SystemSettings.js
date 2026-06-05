@@ -5,7 +5,6 @@ const systemSettingsSchema = new mongoose.Schema(
     _id: { type: String, default: 'global' },
     defaultQuota: { type: Number, default: 2, min: 0, max: 20 },
     level2Quota: { type: Number, default: 4, min: 0, max: 20 },
-    level3Quota: { type: Number, default: 6, min: 0, max: 20 },
     maxBookingsPerUser: { type: Number, default: 3, min: 1, max: 10 },
     maxActiveRequestsPerMonth: { type: Number, default: 1, min: 1, max: 5 },
     requestExpiryDays: { type: Number, default: 30, min: 1, max: 180 },

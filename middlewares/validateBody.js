@@ -203,7 +203,6 @@ const schemas = {
   updateSettings: Joi.object({
     defaultQuota: Joi.number().integer().min(1).max(10).optional(),
     level2Quota: Joi.number().integer().min(1).max(15).optional(),
-    level3Quota: Joi.number().integer().min(1).max(20).optional(),
     maxBookingsPerUser: Joi.number().integer().min(1).max(10).optional(),
     maxActiveRequestsPerMonth: Joi.number().integer().min(1).max(10).optional(),
     requestExpiryDays: Joi.number().integer().min(7).max(90).optional(),

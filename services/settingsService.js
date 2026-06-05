@@ -7,7 +7,7 @@ let _cacheExpiresAt = 0;
 const CACHE_TTL_MS = 60 * 1000; // صلاحية الكاش: دقيقة واحدة
 
 const ALLOWED_FIELDS = [
-  'defaultQuota', 'level2Quota', 'level3Quota', 'maxBookingsPerUser',
+  'defaultQuota', 'level2Quota', 'maxBookingsPerUser',
   'maxActiveRequestsPerMonth', 'requestExpiryDays',
   'categories', 'reportReasons', 'autoReportBanThreshold',
   'universityEmailDomains', 'requireHubForBooking',
