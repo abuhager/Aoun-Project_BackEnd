@@ -4,6 +4,7 @@ const Item = require('../models/Item');
 const User = require('../models/User');
 const Report = require('../models/Report');
 const SystemSettings = require('../models/SystemSettings');
+const { getSettings } = require('./settingsService');
 
 const itemRepository = require('../repositories/itemRepository');
 const AppError = require('../utils/AppError');
@@ -163,7 +164,7 @@ exports.bookItemLogic = async (itemId, userId) => {
   session.startTransaction();
 
   try {
-    // 1) جلب الغرض داخل الجلسة للتحقق من القيود الثابتة (المالك / الإلغاء السابق)
+    // 1) جلب الغرض داخل الجلسة للتحقق من القيود الثابتة
     const item = await Item.findById(itemId).session(session);
 
     if (!item) {
@@ -178,21 +179,37 @@ exports.bookItemLogic = async (itemId, userId) => {
       throw new AppError('لا يمكنك الحجز مجدداً لأنك ألغيت الحجز مسبقاً 🛑', 400, 'BOOKING_RETRY_NOT_ALLOWED');
     }
 
-    // 2) مسار الحجز المباشر (إذا كان الغرض متاحاً)
+    // 2) 🎛️ جلب الإعدادات الحية وحساب كوتا المستخدم ديناميكياً
+    const settings = await getSettings();
+    const user = await User.findById(userId).session(session);
+
+    if (!user) {
+      throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
+    }
+
+    // تحديد الحد الأقصى بناءً على مستوى الثقة والإعدادات الحية الحالية
+    const maxQuota = user.trustLevel >= 2 
+      ? settings.level2Quota 
+      : settings.defaultQuota;
+
+    // حساب عدد الحجوزات النشطة الحالية للمستخدم في قاعدة البيانات
+    const activeBookingsCount = await Item.countDocuments({
+      bookedBy: userId,
+      status: 'محجوز'
+    }).session(session);
+
+    // التحقق الفوري والديناميكي من تخطي الحد المسموح
+    if (activeBookingsCount >= maxQuota) {
+      throw new AppError(
+        `عذراً، لقد استهلكت الحد الأقصى المسموح لك من الحجوزات النشطة حالياً وهو (${maxQuota}) غرض 🚫`,
+        403,
+        'NO_AVAILABLE_QUOTA'
+      );
+    }
+
+    // 3) مسار الحجز المباشر (إذا كان الغرض متاحاً)
     if (item.status === 'متاح') {
       
-      // أ- خصم الكوتا داخل الـ Transaction
-      const user = await User.findOneAndUpdate(
-        { _id: userId, quota: { $gt: 0 } },
-        { $inc: { quota: -1 } },
-        { new: true, session }
-      );
-
-      if (!user) {
-        throw new AppError('لا تملك حصصاً متاحة لحجز أغراض جديدة 🚫', 403, 'NO_AVAILABLE_QUOTA');
-      }
-
-      // ب- محاولة حجز الغرض بشكل ذري
       const newOtp = generateOtp();
       const booked = await Item.findOneAndUpdate(
         { _id: itemId, status: 'متاح' },
@@ -207,21 +224,22 @@ exports.bookItemLogic = async (itemId, userId) => {
         { new: true, session }
       ).populate('safeHub', 'name address city workingHours');
 
-      // ج- حالة نادرة: الغرض كان متاحاً عند القراءة ولكن مستخدم آخر خطفه في نفس الميلي ثانية!
+      // حالة تعارض نادرة (Concurrency Edge Case)
       if (!booked) {
-        // نلغي المعاملة الحالية لنعيد الكوتا فوراً ودون مخاطرة
         await session.abortTransaction();
         session.endSession();
-
-        // ننتقل لمعالجة إضافة المستخدم لقائمة الانتظار خارج الـ Transaction الخاص بالكوتا
         return await handleWaitlistOutside(itemId, userId);
       }
 
-      // د- نجح الحجز! نعتمد العملية في قاعدة البيانات
+      // ✅ مزامنة حقل الـ quota في مستند المستخدم لضمان التوافقية مع أي أجزاء أخرى بالتطبيق
+      user.quota = Math.max(0, maxQuota - activeBookingsCount - 1);
+      await user.save({ session });
+
+      // اعتماد العملية بالكامل بنجاح
       await session.commitTransaction();
       session.endSession();
 
-      // هـ- إرسال الإشعارات والبريد (خارج الـ Transaction لسرعة الأداء)
+      // تشغيل الإشعارات بالخلفية
       triggerBookingNotifications(booked, user, newOtp);
 
       return {
@@ -230,15 +248,14 @@ exports.bookItemLogic = async (itemId, userId) => {
       };
     }
 
-    // 3) مسار قائمة الانتظار مباشرة (إذا كان الغرض محجوزاً بالفعل من البداية)
-    // ننهي الجلسة هنا لأن قائمة الانتظار لا تستهلك كوتا ولا تحتاج Transaction معقد
+    // 4) مسار قائمة الانتظار مباشرة (إذا كان الغرض محجوزاً بالفعل من البداية)
     await session.abortTransaction();
     session.endSession();
 
     return await handleWaitlistOutside(itemId, userId);
 
   } catch (err) {
-    // في حال حدوث أي خطأ، يتم التراجع عن كل التغييرات (بما فيها خصم الكوتا) تلقائياً
+    // التراجع التلقائي الآمن عن أي تعديلات في حال الفشل
     await session.abortTransaction();
     session.endSession();
     throw err;
@@ -247,7 +264,6 @@ exports.bookItemLogic = async (itemId, userId) => {
 
 // ─── دالة مساعدة لإضافة المستخدم لقائمة الانتظار بشكل آمن وعازل ────────────────
 async function handleWaitlistOutside(itemId, userId) {
-  // التحقق الذري والتحديث في خطوة واحدة لمنع التكرار في قائمة الانتظار
   const waitlistUpdated = await Item.findOneAndUpdate(
     { _id: itemId, 'waitlist.user': { $ne: userId } },
     { $push: { waitlist: { user: userId, joinedAt: new Date() } } },

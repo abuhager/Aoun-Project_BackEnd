@@ -199,15 +199,33 @@ const schemas = {
     }).optional(),
   }).min(1).unknown(false),
 
-  // ──────────── settings ────────────────────────────────────────
+  // ──────────── settings (✅ تم ترقية المخطط هنا ليستوعب الحقول الـ 15 كاملة) ───
   updateSettings: Joi.object({
-    maxActiveItems: Joi.number().integer().min(1).max(20).optional(),
-    maxActiveRequests: Joi.number().integer().min(1).max(10).optional(),
+    defaultQuota: Joi.number().integer().min(1).max(10).optional(),
+    level2Quota: Joi.number().integer().min(1).max(15).optional(),
+    level3Quota: Joi.number().integer().min(1).max(20).optional(),
+    maxBookingsPerUser: Joi.number().integer().min(1).max(10).optional(),
+    maxActiveRequestsPerMonth: Joi.number().integer().min(1).max(10).optional(),
+    requestExpiryDays: Joi.number().integer().min(7).max(90).optional(),
     categories: Joi.array()
       .items(Joi.string().min(2).max(50).trim())
       .min(1)
-      .max(30)
+      .max(50)
       .optional(),
+    reportReasons: Joi.array()
+      .items(Joi.string().min(2).max(100).trim())
+      .min(1)
+      .max(50)
+      .optional(),
+    autoReportBanThreshold: Joi.number().integer().min(3).max(20).optional(),
+    universityEmailDomains: Joi.array()
+      .items(Joi.string().min(2).max(100).trim())
+      .optional(),
+    requireHubForBooking: Joi.boolean().optional(),
+    maintenanceMode: Joi.boolean().optional(),
+    platformName: Joi.string().min(2).max(100).trim().optional(),
+    contactEmail: Joi.string().email({ tlds: { allow: false } }).trim().optional(),
+    quotaResetDayOfMonth: Joi.number().integer().min(1).max(28).optional()
   }).min(1).unknown(false),
 
   // ──────────── phone ───────────────────────────────────────────
