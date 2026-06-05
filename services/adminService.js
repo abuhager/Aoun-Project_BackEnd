@@ -2,6 +2,7 @@
 const adminRepo = require('../repositories/adminRepository');
 const userRepository = require('../repositories/userRepository');
 const AdminLog = require('../models/AdminLog');
+const User = require('../models/User'); // ✅ تم استيراد موديل المستخدم هنا لعمل التحديث المباشر
 const { notifyUser } = require('../utils/notifyUser');
 const AppError = require('../utils/AppError');
 
@@ -31,6 +32,11 @@ exports.banUser = async (userId, adminId, reason, adminNote) => {
   if (!user) {
     throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
   }
+
+  // ✅ 1. إبطال كل الـ refresh tokens للمستخدم عند الحظر اليدوي
+  await User.findByIdAndUpdate(userId, { 
+    $inc: { refreshTokenVersion: 1 } 
+  });
 
   await adminRepo.logAdminAction({
     adminId,
@@ -198,6 +204,11 @@ exports.resolveReport = async (reportId, adminId, action, _adminName, adminNote 
 
   if (action === 'ban' && report.reportedUser) {
     await adminRepo.banUser(report.reportedUser, 'حظر من بلاغ مؤكد', adminId);
+
+    // ✅ 2. إبطال الـ refresh tokens للمستخدم أيضاً عند حظره تلقائياً من خلال البلاغات
+    await User.findByIdAndUpdate(report.reportedUser, { 
+      $inc: { refreshTokenVersion: 1 } 
+    });
 
     await notifyUser(report.reportedUser, {
       type: 'admin_ban',

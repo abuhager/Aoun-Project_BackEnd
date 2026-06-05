@@ -159,139 +159,95 @@ exports.createItemLogic = async (body, userId, file) => {
 };
 
 exports.bookItemLogic = async (itemId, userId) => {
-  const restoreQuota = async () => {
-    await User.findByIdAndUpdate(userId, { $inc: { quota: 1 } });
-  };
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  // 1) خصم الكوتا مبدئياً بشكل ذري
-  const user = await User.findOneAndUpdate(
-    { _id: userId, quota: { $gt: 0 } },
-    { $inc: { quota: -1 } },
-    { new: true }
-  );
+  try {
+    // 1) جلب الغرض داخل الجلسة للتحقق من القيود الثابتة (المالك / الإلغاء السابق)
+    const item = await Item.findById(itemId).session(session);
 
-  if (!user) {
-    throw new AppError(
-      'لا تملك حصصاً متاحة لحجز أغراض جديدة 🚫',
-      403,
-      'NO_AVAILABLE_QUOTA'
-    );
-  }
+    if (!item) {
+      throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+    }
 
-  // 2) جلب الغرض والتحقق من القيود
-  const item = await itemRepository.findItemForAction(itemId);
+    if (item.donor.toString() === userId) {
+      throw new AppError('لا يمكنك حجز غرضك الخاص 🚫', 400, 'CANNOT_BOOK_OWN_ITEM');
+    }
 
-  if (!item) {
-    await restoreQuota();
-    throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
-  }
+    if (item.cancelledBy?.some((id) => id.toString() === userId)) {
+      throw new AppError('لا يمكنك الحجز مجدداً لأنك ألغيت الحجز مسبقاً 🛑', 400, 'BOOKING_RETRY_NOT_ALLOWED');
+    }
 
-  if (item.donor.toString() === userId) {
-    await restoreQuota();
-    throw new AppError('لا يمكنك حجز غرضك الخاص', 400, 'CANNOT_BOOK_OWN_ITEM');
-  }
+    // 2) مسار الحجز المباشر (إذا كان الغرض متاحاً)
+    if (item.status === 'متاح') {
+      
+      // أ- خصم الكوتا داخل الـ Transaction
+      const user = await User.findOneAndUpdate(
+        { _id: userId, quota: { $gt: 0 } },
+        { $inc: { quota: -1 } },
+        { new: true, session }
+      );
 
-  if (item.cancelledBy?.some((id) => id.toString() === userId)) {
-    await restoreQuota();
-    throw new AppError(
-      'لا يمكنك الحجز مجدداً لأنك ألغيت الحجز مسبقاً',
-      400,
-      'BOOKING_RETRY_NOT_ALLOWED'
-    );
-  }
+      if (!user) {
+        throw new AppError('لا تملك حصصاً متاحة لحجز أغراض جديدة 🚫', 403, 'NO_AVAILABLE_QUOTA');
+      }
 
-  // 3) إذا الغرض متاح، حاول حجزه فوراً بشكل ذري
-  if (item.status === 'متاح') {
-    const newOtp = generateOtp();
-
-    const booked = await Item.findOneAndUpdate(
-      { _id: itemId, status: 'متاح' },
-      {
-        $set: {
-          status: 'محجوز',
-          bookedBy: userId,
-          deliveryOtp: newOtp,
-          bookedAt: new Date(),
+      // ب- محاولة حجز الغرض بشكل ذري
+      const newOtp = generateOtp();
+      const booked = await Item.findOneAndUpdate(
+        { _id: itemId, status: 'متاح' },
+        {
+          $set: {
+            status: 'محجوز',
+            bookedBy: userId,
+            deliveryOtp: newOtp,
+            bookedAt: new Date(),
+          },
         },
-      },
-      { new: true }
-    ).populate('safeHub', 'name address city workingHours');
+        { new: true, session }
+      ).populate('safeHub', 'name address city workingHours');
 
-    // لو فشل الحجز لأن أحداً سبقك
-    if (!booked) {
-      const alreadyInWaitlist = item.waitlist?.some(
-        (w) => w.user.toString() === userId
-      );
+      // ج- حالة نادرة: الغرض كان متاحاً عند القراءة ولكن مستخدم آخر خطفه في نفس الميلي ثانية!
+      if (!booked) {
+        // نلغي المعاملة الحالية لنعيد الكوتا فوراً ودون مخاطرة
+        await session.abortTransaction();
+        session.endSession();
 
-      if (alreadyInWaitlist) {
-        await restoreQuota();
-        throw new AppError('أنت بالفعل في قائمة الانتظار', 409, 'ALREADY_IN_WAITLIST');
+        // ننتقل لمعالجة إضافة المستخدم لقائمة الانتظار خارج الـ Transaction الخاص بالكوتا
+        return await handleWaitlistOutside(itemId, userId);
       }
 
-      const waitlistUpdated = await Item.findOneAndUpdate(
-        { _id: itemId, 'waitlist.user': { $ne: userId } },
-        { $push: { waitlist: { user: userId, joinedAt: new Date() } } },
-        { new: true }
-      );
+      // د- نجح الحجز! نعتمد العملية في قاعدة البيانات
+      await session.commitTransaction();
+      session.endSession();
 
-      if (!waitlistUpdated) {
-        await restoreQuota();
-        throw new AppError('أنت بالفعل في قائمة الانتظار', 409, 'ALREADY_IN_WAITLIST');
-      }
-
-      // ✅ الانتظار لا يجب أن يستهلك quota
-      await restoreQuota();
+      // هـ- إرسال الإشعارات والبريد (خارج الـ Transaction لسرعة الأداء)
+      triggerBookingNotifications(booked, user, newOtp);
 
       return {
-        status: 'waitlist',
-        msg: 'تمت إضافتك لقائمة الانتظار ⏳',
+        status: 'booked',
+        msg: 'تم الحجز بنجاح 🎉',
       };
     }
 
-    const hubSection = booked.safeHub
-      ? `<hr/>
-         <p>📍 <b>نقطة التسليم:</b> ${booked.safeHub.name}</p>
-         <p>🏙️ ${booked.safeHub.city} — ${booked.safeHub.address}</p>
-         <p>🕐 أوقات العمل: ${booked.safeHub.workingHours || 'غير محدد'}</p>`
-      : `<p>📦 سيتم التنسيق مع المتبرع مباشرة</p>`;
+    // 3) مسار قائمة الانتظار مباشرة (إذا كان الغرض محجوزاً بالفعل من البداية)
+    // ننهي الجلسة هنا لأن قائمة الانتظار لا تستهلك كوتا ولا تحتاج Transaction معقد
+    await session.abortTransaction();
+    session.endSession();
 
-    await Promise.all([
-      notifyUser(item.donor, {
-        type: 'item_booked',
-        title: 'تم حجز غرضك! 🎉',
-        body: `قام شخص ما بحجز "${item.title}"`,
-        itemId: item._id,
-      }),
-      fireSendEmail({
-        email: user.email,
-        subject: 'تم حجز الغرض 🎉',
-        message: `
-          <div dir="rtl">
-            <p>تم حجز <b>${booked.title}</b> بنجاح!</p>
-            <p>🔑 رمز الاستلام: <b style="font-size:1.4em">${newOtp}</b></p>
-            <p>⏱️ لديك <b>72 ساعة</b> لاستلام الغرض</p>
-            ${hubSection}
-          </div>
-        `,
-      }),
-    ]);
+    return await handleWaitlistOutside(itemId, userId);
 
-    return {
-      status: 'booked',
-      msg: 'تم الحجز بنجاح 🎉',
-    };
+  } catch (err) {
+    // في حال حدوث أي خطأ، يتم التراجع عن كل التغييرات (بما فيها خصم الكوتا) تلقائياً
+    await session.abortTransaction();
+    session.endSession();
+    throw err;
   }
+};
 
-  // 4) إن لم يكن متاحاً، أضفه للـ waitlist فقط
-  const alreadyInWaitlist = item.waitlist?.some(
-    (w) => w.user.toString() === userId
-  );
-
-  if (alreadyInWaitlist) {
-    await restoreQuota();
-    throw new AppError('أنت بالفعل في قائمة الانتظار', 409, 'ALREADY_IN_WAITLIST');
-  }
-
+// ─── دالة مساعدة لإضافة المستخدم لقائمة الانتظار بشكل آمن وعازل ────────────────
+async function handleWaitlistOutside(itemId, userId) {
+  // التحقق الذري والتحديث في خطوة واحدة لمنع التكرار في قائمة الانتظار
   const waitlistUpdated = await Item.findOneAndUpdate(
     { _id: itemId, 'waitlist.user': { $ne: userId } },
     { $push: { waitlist: { user: userId, joinedAt: new Date() } } },
@@ -299,18 +255,44 @@ exports.bookItemLogic = async (itemId, userId) => {
   );
 
   if (!waitlistUpdated) {
-    await restoreQuota();
-    throw new AppError('أنت بالفعل في قائمة الانتظار', 409, 'ALREADY_IN_WAITLIST');
+    throw new AppError('أنت بالفعل في قائمة الانتظار ⏳', 409, 'ALREADY_IN_WAITLIST');
   }
-
-  // ✅ قائمة الانتظار لا تستهلك quota
-  await restoreQuota();
 
   return {
     status: 'waitlist',
     msg: 'تمت إضافتك لقائمة الانتظار ⏳',
   };
-};
+}
+
+// ─── دالة مساعدة للتعامل مع الإشعارات الخلفية ──────────────────────────────────
+function triggerBookingNotifications(bookedItem, user, otpCode) {
+  const hubSection = bookedItem.safeHub
+    ? `<hr/><p>📍 <b>نقطة التسليم:</b> ${bookedItem.safeHub.name}</p>
+       <p>🏙️ ${bookedItem.safeHub.city} — ${bookedItem.safeHub.address}</p>
+       <p>🕐 أوقات العمل: ${bookedItem.safeHub.workingHours || 'غير محدد'}</p>`
+    : `<p>📦 سيتم التنسيق مع المتبرع مباشرة</p>`;
+
+  Promise.all([
+    notifyUser(bookedItem.donor, {
+      type: 'item_booked',
+      title: 'تم حجز غرضك! 🎉',
+      body: `قام شخص ما بحجز "${bookedItem.title}"`,
+      itemId: bookedItem._id,
+    }),
+    fireSendEmail({
+      email: user.email,
+      subject: 'تم حجز الغرض 🎉',
+      message: `
+        <div dir="rtl">
+          <p>تم حجز <b>${bookedItem.title}</b> بنجاح!</p>
+          <p>🔑 رمز الاستلام: <b style="font-size:1.4em">${otpCode}</b></p>
+          <p>⏱️ لديك <b>72 ساعة</b> لاستلام الغرض</p>
+          ${hubSection}
+        </div>
+      `,
+    }),
+  ]).catch(err => console.error('Error sending booking notifications:', err));
+}
 
 // ─── 6. إلغاء الحجز ──────────────────────────────────────────
 exports.cancelBookingLogic = async (itemId, userId) => {

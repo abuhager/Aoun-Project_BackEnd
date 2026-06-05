@@ -6,6 +6,7 @@ const Item = require('../models/Item');
 
 let io;
 
+// دالة جلب النطاقات المسموحة لـ CORS
 function getAllowedOrigins() {
   return (process.env.ALLOWED_ORIGINS || process.env.CLIENT_URL || '')
     .split(',')
@@ -27,14 +28,19 @@ const initSocket = (httpServer) => {
     },
   });
 
+  // ─── 1. برمجية التحقق من الهوية (Authentication Middleware) ───
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) return next(new Error('AUTH_REQUIRED'));
 
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      
+      // ✅ ربط البيانات الموثقة بكائن السوكيت مباشرة لمنع التزوير
       socket.userId = decoded.user.id;
       socket.userName = decoded.user.name;
+      socket.userRole = decoded.user.role || 'user';
+      
       next();
     } catch (err) {
       if (err.name === 'TokenExpiredError') {
@@ -44,9 +50,13 @@ const initSocket = (httpServer) => {
     }
   });
 
+  // ─── 2. أحداث الاتصال وإدارة الغرف والمحادثات ───
   io.on('connection', (socket) => {
+    
+    // ✅ تلقائياً: ينضم المستخدم لغرفته الخاصة الآمنة لتلقي الإشعارات الشخصية
     socket.join(`user_${socket.userId}`);
 
+    // حدث دخول محادثة خاصة بغرض معين
     socket.on('joinConversation', async ({ itemId }) => {
       try {
         const item = await Item.findById(itemId).select('donor bookedBy');
@@ -60,10 +70,12 @@ const initSocket = (httpServer) => {
         const isDonor = item.donor.toString() === uid;
         const isBooker = item.bookedBy.toString() === uid;
 
+        // ✅ حماية برمجية: منع أي مستخدم غريب من التجسس أو الدخول للمحادثة
         if (!isDonor && !isBooker) {
-          return socket.emit('error', { msg: 'غير مصرح' });
+          return socket.emit('error', { msg: 'غير مصرح لك بدخول هذه المحادثة 🚫' });
         }
 
+        // إيجاد المحادثة أو إنشاؤها إن لم تكن موجودة
         let conv = await Conversation.findOne({ item: itemId });
         if (!conv) {
           conv = await Conversation.create({
@@ -72,8 +84,10 @@ const initSocket = (httpServer) => {
           });
         }
 
+        // جعل السوكيت ينضم لغرفة المحادثة المشتركة
         socket.join(`conv_${conv._id}`);
 
+        // جلب آخر 50 رسالة فقط للأداء العالي
         const messages = conv.messages.slice(-50).map((m) => ({
           _id: m._id,
           sender: m.sender,
@@ -82,38 +96,42 @@ const initSocket = (httpServer) => {
           createdAt: m.createdAt,
         }));
 
+        // إرسال تأكيد الدخول مع الرسائل القديمة للعميل الحالي
         socket.emit('conversationJoined', {
           convId: conv._id,
           messages,
         });
 
+        // تحديث الرسائل كمقروءة وإعلام الطرف الآخر
         await markRead(conv, socket.userId);
         io.to(`conv_${conv._id}`).emit('messagesRead', { by: socket.userId });
       } catch (err) {
-        console.error('joinConversation:', err.message);
+        console.error('joinConversation Error:', err.message);
         socket.emit('error', { msg: 'خطأ في السيرفر' });
       }
     });
 
+    // حدث إرسال رسالة جديدة
     socket.on('sendMessage', async ({ convId, text }) => {
       if (!text?.trim() || text.length > 1000) {
-        return socket.emit('error', { msg: 'نص غير صالح' });
+        return socket.emit('error', { msg: 'نص الرسالة غير صالح أو طويل جداً' });
       }
 
       try {
         const conv = await Conversation.findById(convId);
         if (!conv) return socket.emit('error', { msg: 'المحادثة غير موجودة' });
 
+        // ✅ التحقق من أن المرسل هو جزء فعلي من أطراف المحادثة
         const isParticipant = conv.participants
           .map((p) => p.toString())
           .includes(socket.userId.toString());
 
         if (!isParticipant) {
-          return socket.emit('error', { msg: 'غير مصرح' });
+          return socket.emit('error', { msg: 'غير مصرح لك بالإرسال في هذه المحادثة 🚫' });
         }
 
         const message = {
-          sender: socket.userId,
+          sender: socket.userId, // ✅ الهوية من السيرفر وليست ممررة من الـ Client
           text: text.trim(),
           read: false,
           createdAt: new Date(),
@@ -125,6 +143,7 @@ const initSocket = (httpServer) => {
 
         const savedMsg = conv.messages[conv.messages.length - 1];
 
+        // بث الرسالة لجميع المتواجدين داخل غرفة المحادثة الحالية
         io.to(`conv_${convId}`).emit('newMessage', {
           _id: savedMsg._id,
           sender: socket.userId,
@@ -134,6 +153,7 @@ const initSocket = (httpServer) => {
           createdAt: savedMsg.createdAt,
         });
 
+        // إرسال إشعار فوري (Notification) للطرف الآخر في غرفته الخاصة في حال كان خارج المحادثة
         const otherId = conv.participants.find(
           (p) => p.toString() !== socket.userId.toString()
         );
@@ -147,11 +167,12 @@ const initSocket = (httpServer) => {
           });
         }
       } catch (err) {
-        console.error('sendMessage:', err.message);
-        socket.emit('error', { msg: 'خطأ في الإرسال' });
+        console.error('sendMessage Error:', err.message);
+        socket.emit('error', { msg: 'حدث خطأ أثناء إرسال الرسالة' });
       }
     });
 
+    // ─── أحداث الكتابة (Typing Indicators) ───
     socket.on('typing', ({ convId }) => {
       socket.to(`conv_${convId}`).emit('userTyping', {
         userId: socket.userId,
@@ -165,6 +186,7 @@ const initSocket = (httpServer) => {
       });
     });
 
+    // حدث قراءة الرسائل اليدوي
     socket.on('readMessages', async ({ convId }) => {
       try {
         const conv = await Conversation.findById(convId);
@@ -173,20 +195,24 @@ const initSocket = (httpServer) => {
         await markRead(conv, socket.userId);
         io.to(`conv_${convId}`).emit('messagesRead', { by: socket.userId });
       } catch (err) {
-        console.error('readMessages:', err.message);
+        console.error('readMessages Error:', err.message);
       }
     });
 
-    socket.on('disconnect', () => {});
+    socket.on('disconnect', () => {
+      // تنظيف تلقائي عند قطع الاتصال يتم بواسطة Socket.io
+    });
   });
 
   return io;
 };
 
+// ─── دالة مساعدة لتحديث حالة القراءة ───
 const markRead = async (conv, userId) => {
   let updated = false;
 
   conv.messages.forEach((m) => {
+    // إذا لم تكن الرسالة من هذا المستخدم وكانت غير مقروءة، اجعلها مقروءة
     if (m.sender.toString() !== userId.toString() && !m.read) {
       m.read = true;
       updated = true;
