@@ -244,29 +244,39 @@ exports.refreshLogic = async (refreshToken) => {
     const decoded = verifyRefreshToken(refreshToken);
     const hashedIncoming = hashToken(refreshToken);
 
-    const newAccessToken = generateAccessToken({ id: decoded.user.id, role: decoded.user.role });
-    const { token: newRefreshToken, hashed: newHash } = generateRefreshToken({ id: decoded.user.id, role: decoded.user.role });
+    const { token: newRefreshToken, hashed: newHash } = generateRefreshToken(decoded.user);
 
-    // ✅ عملية Atomic واحدة: تحقق + تحديث في نفس الـ Query
     const rotated = await User.findOneAndUpdate(
       {
-        _id: decoded.user.id,
+        _id:          decoded.user.id,
         refreshToken: hashedIncoming,
-        isBanned: { $ne: true },   // ✅ فحص الحظر داخل الـ Query نفسه
+        isBanned:     { $ne: true },
       },
-      {
-        $set: { refreshToken: newHash, sessionIssuedAt: new Date() },
-      },
+      { $set: { refreshToken: newHash, sessionIssuedAt: new Date() } },
       { new: true }
     );
 
+    // ✅ if واحدة فقط — تحذف الجلسة وتطرد الجميع
     if (!rotated) {
+      await User.findByIdAndUpdate(decoded.user.id, {
+        $unset: { refreshToken: 1, sessionIssuedAt: 1 }
+      });
+
       return {
         statusCode: 401,
         clearCookie: true,
-        body: { msg: 'الجلسة غير صالحة أو انتُهكت 🚨', code: 'REFRESH_REUSE' },
+        body: { msg: 'تم اكتشاف نشاط مشبوه 🚨 — أعد تسجيل الدخول', code: 'REFRESH_REUSE' },
       };
     }
+
+    // ✅ trustLevel من DB مباشرة
+    const newAccessToken = generateAccessToken({
+      id:         rotated._id,
+      role:       rotated.role,
+      trustLevel: rotated.trustLevel ?? 1,
+      isVerified: rotated.isVerified,
+      isBanned:   rotated.isBanned,
+    });
 
     return { statusCode: 200, newRefreshToken, body: { accessToken: newAccessToken } };
 

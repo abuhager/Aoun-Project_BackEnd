@@ -14,7 +14,7 @@ const SafeHub = require('../models/SafeHub');
 const { generateOtp } = require('../utils/otp');
 const { fireSendEmail } = require('../utils/sendEmail');
 const { uploadToCloudinary } = require('../utils/uploadToCloudinary');
-const { notifyUser } = require('../utils/notifyUser');
+const notifyUser = require('../utils/notifyUser');
 const { toPublicItem } = require('../dtos/itemDto');
 
 const escapeRegex = (str = '') =>
@@ -164,52 +164,34 @@ exports.bookItemLogic = async (itemId, userId) => {
   session.startTransaction();
 
   try {
-    // 1) جلب الغرض داخل الجلسة للتحقق من القيود الثابتة
     const item = await Item.findById(itemId).session(session);
 
-    if (!item) {
-      throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
-    }
-
-    if (item.donor.toString() === userId) {
+    if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+    if (item.donor.toString() === userId)
       throw new AppError('لا يمكنك حجز غرضك الخاص 🚫', 400, 'CANNOT_BOOK_OWN_ITEM');
-    }
+    if (item.cancelledBy?.some((id) => id.toString() === userId))
+      throw new AppError('لا يمكنك الحجز مجدداً 🛑', 400, 'BOOKING_RETRY_NOT_ALLOWED');
 
-    if (item.cancelledBy?.some((id) => id.toString() === userId)) {
-      throw new AppError('لا يمكنك الحجز مجدداً لأنك ألغيت الحجز مسبقاً 🛑', 400, 'BOOKING_RETRY_NOT_ALLOWED');
-    }
-
-    // 2) 🎛️ جلب الإعدادات الحية وحساب كوتا المستخدم ديناميكياً
     const settings = await getSettings();
     const user = await User.findById(userId).session(session);
+    if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
 
-    if (!user) {
-      throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
-    }
-
-    // تحديد الحد الأقصى بناءً على مستوى الثقة والإعدادات الحية الحالية
-    const maxQuota = user.trustLevel >= 2 
-      ? settings.level2Quota 
-      : settings.defaultQuota;
-
-    // حساب عدد الحجوزات النشطة الحالية للمستخدم في قاعدة البيانات
+    const maxQuota = user.trustLevel >= 2 ? settings.level2Quota : settings.defaultQuota;
     const activeBookingsCount = await Item.countDocuments({
       bookedBy: userId,
-      status: 'محجوز'
+      status: 'محجوز',
     }).session(session);
 
-    // التحقق الفوري والديناميكي من تخطي الحد المسموح
     if (activeBookingsCount >= maxQuota) {
       throw new AppError(
-        `عذراً، لقد استهلكت الحد الأقصى المسموح لك من الحجوزات النشطة حالياً وهو (${maxQuota}) غرض 🚫`,
+        `عذراً، استهلكت الحد الأقصى (${maxQuota}) غرض 🚫`,
         403,
         'NO_AVAILABLE_QUOTA'
       );
     }
 
-    // 3) مسار الحجز المباشر (إذا كان الغرض متاحاً)
+    // ✅ مسار الحجز المباشر
     if (item.status === 'متاح') {
-      
       const newOtp = generateOtp();
       const booked = await Item.findOneAndUpdate(
         { _id: itemId, status: 'متاح' },
@@ -221,43 +203,40 @@ exports.bookItemLogic = async (itemId, userId) => {
             bookedAt: new Date(),
           },
         },
-        { new: true, session }
+        { returnDocument: 'after', session }
       ).populate('safeHub', 'name address city workingHours');
 
-      // حالة تعارض نادرة (Concurrency Edge Case)
-      if (!booked) {
-        await session.abortTransaction();
+      if (booked) {
+        // ✅ نجاح الحجز — commit أولاً ثم Waitlist خارج الـ Transaction
+        user.quota = Math.max(0, maxQuota - activeBookingsCount - 1);
+        await user.save({ session });
+        await session.commitTransaction();
         session.endSession();
-        return await handleWaitlistOutside(itemId, userId);
+
+        triggerBookingNotifications(booked, user, newOtp);
+        return { status: 'booked', msg: 'تم الحجز بنجاح 🎉' };
       }
 
-      // ✅ مزامنة حقل الـ quota في مستند المستخدم لضمان التوافقية مع أي أجزاء أخرى بالتطبيق
-      user.quota = Math.max(0, maxQuota - activeBookingsCount - 1);
-      await user.save({ session });
-
-      // اعتماد العملية بالكامل بنجاح
-      await session.commitTransaction();
+      // ✅ Concurrency: فشل الحجز — abort أولاً ثم Waitlist خارجها
+      await session.abortTransaction();
       session.endSession();
-
-      // تشغيل الإشعارات بالخلفية
-      triggerBookingNotifications(booked, user, newOtp);
-
-      return {
-        status: 'booked',
-        msg: 'تم الحجز بنجاح 🎉',
-      };
+      // handleWaitlistOutside تُلقي خطأها الخاص — لا catch يعترضها هنا
+      return await handleWaitlistOutside(itemId, userId);
     }
 
-    // 4) مسار قائمة الانتظار مباشرة (إذا كان الغرض محجوزاً بالفعل من البداية)
+    // ✅ الغرض محجوز مسبقاً — abort ثم Waitlist
     await session.abortTransaction();
     session.endSession();
-
     return await handleWaitlistOutside(itemId, userId);
 
   } catch (err) {
-    // التراجع التلقائي الآمن عن أي تعديلات في حال الفشل
-    await session.abortTransaction();
-    session.endSession();
+    // ✅ abort فقط إذا الـ session لا تزال نشطة
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+    if (!session.hasEnded) {
+      session.endSession();
+    }
     throw err;
   }
 };

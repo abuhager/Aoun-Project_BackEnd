@@ -3,7 +3,7 @@ const adminRepo = require('../repositories/adminRepository');
 const userRepository = require('../repositories/userRepository');
 const AdminLog = require('../models/AdminLog');
 const User = require('../models/User'); // ✅ تم استيراد موديل المستخدم هنا لعمل التحديث المباشر
-const { notifyUser } = require('../utils/notifyUser');
+const notifyUser = require('../utils/notifyUser');
 const AppError = require('../utils/AppError');
 
 // ─── Stats ────────────────────────────────────────────────────

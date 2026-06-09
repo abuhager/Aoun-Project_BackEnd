@@ -1,6 +1,6 @@
 // services/ratingService.js
 const ratingRepository = require('../repositories/ratingRepository');
-const { notifyUser } = require('../utils/notifyUser');
+const notifyUser = require('../utils/notifyUser');
 const AppError = require('../utils/AppError');
 
 const calcTrustDelta = (score) => {

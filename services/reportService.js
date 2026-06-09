@@ -1,5 +1,5 @@
 const reportRepository = require('../repositories/reportRepository');
-const { notifyUser } = require('../utils/notifyUser');
+const notifyUser = require('../utils/notifyUser');
 const AppError = require('../utils/AppError');
 const { toReportResponse } = require('../dtos/reportDto');
 
