@@ -99,7 +99,7 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
 exports.verifyEmailLogic = async ({ email, otp }) => {
   // جلب الحقول المخفية والمحمية الخاصة بالتحقق والمحاولات
   const user = await userRepository.findByEmail(email, {
-    select: '+verificationOtp +verificationOtpExpiry +otpAttempts',
+    selectOtp: true,
   });
 
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };

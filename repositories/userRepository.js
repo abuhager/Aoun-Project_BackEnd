@@ -7,8 +7,9 @@ const User = require('../models/User');
 
 exports.findByEmail = (email, options = {}) => {
   let query = User.findOne({ email });
-  // ✅ جلب OTP + Expiry معاً عند الحاجة
-  if (options.selectOtp) query = query.select('+verificationOtp +verificationOtpExpiry');
+  if (options.selectOtp) {
+    query = query.select('+verificationOtp +verificationOtpExpiry +otpAttempts');
+  }
   return query;
 };
 
