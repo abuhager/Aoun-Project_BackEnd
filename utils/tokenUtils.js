@@ -14,7 +14,7 @@ const REFRESH_COOKIE_OPTIONS = {
   path:     '/',
 };
 
-// ✅ جديد — نفس الإعدادات بدون maxAge وبـ expires في الماضي
+// ✅ نفس الإعدادات بدون maxAge — لمسح الـ Cookie عند الـ logout
 const CLEAR_REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
   secure:   isProduction,
@@ -22,13 +22,25 @@ const CLEAR_REFRESH_COOKIE_OPTIONS = {
   path:     '/',
 };
 
-const generateAccessToken = (payload) =>
-  jwt.sign(payload, process.env.JWT_SECRET, {
+// ── استخرج فقط الحقول الضرورية كـ plain object ──────────────
+// ✅ إصلاح: jwt.sign يرفض Mongoose Document — نحوّله لـ plain object
+const _extractPayload = (user) => ({
+  user: {
+    id:         user._id.toString(),
+    role:       user.role,
+    trustLevel: user.trustLevel ?? 1,
+    isVerified: user.isVerified,
+    isBanned:   user.isBanned ?? false,
+  },
+});
+
+const generateAccessToken = (user) =>
+  jwt.sign(_extractPayload(user), process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_ACCESS_EXPIRE || '15m',
   });
 
-const generateRefreshToken = (payload) => {
-  const token  = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, {
+const generateRefreshToken = (user) => {
+  const token  = jwt.sign(_extractPayload(user), process.env.JWT_REFRESH_SECRET, {
     expiresIn: process.env.JWT_REFRESH_EXPIRE || '7d',
   });
   // نخزّن hash الـ token في DB — ليس الـ token الأصلي
@@ -37,7 +49,7 @@ const generateRefreshToken = (payload) => {
 };
 
 const verifyAccessToken  = (token) =>
-  jwt.verify(token,  process.env.JWT_SECRET);
+  jwt.verify(token, process.env.JWT_SECRET);
 
 const verifyRefreshToken = (token) =>
   jwt.verify(token, process.env.JWT_REFRESH_SECRET);
@@ -48,5 +60,5 @@ module.exports = {
   verifyAccessToken,
   verifyRefreshToken,
   REFRESH_COOKIE_OPTIONS,
-  CLEAR_REFRESH_COOKIE_OPTIONS, // ✅ مُصدَّر الآن
+  CLEAR_REFRESH_COOKIE_OPTIONS,
 };

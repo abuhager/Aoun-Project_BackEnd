@@ -3,7 +3,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 
 const router = express.Router();
-const upload = require('../middlewares/upload');
+const { upload, verifyImageBuffer } = require('../middlewares/upload');
 const validateBody = require('../middlewares/validateBody');
 const validateObjectId = require('../middlewares/validateObjectId');
 const { requireAuth, requireLevel2 } = require('../middlewares/auth');
@@ -37,6 +37,7 @@ router.post(
   '/',
   requireAuth,
   upload.single('image'),
+  verifyImageBuffer,        // ← أضف هذا
   validateBody('createItem'),
   createItem
 );
@@ -71,6 +72,7 @@ router.put(
   '/:id',
   requireAuth,
   upload.single('image'),
+  verifyImageBuffer,        // ← أضف هذا
   validateObjectId('id'),
   validateBody('updateItem'),
   updateItem

@@ -3,7 +3,6 @@ const express      = require('express');
 const cors         = require('cors');
 const helmet       = require('helmet');
 const cookieParser = require('cookie-parser');
-const mongoSanitize = require('express-mongo-sanitize'); // ✅ إصلاح A2
 const hpp          = require('hpp');                     // ✅ إصلاح A1
 
 const { globalLimiter } = require('./middlewares/rateLimiter');
@@ -77,13 +76,24 @@ app.use(cookieParser());
 
 // ── إصلاح A2 — NoSQL Injection Sanitization ───────────────────
 // يمنع { "$gt": "" } في req.body / req.params / req.query
-app.use(mongoSanitize({
-  replaceWith: '_',    // يستبدل $ و . ببديل آمن بدلاً من الحذف الصامت
-  onSanitize: ({ req, key }) => {
-    // سجّل محاولات الـ injection
-    console.warn(`[mongoSanitize] ⚠️ تم تنظيف حقل مشبوه — key: ${key} — IP: ${req.ip}`);
-  },
-}));
+const _sanitize = (obj) => {
+  if (!obj || typeof obj !== 'object') return obj;
+  for (const key of Object.keys(obj)) {
+    if (/^\$|\./.test(key)) {
+      console.warn(`[mongoSanitize] ⚠️ حقل مشبوه تم حذفه: ${key}`);
+      delete obj[key];
+    } else if (typeof obj[key] === 'object') {
+      _sanitize(obj[key]);
+    }
+  }
+  return obj;
+};
+
+app.use((req, _res, next) => {
+  if (req.body)   _sanitize(req.body);
+  if (req.params) _sanitize(req.params);
+  next();
+});
 
 // ── إصلاح A1 — HTTP Parameter Pollution ──────────────────────
 // يمنع ?sort=name&sort=email (مصفوفات غير متوقعة تكسر الـ query logic)

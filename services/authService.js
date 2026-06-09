@@ -148,13 +148,13 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
   await userRepository.saveUser(user);
 
   const accessToken = generateAccessToken(user);
-  const refreshToken = generateRefreshToken(user);
-  const hashedRefresh = hashToken(refreshToken);
+  // ✅ بعد
+const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(user);
 
-  await userRepository.updateUser(user._id, {
-    refreshToken: hashedRefresh,
-    sessionIssuedAt: new Date(),
-  });
+await userRepository.updateUser(user._id, {
+  refreshToken: hashedRefresh,
+  sessionIssuedAt: new Date(),
+});
 
   return {
     statusCode: 200,
@@ -210,13 +210,13 @@ exports.loginLogic = async ({ email, password }) => {
   }
 
   const accessToken = generateAccessToken(user);
-  const refreshToken = generateRefreshToken(user);
-  const hashedRefresh = hashToken(refreshToken);
+  // ✅ بعد
+const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(user);
 
-  await userRepository.updateUser(user._id, {
-    refreshToken: hashedRefresh,
-    sessionIssuedAt: new Date(),
-  });
+await userRepository.updateUser(user._id, {
+  refreshToken: hashedRefresh,
+  sessionIssuedAt: new Date(),
+});
 
   return {
     statusCode: 200,
@@ -261,8 +261,7 @@ exports.refreshLogic = async (refreshToken) => {
     }
 
     const newAccessToken = generateAccessToken(user);
-    const newRefreshToken = generateRefreshToken(user);
-    const newHash = hashToken(newRefreshToken);
+    const { token: newRefreshToken, hashed: newHash } = generateRefreshToken(user);
 
     const rotated = await User.findOneAndUpdate(
       { _id: user._id, refreshToken: hashedIncoming },
