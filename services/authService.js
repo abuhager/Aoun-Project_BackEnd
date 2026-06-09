@@ -10,7 +10,7 @@ const Rating = require('../models/Rating');
 const SystemSettings = require('../models/SystemSettings');
 
 const userRepository = require('../repositories/userRepository');
-const { sendEmail, fireSendEmail } = require('../utils/sendEmail'); // مستخدم لإرسال الإيميلات بـ الرابط والـ OTP
+const emailService = require('./emailService'); // مستخدم لإرسال الإيميلات بـ الرابط والـ OTP
 const { buildGamificationProfile } = require('../utils/gamification');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/tokenUtils');
 const { generateOtp, hashOtp, verifyOtp } = require('../utils/otp'); // ✅ أدوات الـ OTP الآمنة
