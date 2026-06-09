@@ -66,19 +66,34 @@ function normalizeError(err) {
 function errorHandler(err, req, res, next) {
   const normalized = normalizeError(err);
 
+  // ✅ Development: تفاصيل كاملة في الـ console
   if (!isProduction) {
     console.error('❌ Error:', {
-      message: normalized.message,
-      code: normalized.code,
+      message:    normalized.message,
+      code:       normalized.code,
       statusCode: normalized.statusCode,
-      stack: err?.stack,
-      path: req.originalUrl,
-      method: req.method,
+      stack:      err?.stack,
+      path:       req.originalUrl,
+      method:     req.method,
     });
+  } else {
+    // ✅ إصلاح: Production — سجّل الـ 500 errors فقط (لا تكشف تفاصيلها للمستخدم)
+    if (normalized.statusCode >= 500) {
+      console.error(JSON.stringify({
+        level:      'error',
+        timestamp:  new Date().toISOString(),
+        message:    err?.message,
+        code:       normalized.code,
+        path:       req.originalUrl,
+        method:     req.method,
+        // ✅ لا stack في الـ JSON response — لكن نسجّله هنا للـ monitoring
+        stack:      err?.stack,
+      }));
+    }
   }
 
   const response = {
-    msg: normalized.message,
+    msg:  normalized.message,
     code: normalized.code,
   };
 
@@ -86,6 +101,7 @@ function errorHandler(err, req, res, next) {
     response.errors = normalized.details;
   }
 
+  // ✅ stack فقط في dev — أبداً في production
   if (!isProduction) {
     response.stack = err?.stack;
   }

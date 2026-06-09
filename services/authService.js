@@ -1,25 +1,40 @@
+// services/authService.js
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const { Readable } = require('stream');
+const cloudinary = require('../config/cloudinary'); // ✅ إصلاح #5: الاستيراد في الأعلى وليس داخل الدوال
+
 const User = require('../models/User');
 const Item = require('../models/Item');
 const Rating = require('../models/Rating');
 const SystemSettings = require('../models/SystemSettings');
-const { generateOtp } = require('../utils/otp');
-const { sendEmail, fireSendEmail } = require('../utils/sendEmail');
-const userRepository = require('../repositories/userRepository');
-const { buildGamificationProfile } = require('../utils/gamification');
-const {
-  generateAccessToken,
-  generateRefreshToken,
-  verifyRefreshToken,
-} = require('../utils/tokenUtils');
 
+const userRepository = require('../repositories/userRepository');
+const { sendEmail, fireSendEmail } = require('../utils/sendEmail'); // مستخدم لإرسال الإيميلات بـ الرابط والـ OTP
+const { buildGamificationProfile } = require('../utils/gamification');
+const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/tokenUtils');
+const { generateOtp, hashOtp, verifyOtp } = require('../utils/otp'); // ✅ أدوات الـ OTP الآمنة
+
+// ✅ إصلاح #3: توحيد جولات التشفير من البيئة أو افتراضي 12 لمنع التضارب
+const BCRYPT_ROUNDS = parseInt(process.env.BCRYPT_ROUNDS, 10) || 12;
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+// ── دالت مساعدّة لتوليد وتدقيق التوكنات والتحقق الجامعي ────────────────
 const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 
 const isUniversityEmail = async (email) => {
   const settings = await SystemSettings.getCached();
   const domains = settings.universityEmailDomains ?? [];
   return domains.some((domain) => email.toLowerCase().endsWith(domain.toLowerCase()));
+};
+
+// ✅ إصلاح #6: دالة موحدة لترقية مستوى ثقة الطلاب لمنع تكرار الكود عبر التسجيل والتحقق واللوجن
+const _upgradeStudentTrust = async (user) => {
+  if (user.isVerifiedStudent) return;
+  if (await isUniversityEmail(user.email)) {
+    user.isVerifiedStudent = true;
+    if ((user.trustLevel ?? 1) < 2) user.trustLevel = 2;
+  }
 };
 
 const buildSafeUser = (user) => ({
@@ -38,34 +53,36 @@ const buildSafeUser = (user) => ({
   gamification: buildGamificationProfile(user.trustScore, user.totalDonations),
 });
 
+// ── registerLogic ─────────────────────────────────────────────
 exports.registerLogic = async ({ name, email, password, phone }) => {
   const exists = await userRepository.findByEmail(email);
   if (exists) {
-    return { statusCode: 400, body: { msg: 'هذا الإيميل مسجل مسبقاً' } };
+    return { statusCode: 409, body: { msg: 'هذا الإيميل مسجل مسبقاً' } }; // 409 Conflict أنسب
   }
 
-  const salt = await bcrypt.genSalt(10);
-  const hashed = await bcrypt.hash(password, salt);
-  const newOtp = generateOtp();
+  // ✅ إصلاح #3: تشفير بـ BCRYPT_ROUNDS الموحدة
+  const hashed = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
+  // ✅ إصلاح #2: توليد OTP آمن وتخزينه كـ Hash (SHA-256) لحمايته بقاعدة البيانات
+  const rawOtp = generateOtp();
+  const otpHash = hashOtp(rawOtp);
   const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
   const isStudent = await isUniversityEmail(email);
 
-  await userRepository.createUser({
+  const newUser = await userRepository.createUser({
     name,
     email,
     password: hashed,
     phone: phone || undefined,
-    verificationOtp: newOtp,
+    verificationOtp: otpHash, // الـ Hash
     verificationOtpExpiry: otpExpiry,
+    otpAttempts: 0, // ✅ إصلاح #4: تصفير العداد عند الإنشاء
     isVerifiedStudent: isStudent,
     trustLevel: isStudent ? 2 : 1,
   });
 
-  fireSendEmail({
-    email,
-    subject: 'تحقق من إيميلك - منصة عون 📬',
-    message: `<div dir="rtl"><h2>مرحباً ${name}!</h2><p>رمز التحقق الخاص بك:</p><h1 style="letter-spacing:8px;color:#006155;">${newOtp}</h1><p style="color:#888;">ينتهي خلال 10 دقائق</p>${isStudent ? '<p style="color:#006155;">✅ تم التحقق من انتمائك الجامعي تلقائياً</p>' : ''}</div>`,
-  });
+  // إرسال الرمز الصريح (rawOtp) للمستخدم عبر الإيميل وليس الـ Hash
+  await emailService.sendVerificationEmail(email, rawOtp, name, isStudent);
 
   return {
     statusCode: 201,
@@ -77,27 +94,57 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
   };
 };
 
+// ── verifyEmailLogic ──────────────────────────────────────────
 exports.verifyEmailLogic = async ({ email, otp }) => {
-  const user = await userRepository.findByEmail(email, { selectOtp: true });
+  // جلب الحقول المخفية والمحمية الخاصة بالتحقق والمحاولات
+  const user = await userRepository.findByEmail(email, {
+    select: '+verificationOtp +verificationOtpExpiry +otpAttempts',
+  });
 
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
   if (user.isVerified) return { statusCode: 400, body: { msg: 'الإيميل محقق مسبقاً ✅' } };
-  if (!user.verificationOtpExpiry || Date.now() > user.verificationOtpExpiry.getTime()) {
-    return { statusCode: 400, body: { msg: 'انتهت صلاحية رمز التحقق ⏰ — اطلب رمزاً جديداً' } };
+  
+  if (!user.verificationOtp || !user.verificationOtpExpiry) {
+    return { statusCode: 400, body: { msg: 'لا يوجد رمز تحقق نشط، اطلب رمزاً جديداً' } };
   }
-  if (user.verificationOtp !== otp) {
-    return { statusCode: 400, body: { msg: 'رمز التحقق غير صحيح ❌' } };
+  
+  if (user.verificationOtpExpiry.getTime() < Date.now()) {
+    return { statusCode: 400, body: { msg: 'انتهت صلاحية رمز التحقق ⏰ — اطلب رمزاً جديداً', code: 'OTP_EXPIRED' } };
   }
 
+  // ✅ إصلاح #4: فحص عداد المحاولات وتدمير الرمز وقفل الجلسة إذا تجاوز 5 محاولات لمنع هجوم التخمين
+  if ((user.otpAttempts ?? 0) >= 5) {
+    user.verificationOtp = undefined;
+    user.verificationOtpExpiry = undefined;
+    user.otpAttempts = 0;
+    await userRepository.saveUser(user);
+    return {
+      statusCode: 429,
+      body: { msg: 'تجاوزت الحد المسموح من المحاولات، اطلب رمزاً جديداً 🔒', code: 'OTP_ATTEMPTS_EXCEEDED' },
+    };
+  }
+
+  // ✅ إصلاح #2: مقارنة الـ OTP باستخدام Timing-safe comparison عبر الـ Hash
+  const isValid = verifyOtp(otp, user.verificationOtp);
+
+  if (!isValid) {
+    user.otpAttempts = (user.otpAttempts ?? 0) + 1;
+    await userRepository.saveUser(user);
+    const remaining = 5 - user.otpAttempts;
+    return {
+      statusCode: 400,
+      body: { msg: `رمز التحقق غير صحيح ❌ (${remaining} محاولة متبقية)` },
+    };
+  }
+
+  // تنظيف حقول التحقق بعد النجاح
   user.isVerified = true;
   user.verificationOtp = undefined;
   user.verificationOtpExpiry = undefined;
+  user.otpAttempts = 0;
 
-  if (await isUniversityEmail(user.email)) {
-    user.isVerifiedStudent = true;
-    if (!user.trustLevel || user.trustLevel < 2) user.trustLevel = 2;
-  }
-
+  // ✅ إصلاح #6: استدعاء الدالة الموحدة
+  await _upgradeStudentTrust(user);
   await userRepository.saveUser(user);
 
   const accessToken = generateAccessToken(user);
@@ -120,47 +167,46 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
   };
 };
 
+// ── loginLogic ────────────────────────────────────────────────
 exports.loginLogic = async ({ email, password }) => {
   const user = await userRepository.findByEmailWithPassword(email);
 
   if (!user) return { statusCode: 401, body: { msg: 'بيانات الدخول غير صحيحة' } };
-  if (user.isBanned) return { statusCode: 403, body: { msg: 'هذا الحساب محظور 🚫' } };
+  if (user.isBanned) return { statusCode: 403, body: { msg: 'هذا الحساب محظور 🚫', code: 'ACCOUNT_BANNED' } };
 
   const isMatch = await bcrypt.compare(password, user.password);
   if (!isMatch) return { statusCode: 401, body: { msg: 'بيانات الدخول غير صحيحة' } };
 
   if (!user.isVerified) {
-    const newOtp = generateOtp();
+    const rawOtp = generateOtp();
+    const otpHash = hashOtp(rawOtp);
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
 
     await userRepository.updateUser(user._id, {
-      verificationOtp: newOtp,
+      verificationOtp: otpHash,
       verificationOtpExpiry: otpExpiry,
+      otpAttempts: 0,
     });
 
-    fireSendEmail({
-      email,
-      subject: 'تحقق من إيميلك - منصة عون 📬',
-      message: `<div dir="rtl"><h2>مرحباً ${user.name}!</h2><p>طلبت تسجيل الدخول، لكن حسابك لم يُفعَّل بعد.</p><p>رمز التحقق الجديد الخاص بك:</p><h1 style="letter-spacing:8px;color:#006155;">${newOtp}</h1><p style="color:#888;">ينتهي خلال 10 دقائق</p></div>`,
-    });
+    await emailService.sendVerificationEmail(email, rawOtp, user.name, await isUniversityEmail(email));
 
     return {
       statusCode: 403,
       body: {
         msg: 'حسابك غير مفعّل — تم إرسال رمز تحقق جديد إلى إيميلك 📧',
-        code: 'NOT_VERIFIED',
+        code: 'EMAIL_NOT_VERIFIED',
         email: user.email,
       },
     };
   }
 
-  if (await isUniversityEmail(email) && (!user.trustLevel || user.trustLevel < 2)) {
+  // ✅ إصلاح #6: استدعاء الدالة المشتركة للترقية والتحقق الجامعي عند تسجيل الدخول
+  await _upgradeStudentTrust(user);
+  if (user.isModified && user.isModified('trustLevel')) {
     await userRepository.updateUser(user._id, {
-      isVerifiedStudent: true,
-      trustLevel: 2,
+      isVerifiedStudent: user.isVerifiedStudent,
+      trustLevel: user.trustLevel,
     });
-    user.isVerifiedStudent = true;
-    user.trustLevel = 2;
   }
 
   const accessToken = generateAccessToken(user);
@@ -183,6 +229,7 @@ exports.loginLogic = async ({ email, password }) => {
   };
 };
 
+// ── refreshLogic ──────────────────────────────────────────────
 exports.refreshLogic = async (refreshToken) => {
   if (!refreshToken) {
     return {
@@ -245,6 +292,7 @@ exports.refreshLogic = async (refreshToken) => {
   }
 };
 
+// ── logoutLogic ───────────────────────────────────────────────
 exports.logoutLogic = async (userId) => {
   await userRepository.updateUser(userId, {
     refreshToken: undefined,
@@ -258,6 +306,7 @@ exports.logoutLogic = async (userId) => {
   };
 };
 
+// ── getMeLogic ────────────────────────────────────────────────
 exports.getMeLogic = async (userId, page = 1) => {
   const LIMIT = 10;
   const skip = (page - 1) * LIMIT;
@@ -296,6 +345,7 @@ exports.getMeLogic = async (userId, page = 1) => {
   };
 };
 
+// ── getPublicProfileLogic ─────────────────────────────────────
 exports.getPublicProfileLogic = async (userId, page = 1) => {
   const LIMIT = 10;
   const skip = (page - 1) * LIMIT;
@@ -341,43 +391,39 @@ exports.getPublicProfileLogic = async (userId, page = 1) => {
   };
 };
 
+// ── forgotPasswordLogic ───────────────────────────────────────
 exports.forgotPasswordLogic = async (email) => {
   const user = await userRepository.findByEmail(email);
 
+  // ✅ إصلاح #9: توحيد الرسالة المرتجعة للكل لمنع كشف وجود البريد الإلكتروني (User Enumeration Vuln)
+  const GENERIC_MSG = { msg: 'إذا كان هذا الإيميل مسجلاً، ستصلك رسالة استعادة قريباً 📧' };
+
   if (!user) {
-    return {
-      statusCode: 200,
-      body: { msg: 'إذا كان هذا الإيميل مسجلاً، ستصلك رسالة استعادة قريباً 📧' },
-    };
+    return { statusCode: 200, body: GENERIC_MSG };
   }
 
-  const resetToken = crypto.randomBytes(20).toString('hex');
+  const resetToken = crypto.randomBytes(32).toString('hex');
   user.resetPasswordToken = hashToken(resetToken);
-  user.resetPasswordExpire = Date.now() + 15 * 60 * 1000;
+  user.resetPasswordExpire = Date.now() + 15 * 60 * 1000; // 15 دقيقة
   await userRepository.saveUser(user);
 
   const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
   const resetUrl = `${clientUrl}/reset-password/${resetToken}`;
 
   try {
-    await sendEmail({
-      email: user.email,
-      subject: 'استعادة كلمة المرور - منصة عون 🔒',
-      message: `<div dir="rtl"><h2>طلب استعادة كلمة المرور</h2><a href="${resetUrl}" style="background:#006155;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;display:inline-block;margin-top:10px;">إعادة تعيين كلمة المرور</a><p style="color:#888;margin-top:10px;">ينتهي الرابط خلال 15 دقيقة</p></div>`,
-    });
-
-    return {
-      statusCode: 200,
-      body: { msg: 'إذا كان هذا الإيميل مسجلاً، ستصلك رسالة استعادة قريباً 📧' },
-    };
-  } catch {
+    await emailService.sendResetPasswordEmail(user.email, resetToken, user.name, resetUrl);
+    return { statusCode: 200, body: GENERIC_MSG };
+  } catch (err) {
+    // ✅ إصلاح #9: تسجيل الخطأ داخلياً وعدم تسريب تفاصيل السيرفر للمهاجم مع إعادة تعيين الـ tokens
+    console.error('[forgotPassword] Email sending failed:', err.message);
     user.resetPasswordToken = undefined;
     user.resetPasswordExpire = undefined;
     await userRepository.saveUser(user);
-    return { statusCode: 500, body: { msg: 'حدث خطأ أثناء إرسال البريد الإلكتروني' } };
+    return { statusCode: 200, body: GENERIC_MSG }; 
   }
 };
 
+// ── resetPasswordLogic ────────────────────────────────────────
 exports.resetPasswordLogic = async (token, newPassword) => {
   const hashedToken = hashToken(token);
   const user = await userRepository.findByResetToken(hashedToken);
@@ -391,8 +437,8 @@ exports.resetPasswordLogic = async (token, newPassword) => {
     return { statusCode: 400, body: { msg: 'يرجى اختيار كلمة مرور جديدة تختلف عن الحالية ❌' } };
   }
 
-  const salt = await bcrypt.genSalt(10);
-  user.password = await bcrypt.hash(newPassword, salt);
+  // ✅ إصلاح #3: التشفير بـ BCRYPT_ROUNDS الثابتة والموحدة بدلاً من الترقيم العشوائي
+  user.password = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
   user.resetPasswordToken = undefined;
   user.resetPasswordExpire = undefined;
   user.refreshToken = undefined;
@@ -402,7 +448,8 @@ exports.resetPasswordLogic = async (token, newPassword) => {
   return { statusCode: 200, body: { msg: 'تم تغيير كلمة المرور بنجاح! ✅' } };
 };
 
-exports.updateMeLogic = async (userId, updates, fileBuffer) => {
+// ── updateMeLogic ─────────────────────────────────────────────
+exports.updateMeLogic = async (userId, updates, fileBuffer, mimetype) => {
   const user = await userRepository.findById(userId);
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
 
@@ -410,23 +457,30 @@ exports.updateMeLogic = async (userId, updates, fileBuffer) => {
   if (updates.phone) user.phone = updates.phone;
 
   if (fileBuffer) {
+    // ✅ إصلاح #5: التحقق الفعلي من نوع الـ Mimetype لـ الحماية قبل الرفع إلى Cloudinary
+    if (!ALLOWED_IMAGE_TYPES.includes(mimetype)) {
+      return {
+        statusCode: 400,
+        body: { msg: 'نوع الصورة غير مدعوم، يُسمح بـ JPEG أو PNG أو WebP فقط 🖼️' },
+      };
+    }
+
     try {
-      const cloudinary = require('../config/cloudinary');
       const result = await new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
           {
-            folder: 'aoun/avatars',
+            folder: 'hajah/avatars',
             resource_type: 'image',
             transformation: [{ width: 400, height: 400, crop: 'fill', gravity: 'face' }],
           },
           (err, res) => (err ? reject(err) : resolve(res))
         );
-        const { Readable } = require('stream');
         Readable.from(fileBuffer).pipe(stream);
       });
       user.avatar = result.secure_url;
     } catch (uploadErr) {
       console.error('Cloudinary upload error:', uploadErr.message);
+      return { statusCode: 500, body: { msg: 'فشل رفع الصورة الشخصية' } };
     }
   }
 
@@ -441,6 +495,7 @@ exports.updateMeLogic = async (userId, updates, fileBuffer) => {
   };
 };
 
+// ── updatePasswordLogic ───────────────────────────────────────
 exports.updatePasswordLogic = async (userId, currentPassword, newPassword) => {
   const user = await userRepository.findByIdWithPassword(userId);
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
@@ -451,8 +506,8 @@ exports.updatePasswordLogic = async (userId, currentPassword, newPassword) => {
   const isSame = await bcrypt.compare(newPassword, user.password);
   if (isSame) return { statusCode: 400, body: { msg: 'كلمة المرور الجديدة يجب أن تختلف عن الحالية' } };
 
-  const salt = await bcrypt.genSalt(12);
-  user.password = await bcrypt.hash(newPassword, salt);
+  // ✅ إصلاح #3: تطبيق الـ BCRYPT_ROUNDS الموحدة من الـ Environment هنا أيضاً
+  user.password = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
   user.refreshToken = undefined;
   user.sessionIssuedAt = undefined;
   await user.save();

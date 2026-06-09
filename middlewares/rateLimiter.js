@@ -1,82 +1,61 @@
 // middlewares/rateLimiter.js
-const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
+// ✅ إصلاح #8 — إزالة skip الكامل في dev، قيم مخففة بدلاً منه
+const rateLimit = require('express-rate-limit');
 
 const isDev = process.env.NODE_ENV !== 'production';
 
-// ✅ helper: استخدم الإيميل كـ key إن وُجد، وإلا استخدم IP مع دعم IPv6
-const emailOrIp = (req) =>
-  req.body?.email?.toLowerCase?.() || ipKeyGenerator(req);
+// مضاعف للتطوير — يرفع الـ limits بدلاً من تجاهلها كلياً
+const devMultiplier = isDev ? 20 : 1;
 
-// 🛡️ 1. Global Limiter
+// ── حد عام على كل الـ routes ─────────────────────────────────
 const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max:      isDev ? 2000 : 150,
-  message:  { msg: '🛑 طلبات كثيرة جداً، الرجاء الانتظار قليلاً.' },
+  windowMs: 15 * 60 * 1000,             // 15 دقيقة
+  max:      150 * devMultiplier,         // 150 prod / 3000 dev
   standardHeaders: true,
   legacyHeaders:   false,
-  skip: () => isDev,
-  // ✅ لا keyGenerator هنا — الـ default يستخدم IP بشكل صحيح
+  message: { msg: 'طلبات كثيرة جداً، حاول لاحقاً 🚦' },
 });
 
-// 🛡️ 2. Auth Limiter (login)
-const authLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max:      isDev ? 1000 : 50,
-  message:  { msg: '🛑 محاولات تسجيل دخول كثيرة، حسابك مقفل مؤقتاً لمدة ساعة.' },
-  standardHeaders:        true,
-  legacyHeaders:          false,
-  skipSuccessfulRequests: true,
-  skip:         () => isDev,
-  keyGenerator: emailOrIp, // ✅ إيميل + IPv6-safe IP
+// ── تسجيل الدخول ──────────────────────────────────────────────
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max:      10 * devMultiplier,          // 10 prod / 200 dev
+  standardHeaders: true,
+  legacyHeaders:   false,
+  message: { msg: 'محاولات تسجيل دخول كثيرة، انتظر 15 دقيقة 🔒' },
 });
 
-// 🛡️ 3. Refresh Limiter
-const refreshLimiter = rateLimit({
-  windowMs: 10 * 60 * 1000,
-  max:      isDev ? 2000 : 60,
-  message:  { msg: '🛑 طلبات تجديد الجلسة كثيرة جداً، حاول بعد قليل.' },
-  standardHeaders:        true,
-  legacyHeaders:          false,
-  skipSuccessfulRequests: true,
-  skip: () => isDev,
-});
-
-// 🛡️ 4. OTP Limiter
+// ── إرسال OTP ─────────────────────────────────────────────────
 const otpLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
-  max:      isDev ? 1000 : 5,
-  message:  { msg: '🔐 محاولات كثيرة، انتظر 10 دقائق قبل المحاولة مجدداً.' },
+  max:      5 * devMultiplier,           // 5 prod / 100 dev
   standardHeaders: true,
   legacyHeaders:   false,
-  skip: () => isDev,
+  message: { msg: 'حاولت كثيراً، انتظر 10 دقائق ⏳', code: 'OTP_RATE_LIMIT' },
 });
 
-// 🛡️ 5. Register Limiter
+// ── نسيان كلمة المرور ─────────────────────────────────────────
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,             // ساعة كاملة
+  max:      3 * devMultiplier,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  message: { msg: 'طلبات كثيرة لاستعادة كلمة المرور، انتظر ساعة' },
+});
+
+// ── التسجيل ────────────────────────────────────────────────────
 const registerLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
-  max:      isDev ? 1000 : 20,
-  message:  { msg: '🛑 محاولات إنشاء حساب كثيرة، حاول بعد ساعة.' },
+  max:      5 * devMultiplier,
   standardHeaders: true,
   legacyHeaders:   false,
-  skip: () => isDev,
-});
-
-// 🛡️ 6. Forgot Password Limiter
-const forgotPasswordLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max:      isDev ? 1000 : 10,
-  message:  { msg: '🛑 محاولات كثيرة، حاول بعد ساعة.' },
-  standardHeaders: true,
-  legacyHeaders:   false,
-  keyGenerator:    emailOrIp, // ✅ إيميل + IPv6-safe IP
-  skip: () => isDev,
+  message: { msg: 'تسجيلات كثيرة من نفس الـ IP' },
 });
 
 module.exports = {
   globalLimiter,
-  authLimiter,
-  refreshLimiter,
+  loginLimiter,
   otpLimiter,
-  registerLimiter,
   forgotPasswordLimiter,
+  registerLimiter,
 };

@@ -1,45 +1,72 @@
-// controllers/authController.js
-const authService = require('../services/authService');
-const asyncHandler = require('../utils/asyncHandler');
-const AppError = require('../utils/AppError');
-const userRepository = require('../repositories/userRepository');
-const upload = require('../middlewares/upload');
+// controllers/authController.js ✅ النسخة المصحّحة الكاملة
+const authService      = require('../services/authService');
+const asyncHandler     = require('../utils/asyncHandler');
+const AppError         = require('../utils/AppError');
+const userRepository   = require('../repositories/userRepository');
+
+// ✅ إصلاح C4 — استيراد upload و verifyImageBuffer معاً
+const { upload, verifyImageBuffer } = require('../middlewares/upload');
 
 const {
   REFRESH_COOKIE_OPTIONS,
   CLEAR_REFRESH_COOKIE_OPTIONS,
 } = require('../utils/tokenUtils');
 
-// ─── 1. التسجيل ────────────────────────────────────────
+const isProduction = process.env.NODE_ENV === 'production';
+
+// ─────────────────────────────────────────────────────────────
+// ✅ إصلاح C1, C2, C3 — session_active cookie helpers
+// httpOnly: false → مرئي للـ Next.js Edge Middleware
+// ─────────────────────────────────────────────────────────────
+const SESSION_ACTIVE_OPTIONS = {
+  httpOnly: false,
+  secure:   isProduction,
+  sameSite: isProduction ? 'none' : 'lax',
+  maxAge:   7 * 24 * 60 * 60 * 1000, // نفس عمر refreshToken
+  path:     '/',
+};
+
+const CLEAR_SESSION_ACTIVE_OPTIONS = {
+  httpOnly: false,
+  secure:   isProduction,
+  sameSite: isProduction ? 'none' : 'lax',
+  path:     '/',
+};
+
+// ─── 1. التسجيل ────────────────────────────────────────────────
 exports.register = asyncHandler(async (req, res) => {
   const result = await authService.registerLogic(req.body);
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 2. تأكيد الإيميل ─────────────────────────────────
+// ─── 2. تأكيد الإيميل ─────────────────────────────────────────
 exports.verifyEmail = asyncHandler(async (req, res) => {
   const result = await authService.verifyEmailLogic(req.body);
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 3. تسجيل الدخول ──────────────────────────────────
+// ─── 3. تسجيل الدخول ──────────────────────────────────────────
 exports.login = asyncHandler(async (req, res) => {
   const result = await authService.loginLogic(req.body);
 
   if (result.statusCode === 200 && result.refreshToken) {
+    // ✅ refreshToken — httpOnly (آمن)
     res.cookie('refreshToken', result.refreshToken, REFRESH_COOKIE_OPTIONS);
+
+    // ✅ إصلاح C1 — session_active signal للـ Next.js middleware
+    res.cookie('session_active', '1', SESSION_ACTIVE_OPTIONS);
   }
 
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 4. بروفايل المستخدم الخاص (GET /me/profile) ──────
+// ─── 4. بروفايل المستخدم الخاص ────────────────────────────────
 exports.getUserProfile = asyncHandler(async (req, res) => {
   const result = await authService.getUserProfileLogic(req.user.id);
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 5. GET /me — minimal payload للـ AuthContext ─────
+// ─── 5. GET /me — payload كامل للـ AuthContext ────────────────
 exports.getMe = asyncHandler(async (req, res) => {
   const user = await userRepository.findById(req.user.id);
 
@@ -48,31 +75,33 @@ exports.getMe = asyncHandler(async (req, res) => {
   }
 
   return res.json({
-    _id:        user._id,
-    name:       user.name,
-    email:      user.email,
-    avatar:     user.avatar,
-    role:       user.role,
-    trustLevel: user.trustLevel ?? 1,
-    trustScore: user.trustScore ?? 0,
-    quota:      user.quota ?? 0,
-    isVerified: user.isVerified,
+    _id:         user._id,
+    name:        user.name,
+    email:       user.email,
+    avatar:      user.avatar,
+    role:        user.role,
+    trustLevel:  user.trustLevel  ?? 1,
+    trustScore:  user.trustScore  ?? 0,
+    quota:       user.quota       ?? 0,
+    isVerified:  user.isVerified,
+    gamification: user.gamification ?? null,
   });
 });
 
-// ─── 6. بروفايل عام (GET /profile/:id) ────────────────
+// ─── 6. بروفايل عام ────────────────────────────────────────────
 exports.getPublicProfile = asyncHandler(async (req, res) => {
   const result = await authService.getPublicProfileLogic(req.params.id);
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 7. نسيت كلمة المرور ──────────────────────────────
+// ─── 7. نسيت كلمة المرور ──────────────────────────────────────
 exports.forgotPassword = asyncHandler(async (req, res) => {
-  const result = await authService.forgotPasswordLogic(req.body.email);
+  // ✅ إصلاح C5 — تمرير object بدلاً من string مباشر
+  const result = await authService.forgotPasswordLogic({ email: req.body.email });
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 8. إعادة تعيين كلمة المرور ───────────────────────
+// ─── 8. إعادة تعيين كلمة المرور ────────────────────────────────
 exports.resetPassword = asyncHandler(async (req, res) => {
   const result = await authService.resetPasswordLogic(
     req.body.token,
@@ -81,41 +110,46 @@ exports.resetPassword = asyncHandler(async (req, res) => {
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 9. refreshToken ──────────────────────────────────
+// ─── 9. تجديد الـ Token ────────────────────────────────────────
 exports.refreshToken = asyncHandler(async (req, res) => {
   const result = await authService.refreshLogic(req.cookies?.refreshToken);
 
   if (result.clearCookie) {
-    res.clearCookie('refreshToken', CLEAR_REFRESH_COOKIE_OPTIONS);
+    // ✅ إصلاح C3 — امسح الاثنين معاً
+    res.clearCookie('refreshToken',    CLEAR_REFRESH_COOKIE_OPTIONS);
+    res.clearCookie('session_active',  CLEAR_SESSION_ACTIVE_OPTIONS);
   }
 
   if (result.statusCode === 200 && result.newRefreshToken) {
-    res.cookie('refreshToken', result.newRefreshToken, REFRESH_COOKIE_OPTIONS);
+    // ✅ إصلاح C2 — ضبط الاثنين معاً عند كل refresh ناجح
+    res.cookie('refreshToken',   result.newRefreshToken, REFRESH_COOKIE_OPTIONS);
+    res.cookie('session_active', '1',                    SESSION_ACTIVE_OPTIONS);
   }
 
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 10. logout ───────────────────────────────────────
+// ─── 10. تسجيل الخروج ─────────────────────────────────────────
 exports.logout = asyncHandler(async (req, res) => {
   const result = await authService.logoutLogic(req.user.id);
-  res.clearCookie('refreshToken', CLEAR_REFRESH_COOKIE_OPTIONS);
+
+  // ✅ إصلاح C3 — مسح الاثنين معاً
+  res.clearCookie('refreshToken',   CLEAR_REFRESH_COOKIE_OPTIONS);
+  res.clearCookie('session_active', CLEAR_SESSION_ACTIVE_OPTIONS);
+
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 11. PUT /me — تعديل البروفايل ────────────────────
+// ─── 11. تعديل البروفايل ───────────────────────────────────────
+// ✅ إصلاح C4 — إضافة verifyImageBuffer بعد upload.single()
 exports.updateMe = [
   upload.single('avatar'),
+  verifyImageBuffer,           // ← يتحقق من Magic Bytes بعد رفع الملف
   asyncHandler(async (req, res) => {
     const updates = {};
 
-    if (req.body.name?.trim()) {
-      updates.name = req.body.name.trim();
-    }
-
-    if (req.body.phone?.trim()) {
-      updates.phone = req.body.phone.trim();
-    }
+    if (req.body.name?.trim())  updates.name  = req.body.name.trim();
+    if (req.body.phone?.trim()) updates.phone = req.body.phone.trim();
 
     const result = await authService.updateMeLogic(
       req.user.id,
@@ -128,13 +162,13 @@ exports.updateMe = [
   }),
 ];
 
-// ─── 12. PUT /me/password — تغيير كلمة المرور ────────
+// ─── 12. تغيير كلمة المرور ────────────────────────────────────
 exports.updatePassword = asyncHandler(async (req, res) => {
-  const result = await authService.updatePasswordLogic(
-    req.user.id,
-    req.body.currentPassword,
-    req.body.newPassword
-  );
+  // ✅ إصلاح C6 — تمرير object كما تتوقعه authService
+  const result = await authService.updatePasswordLogic(req.user.id, {
+    currentPassword: req.body.currentPassword,
+    newPassword:     req.body.newPassword,
+  });
 
   return res.status(result.statusCode).json(result.body);
 });
