@@ -95,6 +95,7 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
 };
 
 // ── verifyEmailLogic ──────────────────────────────────────────
+
 exports.verifyEmailLogic = async ({ email, otp }) => {
   // جلب الحقول المخفية والمحمية الخاصة بالتحقق والمحاولات
   const user = await userRepository.findByEmail(email, {
@@ -104,15 +105,7 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
   if (user.isVerified) return { statusCode: 400, body: { msg: 'الإيميل محقق مسبقاً ✅' } };
   
-  if (!user.verificationOtp || !user.verificationOtpExpiry) {
-    return { statusCode: 400, body: { msg: 'لا يوجد رمز تحقق نشط، اطلب رمزاً جديداً' } };
-  }
-  
-  if (user.verificationOtpExpiry.getTime() < Date.now()) {
-    return { statusCode: 400, body: { msg: 'انتهت صلاحية رمز التحقق ⏰ — اطلب رمزاً جديداً', code: 'OTP_EXPIRED' } };
-  }
-
-  // ✅ إصلاح #4: فحص عداد المحاولات وتدمير الرمز وقفل الجلسة إذا تجاوز 5 محاولات لمنع هجوم التخمين
+  // ✅ 1) فحص المحاولات أولاً — الحارس الأقوى لمنع هجمات التخمين وقفل الرمز فوراً
   if ((user.otpAttempts ?? 0) >= 5) {
     user.verificationOtp = undefined;
     user.verificationOtpExpiry = undefined;
@@ -124,7 +117,17 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
     };
   }
 
-  // ✅ إصلاح #2: مقارنة الـ OTP باستخدام Timing-safe comparison عبر الـ Hash
+  // ✅ 2) فحص وجود الـ OTP في قاعدة البيانات
+  if (!user.verificationOtp || !user.verificationOtpExpiry) {
+    return { statusCode: 400, body: { msg: 'لا يوجد رمز تحقق نشط، اطلب رمزاً جديداً' } };
+  }
+  
+  // ✅ 3) فحص انتهاء صلاحية الرمز
+  if (user.verificationOtpExpiry.getTime() < Date.now()) {
+    return { statusCode: 400, body: { msg: 'انتهت صلاحية رمز التحقق ⏰ — اطلب رمزاً جديداً', code: 'OTP_EXPIRED' } };
+  }
+
+  // ✅ 4) التحقق الفعلي بمقارنة الـ OTP باستخدام Timing-safe comparison عبر الـ Hash
   const isValid = verifyOtp(otp, user.verificationOtp);
 
   if (!isValid) {
@@ -143,18 +146,17 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
   user.verificationOtpExpiry = undefined;
   user.otpAttempts = 0;
 
-  // ✅ إصلاح #6: استدعاء الدالة الموحدة
+  // استدعاء الدالة الموحدة للترقية وحفظ التعديلات
   await _upgradeStudentTrust(user);
   await userRepository.saveUser(user);
 
   const accessToken = generateAccessToken(user);
-  // ✅ بعد
-const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(user);
+  const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(user);
 
-await userRepository.updateUser(user._id, {
-  refreshToken: hashedRefresh,
-  sessionIssuedAt: new Date(),
-});
+  await userRepository.updateUser(user._id, {
+    refreshToken: hashedRefresh,
+    sessionIssuedAt: new Date(),
+  });
 
   return {
     statusCode: 200,
@@ -168,6 +170,7 @@ await userRepository.updateUser(user._id, {
 };
 
 // ── loginLogic ────────────────────────────────────────────────
+
 exports.loginLogic = async ({ email, password }) => {
   const user = await userRepository.findByEmailWithPassword(email);
 
@@ -200,9 +203,12 @@ exports.loginLogic = async ({ email, password }) => {
     };
   }
 
-  // ✅ إصلاح #6: استدعاء الدالة المشتركة للترقية والتحقق الجامعي عند تسجيل الدخول
+  // ✅ تم الإصلاح: حفظ القيمة القديمة قبل الاستدعاء لمقارنتها مباشرة
+  const beforeLevel = user.trustLevel ?? 1;
   await _upgradeStudentTrust(user);
-  if (user.isModified && user.isModified('trustLevel')) {
+
+  // مقارنة القيم بدلاً من الاعتماد على .isModified غير الموجودة في الـ Plain Object
+  if (user.trustLevel !== beforeLevel || user.isVerifiedStudent) {
     await userRepository.updateUser(user._id, {
       isVerifiedStudent: user.isVerifiedStudent,
       trustLevel: user.trustLevel,
@@ -210,13 +216,12 @@ exports.loginLogic = async ({ email, password }) => {
   }
 
   const accessToken = generateAccessToken(user);
-  // ✅ بعد
-const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(user);
+  const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(user);
 
-await userRepository.updateUser(user._id, {
-  refreshToken: hashedRefresh,
-  sessionIssuedAt: new Date(),
-});
+  await userRepository.updateUser(user._id, {
+    refreshToken: hashedRefresh,
+    sessionIssuedAt: new Date(),
+  });
 
   return {
     statusCode: 200,
@@ -232,40 +237,26 @@ await userRepository.updateUser(user._id, {
 // ── refreshLogic ──────────────────────────────────────────────
 exports.refreshLogic = async (refreshToken) => {
   if (!refreshToken) {
-    return {
-      statusCode: 401,
-      clearCookie: true,
-      body: { msg: 'لا يوجد Refresh Token', code: 'NO_REFRESH' },
-    };
+    return { statusCode: 401, clearCookie: true, body: { msg: 'لا يوجد Refresh Token', code: 'NO_REFRESH' } };
   }
 
   try {
     const decoded = verifyRefreshToken(refreshToken);
     const hashedIncoming = hashToken(refreshToken);
-    const user = await userRepository.findByIdWithSession(decoded.user.id);
 
-    if (!user || user.refreshToken !== hashedIncoming) {
-      return {
-        statusCode: 401,
-        clearCookie: true,
-        body: { msg: 'الجلسة غير صالحة أو انتُهكت 🚨', code: 'REFRESH_REUSE' },
-      };
-    }
+    const newAccessToken = generateAccessToken({ id: decoded.user.id, role: decoded.user.role });
+    const { token: newRefreshToken, hashed: newHash } = generateRefreshToken({ id: decoded.user.id, role: decoded.user.role });
 
-    if (user.isBanned) {
-      return {
-        statusCode: 403,
-        clearCookie: true,
-        body: { msg: 'حسابك محظور 🚫', code: 'BANNED' },
-      };
-    }
-
-    const newAccessToken = generateAccessToken(user);
-    const { token: newRefreshToken, hashed: newHash } = generateRefreshToken(user);
-
+    // ✅ عملية Atomic واحدة: تحقق + تحديث في نفس الـ Query
     const rotated = await User.findOneAndUpdate(
-      { _id: user._id, refreshToken: hashedIncoming },
-      { $set: { refreshToken: newHash, sessionIssuedAt: new Date() } },
+      {
+        _id: decoded.user.id,
+        refreshToken: hashedIncoming,
+        isBanned: { $ne: true },   // ✅ فحص الحظر داخل الـ Query نفسه
+      },
+      {
+        $set: { refreshToken: newHash, sessionIssuedAt: new Date() },
+      },
       { new: true }
     );
 
@@ -277,11 +268,8 @@ exports.refreshLogic = async (refreshToken) => {
       };
     }
 
-    return {
-      statusCode: 200,
-      newRefreshToken,
-      body: { accessToken: newAccessToken },
-    };
+    return { statusCode: 200, newRefreshToken, body: { accessToken: newAccessToken } };
+
   } catch {
     return {
       statusCode: 401,
@@ -346,32 +334,37 @@ exports.getMeLogic = async (userId, page = 1) => {
 
 // ── getPublicProfileLogic ─────────────────────────────────────
 exports.getPublicProfileLogic = async (userId, page = 1) => {
+  // ✅ 1) فحص خفيف وسريع أولاً لحالة المستخدم قبل تشغيل الاستعلامات الثقيلة
+  const userCheck = await userRepository.findById(userId);
+
+  if (!userCheck) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
+  if (userCheck.isBanned) return { statusCode: 403, body: { msg: 'هذا الحساب محظور' } };
+
   const LIMIT = 10;
   const skip = (page - 1) * LIMIT;
 
-  const [user, donations, received, totalRatings, totalDonationsCount, totalReceivedCount] =
+  // ✅ 2) الآن نُشغّل الـ Queries الثقيلة والموازية فقط للمستخدمين الصالحين والأحرار
+  const [donations, received, totalRatings, totalDonationsCount, totalReceivedCount] =
     await Promise.all([
-      userRepository.findById(userId),
-      Item.find({ donor: userId, status: { $ne: 'مخفي' } }).select('title imageUrl status createdAt').sort({ createdAt: -1 }).skip(skip).limit(LIMIT).lean(),
-      Item.find({ bookedBy: userId, status: 'تم التسليم' }).select('title imageUrl status createdAt').sort({ createdAt: -1 }).skip(skip).limit(LIMIT).lean(),
+      Item.find({ donor: userId, status: { $ne: 'مخفي' } })
+        .select('title imageUrl status createdAt').sort({ createdAt: -1 }).skip(skip).limit(LIMIT).lean(),
+      Item.find({ bookedBy: userId, status: 'تم التسليم' })
+        .select('title imageUrl status createdAt').sort({ createdAt: -1 }).skip(skip).limit(LIMIT).lean(),
       Rating.countDocuments({ ratee: userId }),
       Item.countDocuments({ donor: userId, status: { $ne: 'مخفي' } }),
       Item.countDocuments({ bookedBy: userId, status: 'تم التسليم' }),
     ]);
 
-  if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
-  if (user.isBanned) return { statusCode: 403, body: { msg: 'هذا الحساب محظور' } };
-
   return {
     statusCode: 200,
     body: {
       user: {
-        name: user.name,
-        avatar: user.avatar,
-        trustLevel: user.trustLevel ?? 1,
-        isVerifiedStudent: user.isVerifiedStudent,
-        createdAt: user.createdAt,
-        gamification: buildGamificationProfile(user.trustScore, user.totalDonations),
+        name: userCheck.name,
+        avatar: userCheck.avatar,
+        trustLevel: userCheck.trustLevel ?? 1,
+        isVerifiedStudent: userCheck.isVerifiedStudent,
+        createdAt: userCheck.createdAt,
+        gamification: buildGamificationProfile(userCheck.trustScore, userCheck.totalDonations),
       },
       stats: {
         donationsCount: totalDonationsCount,
@@ -495,7 +488,8 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, mimetype) => {
 };
 
 // ── updatePasswordLogic ───────────────────────────────────────
-exports.updatePasswordLogic = async (userId, currentPassword, newPassword) => {
+// services/authService.js — updatePasswordLogic (مُصلَح)
+exports.updatePasswordLogic = async (userId, { currentPassword, newPassword }) => {
   const user = await userRepository.findByIdWithPassword(userId);
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
 
@@ -505,7 +499,6 @@ exports.updatePasswordLogic = async (userId, currentPassword, newPassword) => {
   const isSame = await bcrypt.compare(newPassword, user.password);
   if (isSame) return { statusCode: 400, body: { msg: 'كلمة المرور الجديدة يجب أن تختلف عن الحالية' } };
 
-  // ✅ إصلاح #3: تطبيق الـ BCRYPT_ROUNDS الموحدة من الـ Environment هنا أيضاً
   user.password = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
   user.refreshToken = undefined;
   user.sessionIssuedAt = undefined;

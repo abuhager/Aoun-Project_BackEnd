@@ -26,11 +26,11 @@ const CLEAR_REFRESH_COOKIE_OPTIONS = {
 // ✅ إصلاح: jwt.sign يرفض Mongoose Document — نحوّله لـ plain object
 const _extractPayload = (user) => ({
   user: {
-    id:         user._id.toString(),
+    id:         (user._id ?? user.id)?.toString(), // ← يقبل Mongoose Document وplain object
     role:       user.role,
     trustLevel: user.trustLevel ?? 1,
-    isVerified: user.isVerified,
-    isBanned:   user.isBanned ?? false,
+    isVerified: user.isVerified ?? true,
+    isBanned:   user.isBanned   ?? false,
   },
 });
 
