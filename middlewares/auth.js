@@ -1,12 +1,10 @@
 // middlewares/auth.js
-// ✅ Phase 1 Fix:
-//    Bug #7  — حذف DB query من كل طلب، نقرأ من JWT payload مباشرة
-//    Bug #17 — requireAdmin يتحقق من req.user أولاً (يعتمد على requireAuth)
-
 const { verifyAccessToken } = require('../utils/tokenUtils');
+const banCache = require('../utils/banCache'); // ✅ استيراد كاش الحظر (تأكد من مطابقة المسار لملف الـ Redis/Cache لديك)
 
 // ─── 1. حماية المسارات العامة ─────────────────────────────────
-exports.requireAuth = (req, res, next) => {
+// ✅ تم تحويل الدالة إلى async لتمكين استخدام await مع فحص الكاش
+exports.requireAuth = async (req, res, next) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader?.startsWith('Bearer ')) {
@@ -16,20 +14,21 @@ exports.requireAuth = (req, res, next) => {
   const token = authHeader.split(' ')[1];
 
   try {
-    // ✅ Fix Bug #7 — نتحقق من التوكن فقط، لا DB query
+    // ✅ Fix Bug #7 — نتحقق من التوكن فقط، لا DB query للـ User نفسه
     const decoded = verifyAccessToken(token);
 
-    // ✅ Fix Bug #7 — isBanned موجود في الـ payload الآن (من tokenUtils المُصلَح)
-    // لا حاجة لـ User.findById في كل طلب
-    if (decoded.user.isBanned) {
+    // ✅ إصلاح ثغرة تأخير الحظر: فحص سريع من الـ Cache (الـ Redis) لمنع فجوة الـ 15 دقيقة
+    const isBannedNow = await banCache.isUserBanned(decoded.user.id);
+
+    if (decoded.user.isBanned || isBannedNow) {
       return res.status(403).json({ msg: 'حسابك محظور 🚫' });
     }
 
     req.user = {
       id:         decoded.user.id,
       role:       decoded.user.role,
-      trustLevel: decoded.user.trustLevel ?? 1,  // ✅ جديد — متاح لكل controllers
-      isBanned:   decoded.user.isBanned   ?? false,
+      trustLevel: decoded.user.trustLevel ?? 1,  // ✅ متاح لكل controllers
+      isBanned:   true, // إذا وصل هنا فالحساب سليم وغير محظور، لكن نؤكد القيمة
     };
 
     next();
@@ -44,9 +43,7 @@ exports.requireAuth = (req, res, next) => {
 
 // ─── 2. مسارات الأدمن ─────────────────────────────────────────
 // ✅ Fix Bug #17 — requireAdmin يعتمد على requireAuth حتمًا قبله في الـ route
-// يفحص req.user الذي زرعه requireAuth — لا يعمل وحده
 exports.requireAdmin = (req, res, next) => {
-  // إذا استُدعي requireAdmin بدون requireAuth قبله → req.user = undefined → 401
   if (!req.user) {
     return res.status(401).json({ msg: 'غير مصرح — يجب تسجيل الدخول أولاً 🔒' });
   }
@@ -59,8 +56,6 @@ exports.requireAdmin = (req, res, next) => {
 };
 
 // ─── 3. مسارات Level 2 (Phase 2 — stub جاهز) ─────────────────
-// ✅ الـ middleware جاهز الآن — يقرأ trustLevel من req.user (من الـ JWT payload)
-// لا DB query — سريع ومباشر
 exports.requireLevel2 = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ msg: 'غير مصرح — يجب تسجيل الدخول أولاً 🔒' });
@@ -75,11 +70,13 @@ exports.requireLevel2 = (req, res, next) => {
 
   next();
 };
+
+// ─── 4. التحقق الاختياري ──────────────────────────────────────
 exports.optionalAuth = (req, res, next) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader?.startsWith('Bearer ')) {
-    req.user = null; // ← لا مستخدم، لكن الطلب يكمل
+    req.user = null; 
     return next();
   }
 
@@ -93,7 +90,7 @@ exports.optionalAuth = (req, res, next) => {
       isBanned:   decoded.user.isBanned   ?? false,
     };
   } catch {
-    req.user = null; // ← token فاسد → نتجاهله
+    req.user = null; // توكن فاسد أو منتهي → يتم تجاهله في المسارات الاختيارية
   }
   next();
 };

@@ -1,4 +1,4 @@
-// app.js ✅ النسخة المصحّحة الكاملة
+// app.js — النسخة الآمنة والمصحّحة بالكامل
 const express      = require('express');
 const cors         = require('cors');
 const helmet       = require('helmet');
@@ -39,9 +39,17 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
 // إذا أردت CSP كاملاً لاحقاً، حدّد directives يدوياً
 app.use(
   helmet({
-    crossOriginResourcePolicy:  { policy: 'cross-origin' },
-    contentSecurityPolicy:      false, // ← سنفعّله لاحقاً بـ directives مناسبة
-  })
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      imgSrc: ["'self'", "https://res.cloudinary.com", "data:"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      connectSrc: ["'self'", process.env.API_URL],
+    },
+  },
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+})
 );
 
 // ── CORS ───────────────────────────────────────────────────────
@@ -90,8 +98,10 @@ const _sanitize = (obj) => {
 };
 
 app.use((req, _res, next) => {
-  if (req.body)   _sanitize(req.body);
-  if (req.params) _sanitize(req.params);
+  // ✅ تجنب الاستدعاء على طلبات GET/HEAD التي لا تحمل body
+  if (req.body && Object.keys(req.body).length)   _sanitize(req.body);
+  if (req.params && Object.keys(req.params).length) _sanitize(req.params);
+  if (req.query && Object.keys(req.query).length)   _sanitize(req.query);
   next();
 });
 
@@ -106,13 +116,9 @@ app.use(hpp({
 app.use('/api', globalLimiter);
 
 // ── Health Check ───────────────────────────────────────────────
+// ✅ إصلاح [SEC-04]: منع كشف تفاصيل السيرفر الداخلية والبيئة للعامة بدون حماية الـ limiter
 app.get('/health', (_req, res) => {
-  res.status(200).json({
-    status:    'ok',
-    uptime:    process.uptime(),
-    env:       process.env.NODE_ENV || 'development',
-    timestamp: new Date().toISOString(),
-  });
+  res.status(200).json({ status: 'ok' });
 });
 
 // ── API Routes ─────────────────────────────────────────────────

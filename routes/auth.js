@@ -6,6 +6,7 @@ const { requireAuth }    = require('../middlewares/auth');
 const authController     = require('../controllers/authController');
 const validateObjectId   = require('../middlewares/validateObjectId');
 const validateBody       = require('../middlewares/validateBody');
+const { upload, verifyImageBuffer } = require('../middlewares/upload');
 
 // ✅ إصلاح R1 — استيراد الأسماء الصحيحة الموجودة فعلاً في rateLimiter.js
 const {
@@ -107,7 +108,10 @@ router.post(
 router.put(
   '/me',
   requireAuth,
-  authController.updateMe   // ← يحتوي داخله: upload → verifyImageBuffer → asyncHandler
+  upload.single('avatar'),      
+  verifyImageBuffer,            
+  validateBody('updateMe'),     
+  authController.updateMe       
 );
 
 // تغيير كلمة المرور

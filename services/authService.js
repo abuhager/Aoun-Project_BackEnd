@@ -394,7 +394,7 @@ exports.getPublicProfileLogic = async (userId, page = 1) => {
 };
 
 // ── forgotPasswordLogic ───────────────────────────────────────
-exports.forgotPasswordLogic = async (email) => {
+exports.forgotPasswordLogic = async ({ email }) => {
   const user = await userRepository.findByEmail(email);
 
   // ✅ إصلاح #9: توحيد الرسالة المرتجعة للكل لمنع كشف وجود البريد الإلكتروني (User Enumeration Vuln)

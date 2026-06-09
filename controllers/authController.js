@@ -42,6 +42,13 @@ exports.register = asyncHandler(async (req, res) => {
 // ─── 2. تأكيد الإيميل ─────────────────────────────────────────
 exports.verifyEmail = asyncHandler(async (req, res) => {
   const result = await authService.verifyEmailLogic(req.body);
+
+  // ✅ ضبط الـ cookies بعد التحقق الناجح — مثل login تماماً
+  if (result.statusCode === 200 && result.refreshToken) {
+    res.cookie('refreshToken',   result.refreshToken, REFRESH_COOKIE_OPTIONS);
+    res.cookie('session_active', '1',                 SESSION_ACTIVE_OPTIONS);
+  }
+
   return res.status(result.statusCode).json(result.body);
 });
 
@@ -62,7 +69,12 @@ exports.login = asyncHandler(async (req, res) => {
 
 // ─── 4. بروفايل المستخدم الخاص ────────────────────────────────
 exports.getUserProfile = asyncHandler(async (req, res) => {
-  const result = await authService.getUserProfileLogic(req.user.id);
+  // ✅ إصلاح الخلل #5: التقاط رقم الصفحة من الـ Query وضمان تحويله لرقم صحيحي (أساس 10)
+  const page = parseInt(req.query.page, 10) || 1;
+
+  // تمرير رقم الصفحة للـ Service للاستفادة من الـ Pagination الفعلي
+  const result = await authService.getMeLogic(req.user.id, page); 
+  
   return res.status(result.statusCode).json(result.body);
 });
 
