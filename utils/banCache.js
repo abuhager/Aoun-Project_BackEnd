@@ -1,10 +1,18 @@
 // utils/banCache.js
-// stub مؤقت — يمكن تطويره لاحقاً بـ Redis أو in-memory cache
+// stub مؤقت — جاهز للترقية لـ Redis لاحقاً
+
 const bannedIds = new Set();
 
 module.exports = {
-  add:    (userId) => bannedIds.add(userId.toString()),
-  has:    (userId) => bannedIds.has(userId.toString()),
-  delete: (userId) => bannedIds.delete(userId.toString()),
+  // ── CRUD ──────────────────────────────────────────
+  add:    (userId) => bannedIds.add(String(userId)),
+  delete: (userId) => bannedIds.delete(String(userId)),
   clear:  ()       => bannedIds.clear(),
+
+  // ── فحص الحظر — async جاهزة لـ Redis لاحقاً ──────
+  // ✅ الاسم الذي يستدعيه auth.js
+  isUserBanned: async (userId) => bannedIds.has(String(userId)),
+
+  // ✅ اسم مختصر للاستخدام الداخلي
+  has: (userId) => bannedIds.has(String(userId)),
 };
