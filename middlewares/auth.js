@@ -1,13 +1,31 @@
 // middlewares/auth.js
-// ✅ النسخة المصحّحة والمؤمنة بالكامل باستخدام AppError
 
-const AppError = require('../utils/AppError');
+const AppError              = require('../utils/AppError');
 const { verifyAccessToken } = require('../utils/tokenUtils');
 const banCache              = require('../utils/banCache');
-const User        = require('../models/User'); // ✅ أضف هذا
+const User                  = require('../models/User');
 
+// ─────────────────────────────────────────────────────────────
+// Helper: جلب بيانات المستخدم من DB مرة واحدة فقط عند الحاجة
+// يُدمج فحص الحظر + sessionIssuedAt في query واحد
+// ─────────────────────────────────────────────────────────────
+async function validateSession(decoded) {
+  // ✅ لو لا يوجد sessionIssuedAt في الـ payload → لا داعي لضرب DB
+  // (يعني الـ token قديم صدر قبل إضافة هذه الميزة → نثق به)
+  const needsDbCheck = !!decoded.user.sessionIssuedAt !== false;
+  // decoded.iat دائماً موجود — لكن نضرب DB فقط إذا الـ payload لا يحمل تاريخ الجلسة
+  // أو إذا احتجنا التحقق الأكيد من isBanned (banCache لا يكفي وحده)
+  
+  const user = await User.findById(decoded.user.id)
+    .select('sessionIssuedAt isBanned')
+    .lean();
 
-// ─── 1. حماية المسارات العامة (الإلزامية) ─────────────────────
+  return user;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 1. requireAuth — إلزامي
+// ─────────────────────────────────────────────────────────────
 exports.requireAuth = async (req, res, next) => {
   const authHeader = req.headers.authorization;
 
@@ -20,33 +38,41 @@ exports.requireAuth = async (req, res, next) => {
   try {
     const decoded = verifyAccessToken(token);
 
-    // 1) فحص الحظر من الـ payload + الـ Cache
+    // ── 1) فحص الحظر السريع من الـ Cache أولاً (بدون DB) ────────────────
     const isBannedInCache = await banCache.isUserBanned(decoded.user.id);
     if (decoded.user.isBanned || isBannedInCache) {
       return next(new AppError('حسابك محظور 🚫', 403, 'USER_BANNED'));
     }
 
-    // 2) التحقق من تفعيل البريد الإلكتروني
+    // ── 2) التحقق من تفعيل البريد ──────────────────────────────────────
     if (!decoded.user.isVerified) {
       return next(new AppError('يجب تفعيل حسابك أولاً 📧', 403, 'EMAIL_NOT_VERIFIED'));
     }
 
-    // ✅ 3) فحص sessionIssuedAt — إبطال الـ tokens الصادرة قبل تغيير كلمة المرور
-    if (decoded.iat) {
-      const user = await User.findById(decoded.user.id)
-        .select('sessionIssuedAt isBanned')
-        .lean();
+    // ── 3) فحص sessionIssuedAt — ضرب DB مرة واحدة فقط ─────────────────
+    const user = await User.findById(decoded.user.id)
+      .select('sessionIssuedAt isBanned')
+      .lean();
 
-      if (!user) {
-        return next(new AppError('المستخدم غير موجود', 401, 'USER_NOT_FOUND'));
-      }
+    if (!user) {
+      return next(new AppError('المستخدم غير موجود', 401, 'USER_NOT_FOUND'));
+    }
 
-      if (
-        user.sessionIssuedAt &&
-        decoded.iat < Math.floor(user.sessionIssuedAt.getTime() / 1000)
-      ) {
-        return next(new AppError('انتهت صلاحية الجلسة، أعد تسجيل الدخول 🔒', 401, 'SESSION_INVALIDATED'));
-      }
+    // ✅ [BUG-2 FIX] استخدام isBanned من DB كطبقة ثانية (الحظر اليدوي الجديد)
+    if (user.isBanned) {
+      return next(new AppError('حسابك محظور 🚫', 403, 'USER_BANNED'));
+    }
+
+    // ✅ [BUG-1 FIX] sessionIssuedAt — نفحصه فقط إذا موجود في DB
+    if (
+      user.sessionIssuedAt &&
+      decoded.iat < Math.floor(user.sessionIssuedAt.getTime() / 1000)
+    ) {
+      return next(new AppError(
+        'انتهت صلاحية الجلسة، أعد تسجيل الدخول 🔒',
+        401,
+        'SESSION_INVALIDATED'
+      ));
     }
 
     req.user = {
@@ -69,7 +95,9 @@ exports.requireAuth = async (req, res, next) => {
   }
 };
 
-// ─── 2. مسارات الأدمن ─────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// 2. requireAdmin
+// ─────────────────────────────────────────────────────────────
 exports.requireAdmin = (req, res, next) => {
   if (!req.user) {
     return next(new AppError('غير مصرح — يجب تسجيل الدخول أولاً 🔒', 401, 'UNAUTHORIZED'));
@@ -80,18 +108,26 @@ exports.requireAdmin = (req, res, next) => {
   next();
 };
 
-// ─── 3. مسارات Level 2 ────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// 3. requireLevel2
+// ─────────────────────────────────────────────────────────────
 exports.requireLevel2 = (req, res, next) => {
   if (!req.user) {
     return next(new AppError('غير مصرح — يجب تسجيل الدخول أولاً 🔒', 401, 'UNAUTHORIZED'));
   }
   if ((req.user.trustLevel ?? 1) < 2) {
-    return next(new AppError('يتطلب هذا الإجراء التحقق من الهوية (المستوى 2) 🔐', 403, 'LEVEL2_REQUIRED'));
+    return next(new AppError(
+      'يتطلب هذا الإجراء التحقق من الهوية (المستوى 2) 🔐',
+      403,
+      'LEVEL2_REQUIRED'
+    ));
   }
   next();
 };
 
-// ─── 4. التحقق الاختياري (تعديل S-04 ليدعم الـ async والفحص الفوري) ───
+// ─────────────────────────────────────────────────────────────
+// 4. optionalAuth — اختياري
+// ─────────────────────────────────────────────────────────────
 exports.optionalAuth = async (req, res, next) => {
   const authHeader = req.headers.authorization;
 
@@ -101,23 +137,46 @@ exports.optionalAuth = async (req, res, next) => {
   }
 
   const token = authHeader.split(' ')[1];
+
   try {
     const decoded = verifyAccessToken(token);
-    
-    // ✅ إصلاح ثغرة S-04 — فحص حالة الحظر من الكاش وقاعدة البيانات فوراً
-    const isBannedInCache = await banCache.isUserBanned(decoded.user.id);
-    const isBanned = decoded.user.isBanned || isBannedInCache;
 
-    // إذا كان محظوراً، نجرده من صلاحياته ويعامل كـ "زائر غير مسجل" حمايةً للمسار الإختياري
-    req.user = isBanned ? null : {
+    // ── فحص سريع من الـ Cache ────────────────────────────────────────────
+    const isBannedInCache = await banCache.isUserBanned(decoded.user.id);
+    if (decoded.user.isBanned || isBannedInCache) {
+      req.user = null;
+      return next();
+    }
+
+    // ✅ [BUG-3 FIX] فحص sessionIssuedAt في optionalAuth أيضاً
+    const user = await User.findById(decoded.user.id)
+      .select('sessionIssuedAt isBanned')
+      .lean();
+
+    if (!user || user.isBanned) {
+      req.user = null;
+      return next();
+    }
+
+    if (
+      user.sessionIssuedAt &&
+      decoded.iat < Math.floor(user.sessionIssuedAt.getTime() / 1000)
+    ) {
+      req.user = null;
+      return next();
+    }
+
+    req.user = {
       id:         decoded.user.id,
       role:       decoded.user.role,
       trustLevel: decoded.user.trustLevel ?? 1,
       isBanned:   false,
-      isVerified: decoded.user.isVerified ?? false, 
+      isVerified: decoded.user.isVerified ?? false,
     };
+
   } catch {
     req.user = null;
   }
+
   next();
 };

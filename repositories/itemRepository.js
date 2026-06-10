@@ -9,13 +9,13 @@ exports.findItemDetails = (itemId) =>
     .populate('donor',    'name avatar trustScore isVerifiedStudent trustLevel')
     .populate('bookedBy', 'name avatar')
     .populate('safeHub',  'name address city workingHours')
-    .select('-deliveryOtp -__v');
+    .select('-__v');
 
 // ─── جلب غرض للعمليات (حجز/إلغاء/تسليم) ─────────────────────
 exports.findItemForAction = (itemId) =>
   Item.findById(itemId)
-    .populate('safeHub', 'name address city workingHours')
-    .select('+deliveryOtp');
+    .populate('safeHub', 'name address city workingHours');
+    
 
 // ─── جلب غرض للتعديل ─────────────────────────────────────────
 exports.findItemForUpdate = (itemId, userId) =>

@@ -44,9 +44,11 @@ exports.completeDelivery = asyncHandler(async (req, res) => {
     req.body.confirmationType
   );
 
-  if (result?.status === 'delivered') {
+  // ✅ emit leaderboard فقط عند إتمام التسليم الكامل، وليس عند تأكيد المستلم فقط
+  if (result?.status === 'delivered' || result?.msg?.includes('إتمام')) {
     try {
-getIO().emit('leaderboard:update');
+     getIO().to('leaderboard_subscribers').emit('leaderboard:update');
+
     } catch (_) {}
   }
 

@@ -62,10 +62,10 @@ router.put(
 
 router.put(
   '/complete/:id',
-  requireAuth,
+  requireAuth,             
   validateObjectId('id'),
   validateBody('completeDelivery'),
-  completeDelivery
+  completeDelivery      
 );
 
 router.put(

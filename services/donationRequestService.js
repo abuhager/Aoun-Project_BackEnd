@@ -81,13 +81,14 @@ exports.createRequestLogic = async (body, userId) => {
 exports.getDonationRequestsLogic = async (query, userId) => {
   const page = Math.max(1, parseInt(query.page, 10) || 1);
 
-  // ✅ [FIX-6] maxPageSize من settings بدلاً من hardcoded 20
+  // ✅ [FIX-6] استخدام maxPageSize من الإعدادات
   const settings = await SystemSettings.getCached();
   const maxPageSize = settings.maxPageSize ?? 20;
   const limit = Math.min(maxPageSize, Math.max(1, parseInt(query.limit, 10) || 10));
   const skip = (page - 1) * limit;
 
   const mine = String(query.mine).toLowerCase() === 'true';
+  const includeHistory = String(query.includeHistory).toLowerCase() === 'true'; // خيار إضافي للتحكم
   const filter = {};
 
   if (query.category && query.category !== 'all') filter.category = query.category;
@@ -96,6 +97,12 @@ exports.getDonationRequestsLogic = async (query, userId) => {
 
   if (mine) {
     filter.requester = userId;
+    
+    // ⚠️ [FIX LOGIC-2] إذا لم يطلب المستخدم رؤية التاريخ، نعرض النشط فقط أو نطبق قواعد منطقية
+    if (!includeHistory) {
+        filter.status = 'active';
+        filter.expiresAt = { $gt: new Date() };
+    }
   } else {
     filter.status    = 'active';
     filter.expiresAt = { $gt: new Date() };

@@ -20,8 +20,8 @@ const {
 
 // ✅ إصلاح المسار 3️⃣: Rate Limiter مخصص ومشدد لـ resend-otp لمنع الـ Email Bombing
 const resendLimiter = rateLimit({
-  windowMs: 10 * 60 * 1000,   // 10 دقائق
-  max: 3,                      // 3 طلبات كحد أقصى لكل IP
+  windowMs: 10 * 60 * 1000,
+  max: 3,
   message: {
     msg: 'تجاوزت الحد المسموح لإعادة الإرسال، انتظر 10 دقائق ⛔',
     code: 'RESEND_RATE_LIMITED',
@@ -29,6 +29,22 @@ const resendLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// ✅ [BUG FIX] يمنع "Unexpected end of form" عند إرسال JSON بدون صورة
+// multer/busboy يتحطم إذا شغّلناه على طلب Content-Type: application/json
+// الحل: نشغّله فقط إذا كان الطلب multipart/form-data فعلاً
+const conditionalUpload = (req, res, next) => {
+  const ct = req.headers['content-type'] ?? '';
+  if (ct.includes('multipart/form-data')) {
+    return upload.single('avatar')(req, res, next);
+  }
+  next(); // JSON بدون صورة → تخطى multer بالكامل
+};
+
+const conditionalVerify = (req, res, next) => {
+  if (req.file) return verifyImageBuffer(req, res, next);
+  next(); // لا ملف → لا فحص Magic Bytes
+};
 
 // ══════════════════════════════════════════════
 // Public Routes — لا تحتاج auth
@@ -54,7 +70,7 @@ router.post(
 router.post(
   '/resend-otp',
   resendLimiter,
-  validateBody('verifyEmail'), // إعادة استخدام فحص البودي للتأكد من هيكلية وجود الـ email
+  validateBody('verifyEmail'),
   authController.resendOtp
 );
 
@@ -121,14 +137,14 @@ router.post(
   authController.logout
 );
 
-// تعديل البروفايل (مع رفع صورة)
+// ✅ [FIXED] تعديل البروفايل — conditionalUpload يمنع crash عند JSON بدون صورة
 router.put(
   '/me',
   requireAuth,
-  upload.single('avatar'),      
-  verifyImageBuffer,            
-  validateBody('updateMe'),     
-  authController.updateMe       
+  conditionalUpload,   // ← بدل upload.single('avatar')
+  conditionalVerify,   // ← بدل verifyImageBuffer
+  validateBody('updateMe'),
+  authController.updateMe
 );
 
 // تغيير كلمة المرور

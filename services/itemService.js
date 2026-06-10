@@ -15,7 +15,7 @@ const { uploadToCloudinary } = require('../utils/uploadToCloudinary');
 const notifyUser = require('../utils/notifyUser');
 const { toPublicItem } = require('../dtos/itemDto');
 
-// ─── [FIX-4] دالة مشتركة لفحص الصورة — تُستخدم في createItemLogic وأي مكان آخر ──
+// ─── دالة مشتركة لفحص الصورة ──
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
 
@@ -27,7 +27,7 @@ const validateImageFile = (file) => {
     throw new AppError('حجم الصورة يتجاوز 5MB', 400, 'IMAGE_TOO_LARGE');
 };
 
-// ─── [FIX-4] دالة مشتركة لبناء room name — بدلاً من template literal متكرر ──────
+// ─── دالة مشتركة لبناء اسم الغرفة للسوكيت ──────
 const getUserRoom = (userId) => `user_${userId}`;
 
 const escapeRegex = (str = '') =>
@@ -39,7 +39,6 @@ const escapeRegex = (str = '') =>
 exports.getItemsLogic = async (query) => {
   const page = Math.max(1, parseInt(query.page, 10) || 1);
 
-  // ✅ [FIX-6] limit مسحوب من SystemSettings بدلاً من hardcoded 20
   const settings = await SystemSettings.getCached();
   const maxPageSize = settings.maxPageSize ?? 20;
   const limit = Math.min(maxPageSize, Math.max(1, parseInt(query.limit, 10) || 10));
@@ -58,7 +57,6 @@ exports.getItemsLogic = async (query) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      // ✅ [FIX-A] حُذف -deliveryOtp من select لأنه لم يعد موجوداً
       .select('-waitlist -__v')
       .lean(),
     Item.countDocuments(filter),
@@ -108,7 +106,6 @@ exports.getItemByIdLogic = async (itemId, requesterId) => {
   const item = await itemRepository.findItemDetails(itemId);
   if (!item) throw Object.assign(new Error('الغرض غير موجود'), { status: 404 });
 
-  // ✅ [FIX-A] لا يوجد deliveryOtp لحذفه — الكود مبسَّط
   return item.toObject ? item.toObject() : { ...item };
 };
 
@@ -116,7 +113,6 @@ exports.getItemByIdLogic = async (itemId, requesterId) => {
 // 4. إضافة غرض جديد
 // ─────────────────────────────────────────────────────────────────────────────────
 exports.createItemLogic = async (body, userId, file) => {
-  // ✅ [FIX-3 + FIX-4] فحص الصورة عبر الدالة المشتركة
   validateImageFile(file);
 
   const [user, settings, activeCount, safeHub] = await Promise.all([
@@ -180,28 +176,14 @@ exports.bookItemLogic = async (itemId, userId) => {
     if (item.cancelledBy?.some((id) => id.toString() === userId))
       throw new AppError('لا يمكنك الحجز مجدداً 🛑', 400, 'BOOKING_RETRY_NOT_ALLOWED');
 
-    const settings = await getSettings();
-
-    const activeBookingsCount = await Item.countDocuments({
-      bookedBy: userId,
-      status: 'محجوز',
-    }).session(session);
-
-    const maxQuota = (await User.findById(userId).select('trustLevel').lean())?.trustLevel >= 2
-      ? settings.level2Quota
-      : settings.defaultQuota;
-
-    if (activeBookingsCount >= maxQuota) {
-      throw new AppError(
-        `عذراً، استهلكت الحد الأقصى (${maxQuota}) غرض 🚫`,
-        403,
-        'NO_AVAILABLE_QUOTA'
-      );
+    // ✅ [LOGIC-3] الاعتماد بالكامل على حقل user.quota كمصدر وحيد للحقيقة بدلاً من الحساب من الـ countDocuments
+    const user = await User.findById(userId).select('quota').session(session);
+    if (!user || user.quota <= 0) {
+      throw new AppError('عذراً، لا تملك حصة (Quota) كافية للحجز حالياً 🚫', 403, 'NO_AVAILABLE_QUOTA');
     }
 
-    // ✅ مسار الحجز المباشر
+    // مسار الحجز المباشر
     if (item.status === 'متاح') {
-      // ✅ [FIX-A] حُذف generateOtp بالكامل — لا OTP في الحجز
       const booked = await Item.findOneAndUpdate(
         { _id: itemId, status: 'متاح' },
         {
@@ -215,7 +197,7 @@ exports.bookItemLogic = async (itemId, userId) => {
       ).populate('safeHub', 'name address city workingHours');
 
       if (booked) {
-        // ✅ [FIX-C1] خصم quota ذري مع filter حماية — بدلاً من user.save()
+        // ✅ [FIX-C1] حسم الحصة بشكل ذري ومحمي بفلتر أمان داخل الجلسة
         const updatedUser = await User.findOneAndUpdate(
           { _id: userId, quota: { $gt: 0 } },
           { $inc: { quota: -1 } },
@@ -223,39 +205,35 @@ exports.bookItemLogic = async (itemId, userId) => {
         );
 
         if (!updatedUser) {
-          // لو وصلنا هنا معناه quota = 0 رغم الفحص → race condition نادر
           await session.abortTransaction();
-          session.endSession();
+          try { session.endSession(); } catch (_) {}
           throw new AppError('لا تملك حصة كافية 🚫', 403, 'NO_AVAILABLE_QUOTA');
         }
 
         await session.commitTransaction();
-        session.endSession();
+        try { session.endSession(); } catch (_) {}
 
-        // إشعارات بعد commit — بدون OTP
         triggerBookingNotifications(booked, updatedUser);
         return { status: 'booked', msg: 'تم الحجز بنجاح 🎉' };
       }
 
-      // Concurrency: فشل الحجز — abort ثم Waitlist خارجها
       await session.abortTransaction();
-      session.endSession();
+      try { session.endSession(); } catch (_) {}
       return await handleWaitlistOutside(itemId, userId);
     }
 
-    // الغرض محجوز مسبقاً — abort ثم Waitlist
     await session.abortTransaction();
-    session.endSession();
+    try { session.endSession(); } catch (_) {}
     return await handleWaitlistOutside(itemId, userId);
 
   } catch (err) {
     if (session.inTransaction()) await session.abortTransaction();
-    if (!session.hasEnded) session.endSession();
+    // ✅ [BUG-3 FIX] إغلاق آمن للجلسة عبر كتلة try/catch لمنع مشاكل الخصائص غير الرسمية
+    try { session.endSession(); } catch (_) {}
     throw err;
   }
 };
 
-// ─── دالة مساعدة: إضافة المستخدم لقائمة الانتظار بشكل آمن ───────────────────
 async function handleWaitlistOutside(itemId, userId) {
   const waitlistUpdated = await Item.findOneAndUpdate(
     { _id: itemId, 'waitlist.user': { $ne: userId } },
@@ -270,7 +248,6 @@ async function handleWaitlistOutside(itemId, userId) {
   return { status: 'waitlist', msg: 'تمت إضافتك لقائمة الانتظار ⏳' };
 }
 
-// ─── [FIX-A] دالة الإشعارات — بدون OTP ──────────────────────────────────────
 function triggerBookingNotifications(bookedItem, user) {
   const settings = SystemSettings.getCached();
 
@@ -288,7 +265,6 @@ function triggerBookingNotifications(bookedItem, user) {
       body:   `قام شخص ما بحجز "${bookedItem.title}"`,
       itemId: bookedItem._id,
     }),
-    // ✅ [FIX-6] مدة الاستلام مسحوبة من settings بدلاً من "72 ساعة" hardcoded
     settings.then((s) =>
       fireSendEmail({
         email:   user.email,
@@ -322,7 +298,6 @@ exports.cancelBookingLogic = async (itemId, userId) => {
     throw new AppError('غير مصرح لك', 403, 'FORBIDDEN');
   }
 
-  // الانسحاب من قائمة الانتظار فقط
   if (inWait && !isBooker && !isDonor) {
     await Item.findByIdAndUpdate(item._id, {
       $pull: { waitlist: { user: userId } },
@@ -332,7 +307,6 @@ exports.cancelBookingLogic = async (itemId, userId) => {
 
   const previousBooker = item.bookedBy;
 
-  // ✅ [FIX-C2] تمرير Waitlist داخل Transaction كاملة
   if (item.waitlist?.length > 0) {
     const topWaiting = item.waitlist.slice(0, 3);
 
@@ -349,7 +323,7 @@ exports.cancelBookingLogic = async (itemId, userId) => {
 
         if (!nextValidUser) {
           await session.abortTransaction();
-          session.endSession();
+          try { session.endSession(); } catch (_) {}
           continue;
         }
 
@@ -371,11 +345,10 @@ exports.cancelBookingLogic = async (itemId, userId) => {
 
         if (!updated) {
           await session.abortTransaction();
-          session.endSession();
+          try { session.endSession(); } catch (_) {}
           continue;
         }
 
-        // إعادة quota للمحجوز السابق (إن وُجد)
         if (previousBooker && previousBooker.toString() !== item.donor.toString()) {
           await User.findByIdAndUpdate(
             previousBooker,
@@ -385,9 +358,8 @@ exports.cancelBookingLogic = async (itemId, userId) => {
         }
 
         await session.commitTransaction();
-        session.endSession();
+        try { session.endSession(); } catch (_) {}
 
-        // ✅ إشعارات بعد commit — بدون OTP
         triggerBookingNotifications(updated, nextValidUser);
         notifyUser(previousBooker, {
           type:   'booking_cancelled',
@@ -400,13 +372,13 @@ exports.cancelBookingLogic = async (itemId, userId) => {
 
       } catch (err) {
         if (session.inTransaction()) await session.abortTransaction();
-        if (!session.hasEnded) session.endSession();
+        // ✅ [BUG-3 FIX] إغلاق آمن للجلسة عبر كتلة try/catch لمنع مشاكل الخصائص غير الرسمية
+        try { session.endSession(); } catch (_) {}
         throw err;
       }
     }
   }
 
-  // لا يوجد waitlist — أعِد الغرض لـ "متاح"
   await Item.findByIdAndUpdate(item._id, {
     $set: { status: 'متاح', bookedBy: null, bookedAt: null },
     ...(previousBooker && { $addToSet: { cancelledBy: previousBooker } }),
@@ -420,32 +392,55 @@ exports.cancelBookingLogic = async (itemId, userId) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────────
-// 7. تأكيد استلام المستلم (Recipient Confirm)
+// 7. توجيه وإتمام التسليم الذكي (المستقبل للمُعامل الثالث من الـ Controller)
 // ─────────────────────────────────────────────────────────────────────────────────
+exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
+  // [BUG-1 FIX] توجيه آمن وبناءً على الواجهة المحددة من الطلب
+  if (confirmationType === 'recipient_confirm') {
+    return exports.confirmReceiptLogic(itemId, userId);
+  }
+  if (confirmationType === 'donor_confirm') {
+    return exports.completeDonorDeliveryLogic(itemId, userId);
+  }
+  
+  throw new AppError('نوع التأكيد غير صالح', 400, 'INVALID_CONFIRMATION_TYPE');
+};
+
+// ─── دالة تأكيد الاستلام الخاصة بالمستلم (Recipient Logic) ───
 exports.confirmReceiptLogic = async (itemId, userId) => {
-  const item = await Item.findOne({
-    _id:      itemId,
-    bookedBy: userId,
-    status:   'محجوز',
-    recipientConfirmed: false,
-  });
+  const item = await Item.findById(itemId);
 
-  if (!item) throw new AppError('الغرض غير موجود أو تم تأكيده مسبقاً', 404, 'ITEM_NOT_FOUND');
+  if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+  if (item.status !== 'محجوز') throw new AppError('الغرض غير محجوز حالياً', 400, 'ITEM_NOT_BOOKED');
+  if (item.bookedBy?.toString() !== userId.toString()) throw new AppError('أنت لستَ الحاجز لهذا الغرض', 403, 'NOT_BOOKER');
+  if (item.recipientConfirmed) throw new AppError('لقد أكّدت الاستلام مسبقاً ⏳', 400, 'RECIPIENT_ALREADY_CONFIRMED');
 
-  await Item.findByIdAndUpdate(itemId, {
-    $set: {
-      recipientConfirmed:   true,
-      recipientConfirmedAt: new Date(),
+  const updatedItem = await Item.findOneAndUpdate(
+    {
+      _id: itemId,
+      status: 'محجوز',
+      bookedBy: userId,
+      recipientConfirmed: { $ne: true },
     },
-  });
+    {
+      $set: {
+        recipientConfirmed: true,
+        recipientConfirmedAt: new Date(),
+      },
+    },
+    { new: true }
+  ).lean();
 
-  // ✅ [FIX-2] Socket emit مع logging عند الفشل
+  if (!updatedItem) {
+    throw new AppError('تعذّر تسجيل تأكيد الاستلام — حاول مرة أخرى', 409, 'RECIPIENT_CONFIRM_CONFLICT');
+  }
+
   try {
     const { getIO } = require('../socket');
     getIO().to(getUserRoom(item.donor.toString())).emit('delivery:recipient_confirmed', {
-      itemId:    item._id,
-      title:     item.title,
-      bookedBy:  userId,
+      itemId:   item._id,
+      title:    item.title,
+      bookedBy: userId,
     });
   } catch (socketErr) {
     console.warn('[Socket] فشل إرسال delivery:recipient_confirmed:', socketErr.message);
@@ -461,10 +456,8 @@ exports.confirmReceiptLogic = async (itemId, userId) => {
   return { msg: 'تم تأكيد استلامك ✅ — بانتظار تأكيد المتبرع' };
 };
 
-// ─────────────────────────────────────────────────────────────────────────────────
-// 8. تأكيد تسليم المتبرع (Donor Confirm = إتمام التسليم)
-// ─────────────────────────────────────────────────────────────────────────────────
-exports.completeDeliveryLogic = async (itemId, userId) => {
+// ─── دالة التأكيد النهائي الخاصة بالمتبرع (Donor Logic) ───
+exports.completeDonorDeliveryLogic = async (itemId, userId) => {
   const item = await Item.findOne({
     _id:    itemId,
     donor:  userId,
@@ -472,12 +465,13 @@ exports.completeDeliveryLogic = async (itemId, userId) => {
     recipientConfirmed: true,
   }).populate('bookedBy', 'name email');
 
-  if (!item) throw new AppError('الغرض غير موجود أو لم يؤكد المستلم بعد', 404, 'ITEM_NOT_FOUND');
+  if (!item) {
+    throw new AppError('الغرض غير موجود أو لم يؤكد المستلم بعد أو أنك لست المتبرع الرسمي', 404, 'ITEM_NOT_FOUND');
+  }
 
   const settings = await SystemSettings.getCached();
   const now = new Date();
 
-  // ✅ [FIX-A] حُذف $unset deliveryOtp — لم يعد موجوداً
   await Item.findByIdAndUpdate(itemId, {
     $set: {
       status:           'تم التسليم',
@@ -486,7 +480,6 @@ exports.completeDeliveryLogic = async (itemId, userId) => {
     },
   });
 
-  // مكافأة trustScore للمتبرع
   await User.findByIdAndUpdate(userId, {
     $inc: {
       trustScore: settings.trustScorePerDonation ?? 10,
@@ -494,7 +487,19 @@ exports.completeDeliveryLogic = async (itemId, userId) => {
     },
   });
 
-  // إشعار المستلم
+  // ✅ [LOGIC-1 FIX] إطلاق حدث السوكيت الحاسم لإعلام المستلم فوراً باكتمال العملية وتحديث واجهته
+  try {
+    const { getIO } = require('../socket');
+    getIO()
+      .to(getUserRoom(item.bookedBy._id.toString()))
+      .emit('delivery:completed', {
+        itemId:  item._id,
+        message: `تم تأكيد تسليم "${item.title}" 🎉`,
+      });
+  } catch (socketErr) {
+    console.warn('[Socket] فشل إرسال delivery:completed:', socketErr.message);
+  }
+
   notifyUser(item.bookedBy._id, {
     type:   'delivery_completed',
     title:  'تم إتمام التسليم 🎉',
@@ -502,7 +507,6 @@ exports.completeDeliveryLogic = async (itemId, userId) => {
     itemId: item._id,
   }).catch((err) => console.warn('[Notify] فشل إشعار إتمام التسليم:', err.message));
 
-  // إيميل تأكيد للمستلم
   fireSendEmail({
     email:   item.bookedBy.email,
     subject: 'تم إتمام التسليم 🎉',
@@ -529,7 +533,6 @@ exports.deleteItemLogic = async (itemId, userId, isAdmin = false) => {
   if (!isAdmin && item.status === 'محجوز')
     throw new AppError('لا يمكن حذف غرض محجوز — يرجى إلغاء الحجز أولاً', 400, 'ITEM_IS_BOOKED');
 
-  // إشعار المستلم إن وُجد
   if (item.bookedBy) {
     notifyUser(item.bookedBy._id, {
       type:   'item_deleted',
@@ -538,14 +541,12 @@ exports.deleteItemLogic = async (itemId, userId, isAdmin = false) => {
       itemId: item._id,
     }).catch((err) => console.warn('[Notify] فشل إشعار الحذف:', err.message));
 
-    // ✅ [FIX-5] fireSendEmail مع .catch() — لا يبتلع الخطأ صامتاً
     fireSendEmail({
       email:   item.bookedBy.email,
       subject: 'تنبيه: تم حذف غرض محجوز',
       message: `<div dir="rtl"><p>تم حذف "<b>${item.title}</b>" الذي كنت قد حجزته.</p></div>`,
     }).catch((err) => console.error('[Email] فشل إرسال إشعار حذف الغرض:', err.message));
 
-    // إعادة quota للمستلم
     await User.findByIdAndUpdate(item.bookedBy._id, { $inc: { quota: 1 } });
   }
 
