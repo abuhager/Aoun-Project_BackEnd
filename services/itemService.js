@@ -10,7 +10,6 @@ const itemRepository = require('../repositories/itemRepository');
 const AppError = require('../utils/AppError');
 const SafeHub = require('../models/SafeHub');
 
-
 const { generateOtp } = require('../utils/otp');
 const { fireSendEmail } = require('../utils/sendEmail');
 const { uploadToCloudinary } = require('../utils/uploadToCloudinary');
@@ -27,9 +26,14 @@ const restoreQuota = async (userId, amount = 1, session = null) => {
 
 const getUserRoom = (userId) => `user_${userId}`;
 
+// [A-1] تم تعديل جلب الـ limit ليعتمد على الإعدادات المخزنة كاش أو الافتراضية
 exports.getItemsLogic = async (query) => {
   const page = Math.max(1, parseInt(query.page, 10) || 1);
-  const limit = Math.min(20, Math.max(1, parseInt(query.limit, 10) || 10));
+  
+  const settings = await SystemSettings.getCached();
+  const maxPageSize = settings.maxPageSize ?? 20;
+  const limit = Math.min(maxPageSize, Math.max(1, parseInt(query.limit, 10) || 10));
+  
   const skip = (page - 1) * limit;
 
   const filter = { status: 'متاح' };
@@ -95,9 +99,20 @@ exports.getItemByIdLogic = async (itemId, requesterId) => {
   return obj;
 };
 
+// [L-3] إضافة فحص الميم تايب وحجم الصورة لغرض جديد لحماية الخادم و Cloudinary
 exports.createItemLogic = async (body, userId, file) => {
   if (!file) {
     throw new AppError('الصورة مطلوبة', 400, 'IMAGE_REQUIRED');
+  }
+
+  const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+  if (!ALLOWED_TYPES.includes(file.mimetype)) {
+    throw new AppError('نوع الصورة غير مدعوم (JPEG/PNG/WebP فقط)', 400, 'INVALID_IMAGE_TYPE');
+  }
+
+  const MAX_SIZE = 5 * 1024 * 1024;
+  if (file.size > MAX_SIZE) {
+    throw new AppError('حجم الصورة يتجاوز 5MB', 400, 'IMAGE_TOO_LARGE');
   }
 
   const [user, settings, activeCount, safeHub] = await Promise.all([
@@ -135,7 +150,7 @@ exports.createItemLogic = async (body, userId, file) => {
     throw new AppError(
       `لا يمكنك نشر أكثر من ${maxItems} غرض نشط في نفس الوقت`,
       429,
-      'MAX_ACTIVE_ITEMS_REACHED'
+      `MAX_ACTIVE_ITEMS_REACHED`
     );
   }
 
@@ -159,6 +174,7 @@ exports.createItemLogic = async (body, userId, file) => {
   };
 };
 
+// [C-1] [L-1] حماية الـ Quota من الـ Race Condition بالاعتماد على الحسم الذري findOneAndUpdate مع فلاتر الأمان
 exports.bookItemLogic = async (itemId, userId) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -173,10 +189,9 @@ exports.bookItemLogic = async (itemId, userId) => {
       throw new AppError('لا يمكنك الحجز مجدداً 🛑', 400, 'BOOKING_RETRY_NOT_ALLOWED');
 
     const settings = await getSettings();
-    const user = await User.findById(userId).session(session);
-    if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
-
-    const maxQuota = user.trustLevel >= 2 ? settings.level2Quota : settings.defaultQuota;
+    
+    // فحص عدد الحجوزات النشطة أولاً لضمان عدم تجاوز السقف العام
+    const maxQuota = item.trustLevel >= 2 ? settings.level2Quota : settings.defaultQuota;
     const activeBookingsCount = await Item.countDocuments({
       bookedBy: userId,
       status: 'محجوز',
@@ -190,8 +205,19 @@ exports.bookItemLogic = async (itemId, userId) => {
       );
     }
 
-    // ✅ مسار الحجز المباشر
+    // مسار الحجز المباشر
     if (item.status === 'متاح') {
+      // تعديل ذري لحسم الحصة من قاعدة البيانات مباشرة مع شرط أمان quota > 0
+      const updatedUser = await User.findOneAndUpdate(
+        { _id: userId, quota: { $gt: 0 } },
+        { $inc: { quota: -1 } },
+        { session, new: true }
+      );
+
+      if (!updatedUser) {
+        throw new AppError(`عذراً، لا تملك حصة كافية 🚫`, 403, 'NO_AVAILABLE_QUOTA');
+      }
+
       const newOtp = generateOtp();
       const booked = await Item.findOneAndUpdate(
         { _id: itemId, status: 'متاح' },
@@ -207,30 +233,25 @@ exports.bookItemLogic = async (itemId, userId) => {
       ).populate('safeHub', 'name address city workingHours');
 
       if (booked) {
-        // ✅ نجاح الحجز — commit أولاً ثم Waitlist خارج الـ Transaction
-        user.quota = Math.max(0, maxQuota - activeBookingsCount - 1);
-        await user.save({ session });
         await session.commitTransaction();
         session.endSession();
 
-        triggerBookingNotifications(booked, user, newOtp);
+        triggerBookingNotifications(booked, updatedUser, newOtp);
         return { status: 'booked', msg: 'تم الحجز بنجاح 🎉' };
       }
 
-      // ✅ Concurrency: فشل الحجز — abort أولاً ثم Waitlist خارجها
+      // Concurrency: في حال حُجز من مستخدم آخر بنفس اللحظة، نتراجع عن المعاملة
       await session.abortTransaction();
       session.endSession();
-      // handleWaitlistOutside تُلقي خطأها الخاص — لا catch يعترضها هنا
       return await handleWaitlistOutside(itemId, userId);
     }
 
-    // ✅ الغرض محجوز مسبقاً — abort ثم Waitlist
+    // الغرض محجوز مسبقاً، نتوجه مباشرة لقائمة الانتظار خارج الـ Transaction
     await session.abortTransaction();
     session.endSession();
     return await handleWaitlistOutside(itemId, userId);
 
   } catch (err) {
-    // ✅ abort فقط إذا الـ session لا تزال نشطة
     if (session.inTransaction()) {
       await session.abortTransaction();
     }
@@ -241,7 +262,6 @@ exports.bookItemLogic = async (itemId, userId) => {
   }
 };
 
-// ─── دالة مساعدة لإضافة المستخدم لقائمة الانتظار بشكل آمن وعازل ────────────────
 async function handleWaitlistOutside(itemId, userId) {
   const waitlistUpdated = await Item.findOneAndUpdate(
     { _id: itemId, 'waitlist.user': { $ne: userId } },
@@ -259,7 +279,6 @@ async function handleWaitlistOutside(itemId, userId) {
   };
 }
 
-// ─── دالة مساعدة للتعامل مع الإشعارات الخلفية ──────────────────────────────────
 function triggerBookingNotifications(bookedItem, user, otpCode) {
   const hubSection = bookedItem.safeHub
     ? `<hr/><p>📍 <b>نقطة التسليم:</b> ${bookedItem.safeHub.name}</p>
@@ -289,7 +308,7 @@ function triggerBookingNotifications(bookedItem, user, otpCode) {
   ]).catch(err => console.error('Error sending booking notifications:', err));
 }
 
-// ─── 6. إلغاء الحجز ──────────────────────────────────────────
+// [C-2] إلغاء الحجز وتمرير الدور للمستند في الانتظار بالكامل تحت غطاء الـ Database Session / Transaction
 exports.cancelBookingLogic = async (itemId, userId) => {
   const item = await itemRepository.findItemForAction(itemId);
 
@@ -305,94 +324,107 @@ exports.cancelBookingLogic = async (itemId, userId) => {
     throw new AppError('غير مصرح لك', 403, 'FORBIDDEN');
   }
 
-  // ✅ الانسحاب من قائمة الانتظار فقط — بدون إعادة quota
-  // لأن دخول waitlist لا يستهلك quota في المنطق الجديد
   if (inWait && !isBooker && !isDonor) {
     await Item.findByIdAndUpdate(item._id, {
       $pull: { waitlist: { user: userId } },
     });
-
     return { msg: 'تم انسحابك من قائمة الانتظار 🚶‍♂️' };
   }
 
   const previousBooker = item.bookedBy;
 
-  // ✅ يوجد waitlist — مرّر الدور لأول مستخدم صالح
   if (item.waitlist?.length > 0) {
     const topWaiting = item.waitlist.slice(0, 3);
 
     for (const waiting of topWaiting) {
-      const nextValidUser = await User.findOneAndUpdate(
-        { _id: waiting.user, quota: { $gt: 0 } },
-        { $inc: { quota: -1 } },
-        { new: true }
-      );
+      const session = await mongoose.startSession();
+      session.startTransaction();
 
-      if (!nextValidUser) {
-        await Item.findByIdAndUpdate(item._id, {
-          $pull: { waitlist: { user: waiting.user } },
-        });
-        continue;
-      }
+      try {
+        const nextValidUser = await User.findOneAndUpdate(
+          { _id: waiting.user, quota: { $gt: 0 } },
+          { $inc: { quota: -1 } },
+          { session, new: true }
+        );
 
-      const newOtp = generateOtp();
+        if (!nextValidUser) {
+          // إذا لم يمتلك حصة، نسحبه من الويت لست داخل الجلسة ونكمل الحلقة
+          await Item.findByIdAndUpdate(item._id, {
+            $pull: { waitlist: { user: waiting.user } },
+          }, { session });
+          await session.commitTransaction();
+          session.endSession();
+          continue;
+        }
 
-      const updated = await Item.findOneAndUpdate(
-        {
-          _id: item._id,
-          'waitlist.user': nextValidUser._id,
-        },
-        {
-          $set: {
-            status: 'محجوز',
-            bookedBy: nextValidUser._id,
-            deliveryOtp: newOtp,
-            bookedAt: new Date(),
-            recipientConfirmed: false,
-            recipientConfirmedAt: null,
-            donorConfirmed: false,
-            donorConfirmedAt: null,
+        const newOtp = generateOtp();
+
+        const updated = await Item.findOneAndUpdate(
+          {
+            _id: item._id,
+            'waitlist.user': nextValidUser._id,
           },
-          $addToSet: { cancelledBy: previousBooker },
-          $pull: { waitlist: { user: nextValidUser._id } },
-        },
-        { new: true }
-      );
+          {
+            $set: {
+              status: 'محجوز',
+              bookedBy: nextValidUser._id,
+              deliveryOtp: newOtp,
+              bookedAt: new Date(),
+              recipientConfirmed: false,
+              recipientConfirmedAt: null,
+              donorConfirmed: false,
+              donorConfirmedAt: null,
+            },
+            $addToSet: { cancelledBy: previousBooker },
+            $pull: { waitlist: { user: nextValidUser._id } },
+          },
+          { session, new: true }
+        );
 
-      if (!updated) {
-        await User.findByIdAndUpdate(nextValidUser._id, { $inc: { quota: 1 } });
-        continue;
+        if (!updated) {
+          await session.abortTransaction();
+          session.endSession();
+          continue;
+        }
+
+        if (previousBooker) {
+          await User.findByIdAndUpdate(previousBooker, { $inc: { quota: 1 } }, { session });
+        }
+
+        await session.commitTransaction();
+        session.endSession();
+
+        // إشعارات آمنة بعد إتمام الـ commit الناجح
+        await Promise.all([
+          notifyUser(nextValidUser._id, {
+            type: 'waitlist_promoted',
+            title: 'وصل دورك! 🔔',
+            body: `أصبح "${item.title}" محجوزاً لك`,
+            itemId: item._id,
+          }),
+          fireSendEmail({
+            email: nextValidUser.email,
+            subject: 'الدور وصلك في عون 🎉',
+            message: `
+              <div dir="rtl">
+                <p>أصبح الغرض <b>${item.title}</b> محجوزاً لك الآن!</p>
+                <p>🔑 رمز الاستلام: <b style="font-size:1.4em">${newOtp}</b></p>
+                <p>⏱️ لديك <b>72 ساعة</b> لإتمام الاستلام</p>
+              </div>
+            `,
+          }),
+        ]).catch(err => console.error('[Notification Error] Waitlist promotion:', err.message));
+
+        return { msg: 'تم إلغاء الحجز وتمرير الدور للشخص التالي 🔄' };
+      } catch (e) {
+        await session.abortTransaction();
+        session.endSession();
+        throw e;
       }
-
-      if (previousBooker) {
-        await User.findByIdAndUpdate(previousBooker, { $inc: { quota: 1 } });
-      }
-
-      await Promise.all([
-        notifyUser(nextValidUser._id, {
-          type: 'waitlist_promoted',
-          title: 'وصل دورك! 🔔',
-          body: `أصبح "${item.title}" محجوزاً لك`,
-          itemId: item._id,
-        }),
-        fireSendEmail({
-          email: nextValidUser.email,
-          subject: 'الدور وصلك في عون 🎉',
-          message: `
-            <div dir="rtl">
-              <p>أصبح الغرض <b>${item.title}</b> محجوزاً لك الآن!</p>
-              <p>🔑 رمز الاستلام: <b style="font-size:1.4em">${newOtp}</b></p>
-              <p>⏱️ لديك <b>72 ساعة</b> لإتمام الاستلام</p>
-            </div>
-          `,
-        }),
-      ]);
-
-      return { msg: 'تم إلغاء الحجز وتمرير الدور للشخص التالي 🔄' };
     }
   }
 
-  // ✅ لا يوجد waitlist صالح — أعد الغرض متاحاً
+  // في حال لا توجد قائمة انتظار صالحة، يرجع الغرض متاحاً للكل
   await Item.findByIdAndUpdate(item._id, {
     $set: {
       status: 'متاح',
@@ -421,7 +453,7 @@ exports.cancelBookingLogic = async (itemId, userId) => {
   return { msg: 'تم إلغاء الحجز والقطعة متاحة الآن ✅' };
 };
 
-// ─── 7. إتمام التسليم ─────────────────────────────────────────
+// [L-2] [A-2] معالجة الـ Socket emit لتسجيل التحذيرات بدون ابتلاع الخطأ صامتاً مع الاستفادة من الكاش الموحد للإعدادات
 exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
   if (!['recipient_confirm', 'donor_confirm'].includes(confirmationType)) {
     throw new AppError('نوع التأكيد غير صحيح', 400, 'INVALID_CONFIRMATION_TYPE');
@@ -441,9 +473,7 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
     throw new AppError('الغرض غير محجوز حالياً', 400, 'ITEM_NOT_BOOKED');
   }
 
-  // ══════════════════════════════════════════════════════════════
   // 1) المستلم يؤكد الاستلام
-  // ══════════════════════════════════════════════════════════════
   if (confirmationType === 'recipient_confirm') {
     if (item.bookedBy?.toString() !== userId.toString()) {
       throw new AppError('أنت لستَ الحاجز لهذا الغرض', 403, 'NOT_BOOKER');
@@ -479,7 +509,6 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
 
     try {
       const { getIO } = require('../socket/socketHandler');
-
       getIO()
         .to(`user_${item.donor.toString()}`)
         .emit('delivery:recipient_confirmed', {
@@ -488,7 +517,9 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
           bookedBy: item.bookedBy,
           msg: 'قام المستلم بتأكيد الاستلام، بانتظار تأكيدك النهائي.',
         });
-    } catch (_) {}
+    } catch (socketErr) {
+      console.warn('[Socket] فشل إرسال delivery:recipient_confirmed:', socketErr.message);
+    }
 
     await notifyUser(item.donor, {
       type: 'recipient_confirmed_receipt',
@@ -503,9 +534,7 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
     };
   }
 
-  // ══════════════════════════════════════════════════════════════
   // 2) المتبرع يؤكد التسليم النهائي
-  // ══════════════════════════════════════════════════════════════
   if (item.donor?.toString() !== userId.toString()) {
     throw new AppError('أنت لستَ المتبرع لهذا الغرض', 403, 'NOT_DONOR');
   }
@@ -552,6 +581,7 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
     );
   }
 
+  // توحيد نمط جلب الثوابت من الـ Cached settings دفعة واحدة
   const settings = await SystemSettings.getCached();
   const quotaReward = settings.donorQuotaReward ?? 1;
   const trustScorePerDonation = settings.trustScorePerDonation ?? 5;
@@ -581,7 +611,9 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
         title: item.title,
         msg: 'تم تأكيد التسليم النهائي بنجاح',
       });
-  } catch (_) {}
+  } catch (socketErr) {
+    console.warn('[Socket] فشل إرسال delivery:completed:', socketErr.message);
+  }
 
   return {
     status: 'delivered',
@@ -589,8 +621,7 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
   };
 };
 
-// services/itemService.js
-// ─── 8. تعديل غرض ────────────────────────────────────────────
+// [L-3] إضافة فحص الميم تايب وحجم الصورة لـ updateItemLogic أيضاً قبل تحويل البافر لـ Cloudinary
 exports.updateItemLogic = async (itemId, userId, updateData, file) => {
   const item = await itemRepository.findItemForUpdate(itemId, userId);
 
@@ -610,7 +641,6 @@ exports.updateItemLogic = async (itemId, userId, updateData, file) => {
     );
   }
 
-  // ✅ الأفضل منع تعديل الغرض بعد حجزه لتفادي تغيير نقطة التسليم/الوصف أثناء العملية
   if (item.status === 'محجوز') {
     throw new AppError(
       'لا يمكن تعديل غرض محجوز حالياً',
@@ -645,6 +675,16 @@ exports.updateItemLogic = async (itemId, userId, updateData, file) => {
   }
 
   if (file) {
+    const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!ALLOWED_TYPES.includes(file.mimetype)) {
+      throw new AppError('نوع الصورة غير مدعوم (JPEG/PNG/WebP فقط)', 400, 'INVALID_IMAGE_TYPE');
+    }
+
+    const MAX_SIZE = 5 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      throw new AppError('حجم الصورة يتجاوز 5MB', 400, 'IMAGE_TOO_LARGE');
+    }
+
     if (item.cloudinaryId) {
       await cloudinary.uploader.destroy(item.cloudinaryId).catch(() => null);
     }
@@ -686,7 +726,7 @@ exports.updateItemLogic = async (itemId, userId, updateData, file) => {
   };
 };
 
-// ─── 9. حذف غرض ──────────────────────────────────────────────
+// [A-3] إضافة catch للإمساك بأخطاء الـ Email Promise المتطاير لضمان تسجيل المشاكل إن وُجدت بدون كراش
 exports.deleteItemLogic = async (itemId, userId, userRole) => {
   const item = await Item.findById(itemId);
 
@@ -701,7 +741,6 @@ exports.deleteItemLogic = async (itemId, userId, userRole) => {
     throw new AppError('غير مصرح لك بحذف هذا الغرض', 403, 'FORBIDDEN_DELETE_ITEM');
   }
 
-  // ✅ لا نحذف السجل التاريخي بعد التسليم
   if (item.status === 'تم التسليم') {
     throw new AppError(
       'لا يمكن حذف غرض تم تسليمه — يُحفظ كسجل دائم في النظام 🔒',
@@ -714,11 +753,9 @@ exports.deleteItemLogic = async (itemId, userId, userRole) => {
     await cloudinary.uploader.destroy(item.cloudinaryId).catch(() => null);
   }
 
-  // ✅ إذا كان الغرض محجوزاً نرجّع quota للمستلم ونبلّغه
   if (item.status === 'محجوز' && item.bookedBy) {
     await Promise.all([
       User.findByIdAndUpdate(item.bookedBy, { $inc: { quota: 1 } }),
-      // ✅ عقوبة فقط على المالك إذا حذف غرضاً بعد حجزه
       isOwner
         ? User.findByIdAndUpdate(item.donor, { $inc: { trustScore: -3 } })
         : Promise.resolve(),
@@ -744,7 +781,9 @@ exports.deleteItemLogic = async (itemId, userId, userRole) => {
             <p>تم استرجاع حصتك تلقائياً 💚</p>
           </div>
         `,
-      });
+      }).catch(err => 
+        console.error('[Email] فشل إرسال إشعار حذف الغرض المحجوز للمستلم:', err.message)
+      );
     }
   }
 
