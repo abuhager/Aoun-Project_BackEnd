@@ -304,17 +304,40 @@ exports.loginLogic = async ({ email, password }) => {
     const settings = await SystemSettings.getCached();
     const otpExpiryMinutes = settings?.otpExpiryMinutes ?? 10;
 
-    const rawOtp = generateOtp();
+    // ✅ إصلاح #2: فحص Cooldown هنا أيضاً لمنع OTP flooding عبر /login
+    const COOLDOWN_MS    = 60 * 1000;
+    const totalExpiryMs  = otpExpiryMinutes * 60 * 1000;
+    const hasActiveOtp   = user.verificationOtpExpiry &&
+      user.verificationOtpExpiry.getTime() - Date.now() > (totalExpiryMs - COOLDOWN_MS);
+
+    if (hasActiveOtp) {
+      return {
+        statusCode: 403,
+        body: {
+          msg: 'حسابك غير مفعّل — تحقق من بريدك، الرمز المُرسل لا يزال صالحاً ⏳',
+          code: 'EMAIL_NOT_VERIFIED',
+          email: user.email,
+        },
+      };
+    }
+
+    // لا يوجد رمز نشط أو انتهت صلاحيته → أصدر رمزاً جديداً
+    const rawOtp  = generateOtp();
     const otpHash = hashOtp(rawOtp);
-    const otpExpiry = new Date(Date.now() + otpExpiryMinutes * 60 * 1000);
+    const otpExpiry = new Date(Date.now() + totalExpiryMs);
 
     await userRepository.updateUser(user._id, {
-      verificationOtp: otpHash,
+      verificationOtp:       otpHash,
       verificationOtpExpiry: otpExpiry,
-      otpAttempts: 0,
+      otpAttempts:           0,
     });
 
-    await emailService.sendVerificationEmail(email, rawOtp, user.name, await isUniversityEmail(email));
+    await emailService.sendVerificationEmail(
+      email,
+      rawOtp,
+      user.name,
+      await isUniversityEmail(email)
+    );
 
     return {
       statusCode: 403,
@@ -326,6 +349,7 @@ exports.loginLogic = async ({ email, password }) => {
     };
   }
 
+  // ... بقية loginLogic كما هي بدون تغيير
   const beforeLevel = user.trustLevel ?? 1;
   const beforeQuota = user.quota ?? 2;
   await _upgradeStudentTrust(user);
@@ -333,8 +357,8 @@ exports.loginLogic = async ({ email, password }) => {
   if (user.trustLevel !== beforeLevel || user.quota !== beforeQuota || user.isVerifiedStudent) {
     await userRepository.updateUser(user._id, {
       isVerifiedStudent: user.isVerifiedStudent,
-      trustLevel: user.trustLevel,
-      quota: user.quota,
+      trustLevel:        user.trustLevel,
+      quota:             user.quota,
     });
   }
 
@@ -342,7 +366,7 @@ exports.loginLogic = async ({ email, password }) => {
   const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(user);
 
   await userRepository.updateUser(user._id, {
-    refreshToken: hashedRefresh,
+    refreshToken:    hashedRefresh,
     sessionIssuedAt: new Date(),
   });
 
@@ -350,7 +374,7 @@ exports.loginLogic = async ({ email, password }) => {
     statusCode: 200,
     refreshToken,
     body: {
-      msg: 'مرحباً بعودتك 👋',
+      msg:  'مرحباً بعودتك 👋',
       user: buildSafeUser(user),
       accessToken,
     },

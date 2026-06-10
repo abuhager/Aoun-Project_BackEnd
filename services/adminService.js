@@ -263,8 +263,14 @@ exports.promoteToLevel2 = async (targetId, adminId, reason = null, adminNote = n
     throw new AppError('لا يمكن ترقية مستخدم محظور', 403, 'USER_BANNED');
   }
 
-  if (user.trustLevel >= 2) {
-    throw new AppError('المستخدم في المستوى 2 بالفعل ✅', 400, 'ALREADY_LEVEL2');
+  // ✅ إصلاح: الترقية اليدوية من الأدمن تعمل فقط من 1 إلى 2
+  // المستويات 3 و4 تُكتسب تلقائياً (Phone/Student Verification)
+  if (user.trustLevel !== 1) {
+    throw new AppError(
+      `لا يمكن الترقية اليدوية — مستوى المستخدم الحالي هو ${user.trustLevel}`,
+      400,
+      'MANUAL_PROMOTE_RESTRICTED'
+    );
   }
 
   const updated = await userRepository.setTrustLevel(targetId, 2);
@@ -278,8 +284,10 @@ exports.promoteToLevel2 = async (targetId, adminId, reason = null, adminNote = n
     reason: reason ?? 'ترقية يدوية',
     adminNote: adminNote ?? null,
     meta: {
-      targetName: user.name,
+      targetName:  user.name,
       targetEmail: user.email ?? null,
+      fromLevel:   user.trustLevel, // ✅ أضف للـ audit log
+      toLevel:     2,
     },
   });
 
@@ -293,10 +301,11 @@ exports.demoteToLevel1 = async (targetId, adminId, reason = null, adminNote = nu
     throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
   }
 
-  if (user.trustLevel < 2) {
+  if (user.trustLevel === 1) {
     throw new AppError('المستخدم في المستوى 1 بالفعل', 400, 'ALREADY_LEVEL1');
   }
 
+  // ✅ إصلاح: التخفيض اليدوي يُعيد دائماً إلى 1 بغض النظر عن المستوى الحالي
   const updated = await userRepository.setTrustLevel(targetId, 1);
 
   await adminRepo.logAdminAction({
@@ -308,8 +317,10 @@ exports.demoteToLevel1 = async (targetId, adminId, reason = null, adminNote = nu
     reason: reason ?? 'تخفيض يدوي',
     adminNote: adminNote ?? null,
     meta: {
-      targetName: user.name,
+      targetName:  user.name,
       targetEmail: user.email ?? null,
+      fromLevel:   user.trustLevel, // ✅ أضف للـ audit log
+      toLevel:     1,
     },
   });
 
