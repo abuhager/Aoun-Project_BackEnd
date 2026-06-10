@@ -1,7 +1,9 @@
 // utils/tokenUtils.js
-// ✅ إصلاح الثغرة #1: إضافة CLEAR_REFRESH_COOKIE_OPTIONS الناقص
+// ✅ النسخة المحدثة والمحمية بالكامل بعد إزالة تشفير الهاش المحتجز داخلياً
 const jwt    = require('jsonwebtoken');
-const crypto = require('crypto');
+
+// ✅ إصلاح D-02: استيراد دالة التشفير الموحدة من ملف الـ cryptoUtils المخصص لهيكل المشروع
+const { hashToken } = require('./cryptoUtils');
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -10,11 +12,10 @@ const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
   secure:   isProduction,
   sameSite: isProduction ? 'none' : 'lax',
-  maxAge:   7 * 24 * 60 * 60 * 1000, // 7 أيام
+  maxAge:   7 * 24 * 60 * 60 * 1000, 
   path:     '/',
 };
 
-// ✅ نفس الإعدادات بدون maxAge — لمسح الـ Cookie عند الـ logout
 const CLEAR_REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
   secure:   isProduction,
@@ -23,10 +24,9 @@ const CLEAR_REFRESH_COOKIE_OPTIONS = {
 };
 
 // ── استخرج فقط الحقول الضرورية كـ plain object ──────────────
-// ✅ إصلاح: jwt.sign يرفض Mongoose Document — نحوّله لـ plain object
 const _extractPayload = (user) => ({
   user: {
-    id:         (user._id ?? user.id)?.toString(), // ← يقبل Mongoose Document وplain object
+    id:         (user._id ?? user.id)?.toString(), 
     role:       user.role,
     trustLevel: user.trustLevel ?? 1,
     isVerified: user.isVerified ?? true,
@@ -43,8 +43,9 @@ const generateRefreshToken = (user) => {
   const token  = jwt.sign(_extractPayload(user), process.env.JWT_REFRESH_SECRET, {
     expiresIn: process.env.JWT_REFRESH_EXPIRE || '7d',
   });
-  // نخزّن hash الـ token في DB — ليس الـ token الأصلي
-  const hashed = crypto.createHash('sha256').update(token).digest('hex');
+  
+  // ✅ إصلاح D-02: استبدال الكود الداخلي المكرر بـ hashToken المركزية والآمنة
+  const hashed = hashToken(token);
   return { token, hashed };
 };
 

@@ -1,4 +1,4 @@
-// routes/auth.js ✅ النسخة المصحّحة الكاملة
+// routes/auth.js ✅ النسخة المصحّحة الكاملة والجاهزة للإنتاج والتوزيع المركزي
 const express = require('express');
 const router  = express.Router();
 
@@ -7,15 +7,28 @@ const authController     = require('../controllers/authController');
 const validateObjectId   = require('../middlewares/validateObjectId');
 const validateBody       = require('../middlewares/validateBody');
 const { upload, verifyImageBuffer } = require('../middlewares/upload');
+const rateLimit          = require('express-rate-limit');
 
-// ✅ إصلاح R1 — استيراد الأسماء الصحيحة الموجودة فعلاً في rateLimiter.js
+// استيراد المحدِّدات الصحيحة والمؤكدة من الـ Middleware
 const {
-  loginLimiter,          // كان: authLimiter    ← غير موجود
-  globalLimiter,         // كان: refreshLimiter ← غير موجود
+  loginLimiter,
+  globalLimiter,
   registerLimiter,
   forgotPasswordLimiter,
   otpLimiter,
 } = require('../middlewares/rateLimiter');
+
+// ✅ إصلاح المسار 3️⃣: Rate Limiter مخصص ومشدد لـ resend-otp لمنع الـ Email Bombing
+const resendLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,   // 10 دقائق
+  max: 3,                      // 3 طلبات كحد أقصى لكل IP
+  message: {
+    msg: 'تجاوزت الحد المسموح لإعادة الإرسال، انتظر 10 دقائق ⛔',
+    code: 'RESEND_RATE_LIMITED',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // ══════════════════════════════════════════════
 // Public Routes — لا تحتاج auth
@@ -37,10 +50,18 @@ router.post(
   authController.verifyEmail
 );
 
+// ✅ إعادة إرسال الـ OTP بـ حماية مخصصة ومحدِّد صارم
+router.post(
+  '/resend-otp',
+  resendLimiter,
+  validateBody('verifyEmail'), // إعادة استخدام فحص البودي للتأكد من هيكلية وجود الـ email
+  authController.resendOtp
+);
+
 // تسجيل الدخول
 router.post(
   '/login',
-  loginLimiter,            // ✅ إصلاح R1 — كان authLimiter
+  loginLimiter,
   validateBody('login'),
   authController.login
 );
@@ -54,7 +75,6 @@ router.post(
 );
 
 // إعادة تعيين كلمة المرور
-// ✅ إصلاح R2 — كان otpLimiter وهو خاطئ — reset ليس OTP
 router.post(
   '/reset-password',
   forgotPasswordLimiter,
@@ -63,7 +83,6 @@ router.post(
 );
 
 // تجديد الـ Token (Refresh)
-// ✅ إصلاح R1 — كان refreshLimiter غير موجود → globalLimiter
 router.post(
   '/refresh',
   globalLimiter,
@@ -103,8 +122,6 @@ router.post(
 );
 
 // تعديل البروفايل (مع رفع صورة)
-// ملاحظة: validateBody('updateMe') يأتي داخل authController.updateMe
-// بعد upload.single() و verifyImageBuffer — لا يوضع هنا
 router.put(
   '/me',
   requireAuth,
