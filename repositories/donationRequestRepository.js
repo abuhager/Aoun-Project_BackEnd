@@ -1,11 +1,12 @@
 // repositories/donationRequestRepository.js
 const DonationRequest = require('../models/DonationRequest');
 
+// ✅ تعريف واحد فقط — كان مُعرَّفاً مرتين في الملف الأصلي
 exports.countActiveMonthlyRequests = ({ userId, month, now }) =>
   DonationRequest.countDocuments({
     requester: userId,
     month,
-    status: 'active',
+    status:    'active',
     expiresAt: { $gt: now },
   });
 
@@ -23,23 +24,15 @@ exports.findRequests = ({ filter, skip, limit }) =>
 exports.countRequests = (filter) =>
   DonationRequest.countDocuments(filter);
 
+// ✅ إصلاح: { new: true } مُهمَل منذ Mongoose 8 — الصواب { returnDocument: 'after' }
 exports.cancelOwnedActiveRequest = ({ requestId, userId }) =>
   DonationRequest.findOneAndUpdate(
     { _id: requestId, requester: userId, status: 'active' },
     { $set: { status: 'cancelled' } },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
 exports.findUserRequests = (userId) =>
   DonationRequest.find({ requester: userId })
     .sort({ createdAt: -1 })
     .lean();
-    
-    exports.countActiveMonthlyRequests = async ({ userId, month, now }) => {
-  return DonationRequest.countDocuments({
-    requester: userId,
-    month,
-    status:    'active',
-    expiresAt: { $gt: now },
-  });
-};
