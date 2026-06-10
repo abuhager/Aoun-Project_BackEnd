@@ -148,8 +148,23 @@ exports.resendOtpLogic = async ({ email }) => {
 // ── registerLogic ─────────────────────────────────────────────
 exports.registerLogic = async ({ name, email, password, phone }) => {
   const exists = await userRepository.findByEmail(email);
+  
   if (exists) {
-    return { statusCode: 409, body: { msg: 'هذا الإيميل مسجل مسبقاً' } }; 
+    // ✅ Dummy hash لمنع الـ Timing Attack (يأخذ نفس وقت التشفير الفعلي)
+    await bcrypt.hash(password, BCRYPT_ROUNDS);
+    
+    // ✅ نرجع نفس الـ statusCode والـ body تماماً كأن الحساب تم إنشاؤه
+    // نحدد قيمة افتراضية لـ isVerifiedStudent بناءً على الإيميل لتوحيد شكل الرد (Response Body)
+    const isStudent = await isUniversityEmail(email); 
+    
+    return {
+      statusCode: 201,
+      body: {
+        msg: 'تم إنشاء الحساب! تحقق من إيميلك 📬',
+        email,
+        isVerifiedStudent: isStudent,
+      },
+    };
   }
 
   const settings = await SystemSettings.getCached();
@@ -157,6 +172,7 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
   const defaultQuota = settings?.defaultUserQuota ?? 2;
   const studentTrustLevel = settings?.studentDefaultTrustLevel ?? 2;
 
+  // تشفير كلمة المرور الفعلية للمستخدم الجديد
   const hashed = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
   const rawOtp = generateOtp();
@@ -188,7 +204,6 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
     },
   };
 };
-
 // ── verifyEmailLogic ──────────────────────────────────────────
 exports.verifyEmailLogic = async ({ email, otp }) => {
   const User = require('../models/User'); 
@@ -243,13 +258,20 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
     };
   }
 
+  // 1. تحديث بيانات كائن المستخدم في الذاكرة أولاً
   user.isVerified = true;
   user.verificationOtp = undefined;
   user.verificationOtpExpiry = undefined;
   user.otpAttempts = 0;
   
+  // 2. تشغيل الترقية (لتحديث الـ trustLevel والـ quota في كائن user في الذاكرة قبل حفظه)
   await _upgradeStudentTrust(user);
 
+  // 3. توليد الـ Tokens بناءً على البيانات المحدثة للمستخدم
+  const accessToken = generateAccessToken(user);
+  const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(user);
+
+  // ✅ 4. الإصلاح الذري: دمج عمليتي الـ Update في عملية واحدة شاملة
   await User.updateOne(
     { _id: user._id },
     {
@@ -257,24 +279,13 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
         isVerified: true,
         trustLevel: user.trustLevel,
         quota: user.quota,
-        otpAttempts: 0
+        otpAttempts: 0,
+        refreshToken: hashedRefresh,      // ← دُمجت هنا بنجاح
+        sessionIssuedAt: new Date(),     // ← دُمجت هنا بنجاح
       },
       $unset: {
         verificationOtp: 1,
         verificationOtpExpiry: 1
-      }
-    }
-  );
-
-  const accessToken = generateAccessToken(user);
-  const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(user);
-
-  await User.updateOne(
-    { _id: user._id },
-    {
-      $set: {
-        refreshToken: hashedRefresh,
-        sessionIssuedAt: new Date(),
       }
     }
   );
@@ -628,10 +639,20 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, mimetype) => {
   if (updates.phone) user.phone = updates.phone;
 
   if (fileBuffer) {
+    // 1. فحص نوع الصورة أولاً
     if (!ALLOWED_IMAGE_TYPES.includes(mimetype)) {
       return {
         statusCode: 400,
         body: { msg: 'نوع الصورة غير مدعوم، يُسمح بـ JPEG أو PNG أو WebP فقط 🖼️' },
+      };
+    }
+
+    // 2. التحقق من حجم الصورة قبل بدء الرفع (الحد الأقصى 5 ميغابايت)
+    const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
+    if (fileBuffer.length > MAX_FILE_SIZE_BYTES) {
+      return {
+        statusCode: 400,
+        body: { msg: 'حجم الصورة يتجاوز الحد المسموح (5 ميغابايت) 🖼️' },
       };
     }
 

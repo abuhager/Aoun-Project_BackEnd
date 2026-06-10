@@ -50,4 +50,7 @@ userSchema.index({ trustScore: -1 });
 userSchema.index({ totalDonations: -1 });
 userSchema.index({ createdAt: -1 });
 
+// ✅ إضافة الفهرس لحل ثغرة غياب الفهرس على resetPasswordToken
+userSchema.index({ resetPasswordToken: 1 }, { sparse: true });
+
 module.exports = mongoose.model('User', userSchema);
