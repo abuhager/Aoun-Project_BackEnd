@@ -1,5 +1,5 @@
 // controllers/donationRequestController.js
-const drService = require('../services/donationRequestService');
+const drService    = require('../services/donationRequestService');
 const asyncHandler = require('../utils/asyncHandler');
 
 exports.getRequests = asyncHandler(async (req, res) => {
@@ -21,16 +21,14 @@ exports.cancelRequest = asyncHandler(async (req, res) => {
   const result = await drService.cancelRequestLogic(req.params.id, req.user.id);
   res.json(result);
 });
-exports.respondToRequest = async (req, res, next) => {
-  try {
-    const result = await donationRequestService.respondToRequestLogic(
-      req.params.id,
-      req.user.id,
-      req.body,
-      req.file ?? null   // الصورة اختيارية
-    );
-    res.status(201).json(result);
-  } catch (err) {
-    next(err);
-  }
-};
+
+// ✅ إصلاح: drService بدل donationRequestService + asyncHandler
+exports.respondToRequest = asyncHandler(async (req, res) => {
+  const result = await drService.respondToRequestLogic(
+    req.params.id,
+    req.user.id,
+    req.body,
+    req.file ?? null
+  );
+  res.status(201).json(result);
+});
