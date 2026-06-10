@@ -11,6 +11,7 @@ const systemSettingsSchema = new mongoose.Schema(
     donorQuotaReward: { type: Number, default: 1, min: 0, max: 5 },
     trustScorePerDonation: { type: Number, default: 5, min: 0, max: 20 },
     trustScorePerRequest: { type: Number, default: 2, min: 0, max: 10 },
+    bookingExpiryHours: { type: Number, default: 72, min: 1, max: 336 },
     categories: {
       type: [String],
       default: ['كتب', 'إلكترونيات', 'أثاث', 'ملابس', 'أخرى'],

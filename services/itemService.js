@@ -146,15 +146,55 @@ exports.createItemLogic = async (body, userId, file) => {
   const uploadResult = await uploadToCloudinary(file.buffer);
 
   const item = await Item.create({
-    title:       body.title?.trim(),
-    description: body.description?.trim(),
-    category:    body.category,
-    location:    body.location?.trim(),
-    condition:   body.condition,
-    safeHub:     body.safeHub,
-    donor:       userId,
-    imageUrl:    uploadResult.secure_url,
+    title:        body.title?.trim(),
+    description:  body.description?.trim(),
+    category:     body.category,
+    location:     body.location?.trim(),
+    condition:    body.condition,
+    safeHub:      body.safeHub,
+    donor:        userId,
+    imageUrl:     uploadResult.secure_url,
     cloudinaryId: uploadResult.public_id,
+  });
+
+  // ✅ [FEATURE] بعد إنشاء الغرض — إشعار أصحاب طلبات التبرع النشطة بنفس الفئة (غير محجوب للعملية الرئيسية)
+  setImmediate(async () => {
+    try {
+      const { getIO } = require('../socket');
+      
+      // جلب طلبات نشطة بنفس الفئة (حد أقصى 50 إشعار لتجنب ضغط الـ Event Loop)
+      const matchingRequests = await DonationRequest.find({
+        category:  item.category,
+        status:    'active',
+        expiresAt: { $gt: new Date() },
+        requester: { $ne: userId }, // لا تُشعر المتبرع نفسه لو كان لديه طلب بنفس الفئة
+      })
+      .select('requester')
+      .limit(50)
+      .lean();
+
+      const io = getIO();
+      for (const req of matchingRequests) {
+        // 1. إشعار فوري عبر السوكيت
+        io.to(`user_${req.requester}`).emit('notification', {
+          type:     'MATCHING_ITEM_AVAILABLE',
+          itemId:   item._id,
+          title:    item.title,
+          category: item.category,
+          message:  `غرض جديد يتطابق مع طلبك 🎁`,
+        });
+        
+        // 2. حفظ الإشعار في قاعدة البيانات
+        await notifyUser(req.requester, {
+          type:   'matching_item',
+          title:  'غرض متاح يناسبك! 🎁',
+          body:   `"${item.title}" — ${item.category}`,
+          itemId: item._id,
+        });
+      }
+    } catch (err) {
+      console.warn('[MatchNotify] فشل إشعار الطلبات المتطابقة:', err.message);
+    }
   });
 
   return { msg: 'تم إضافة الغرض بنجاح 🎉', item };
@@ -213,7 +253,7 @@ exports.bookItemLogic = async (itemId, userId) => {
         await session.commitTransaction();
         try { session.endSession(); } catch (_) {}
 
-        triggerBookingNotifications(booked, updatedUser);
+        await triggerBookingNotifications(booked, updatedUser);
         return { status: 'booked', msg: 'تم الحجز بنجاح 🎉' };
       }
 
@@ -248,38 +288,40 @@ async function handleWaitlistOutside(itemId, userId) {
   return { status: 'waitlist', msg: 'تمت إضافتك لقائمة الانتظار ⏳' };
 }
 
-function triggerBookingNotifications(bookedItem, user) {
-  const settings = SystemSettings.getCached();
+async function triggerBookingNotifications(bookedItem, user) {
+  try {
+    const settings = await SystemSettings.getCached(); // ✅ await صريح
 
-  const hubSection = bookedItem.safeHub
-    ? `<hr/>
-       <p>📍 <b>نقطة التسليم:</b> ${bookedItem.safeHub.name}</p>
-       <p>🏙️ ${bookedItem.safeHub.city} — ${bookedItem.safeHub.address}</p>
-       <p>🕐 أوقات العمل: ${bookedItem.safeHub.workingHours || 'غير محدد'}</p>`
-    : `<p>📦 سيتم التنسيق مع المتبرع مباشرة</p>`;
+    const hubSection = bookedItem.safeHub
+      ? `<hr/>
+         <p>📍 <b>نقطة التسليم:</b> ${bookedItem.safeHub.name}</p>
+         <p>🏙️ ${bookedItem.safeHub.city} — ${bookedItem.safeHub.address}</p>
+         <p>🕐 أوقات العمل: ${bookedItem.safeHub.workingHours || 'غير محدد'}</p>`
+      : `<p>📦 سيتم التنسيق مع المتبرع مباشرة</p>`;
 
-  Promise.all([
-    notifyUser(bookedItem.donor, {
-      type:   'item_booked',
-      title:  'تم حجز غرضك! 🎉',
-      body:   `قام شخص ما بحجز "${bookedItem.title}"`,
-      itemId: bookedItem._id,
-    }),
-    settings.then((s) =>
+    await Promise.all([
+      notifyUser(bookedItem.donor, {
+        type:   'item_booked',
+        title:  'تم حجز غرضك! 🎉',
+        body:   `قام شخص ما بحجز "${bookedItem.title}"`,
+        itemId: bookedItem._id,
+      }),
       fireSendEmail({
         email:   user.email,
         subject: 'تم حجز الغرض 🎉',
         message: `
           <div dir="rtl">
             <p>تم حجز <b>${bookedItem.title}</b> بنجاح!</p>
-            <p>⏱️ لديك <b>${s.bookingExpiryHours ?? 72} ساعة</b> لاستلام الغرض</p>
+            <p>⏱️ لديك <b>${settings.bookingExpiryHours ?? 72} ساعة</b> لاستلام الغرض</p>
             <p>📌 توجّه إلى نقطة التسليم وأكّد الاستلام من التطبيق</p>
             ${hubSection}
           </div>
         `,
-      }).catch((err) => console.error('[Email] فشل إرسال إشعار الحجز:', err.message))
-    ),
-  ]).catch((err) => console.error('[Notifications] فشل إرسال الإشعارات:', err.message));
+      }),
+    ]);
+  } catch (err) {
+    console.error('[triggerBookingNotifications] فشل:', err.message);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────
@@ -349,11 +391,12 @@ exports.cancelBookingLogic = async (itemId, userId) => {
           continue;
         }
 
+        // ✅ [BUG-3 FIX] إعادة الـ Quota للمحجوز السابق داخل الـ session لمنع الـ Race Condition
         if (previousBooker && previousBooker.toString() !== item.donor.toString()) {
           await User.findByIdAndUpdate(
             previousBooker,
             { $inc: { quota: 1 } },
-            { session }
+            { session } // تم إضافة الـ session هنا
           );
         }
 
@@ -372,13 +415,13 @@ exports.cancelBookingLogic = async (itemId, userId) => {
 
       } catch (err) {
         if (session.inTransaction()) await session.abortTransaction();
-        // ✅ [BUG-3 FIX] إغلاق آمن للجلسة عبر كتلة try/catch لمنع مشاكل الخصائص غير الرسمية
         try { session.endSession(); } catch (_) {}
         throw err;
       }
     }
   }
 
+  // في حالة عدم وجود waitlist أو فشل الجميع
   await Item.findByIdAndUpdate(item._id, {
     $set: { status: 'متاح', bookedBy: null, bookedAt: null },
     ...(previousBooker && { $addToSet: { cancelledBy: previousBooker } }),
@@ -474,7 +517,7 @@ exports.completeDonorDeliveryLogic = async (itemId, userId) => {
 
   await Item.findByIdAndUpdate(itemId, {
     $set: {
-      status:           'تم التسليم',
+      status:         'تم التسليم',
       donorConfirmedAt: now,
       deliveredAt:      now,
     },
@@ -486,6 +529,18 @@ exports.completeDonorDeliveryLogic = async (itemId, userId) => {
       quota:      settings.donorQuotaReward       ?? 1,
     },
   });
+
+  // ✅ [LOGIC-5 FIX] تحديث حالة طلب التبرع (DonationRequest) إلى 'fulfilled' إذا كان موجوداً
+  await DonationRequest.updateOne(
+    {
+      requester: item.bookedBy._id,
+      category:  item.category,
+      status:    'active',
+    },
+    {
+      $set: { status: 'fulfilled' }
+    }
+  ).catch((err) => console.warn('[DonationRequest] فشل تحديث حالة الطلب:', err.message));
 
   // ✅ [LOGIC-1 FIX] إطلاق حدث السوكيت الحاسم لإعلام المستلم فوراً باكتمال العملية وتحديث واجهته
   try {

@@ -34,3 +34,12 @@ exports.findUserRequests = (userId) =>
   DonationRequest.find({ requester: userId })
     .sort({ createdAt: -1 })
     .lean();
+    
+    exports.countActiveMonthlyRequests = async ({ userId, month, now }) => {
+  return DonationRequest.countDocuments({
+    requester: userId,
+    month,
+    status:    'active',
+    expiresAt: { $gt: now },
+  });
+};

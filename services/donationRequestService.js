@@ -145,20 +145,15 @@ exports.cancelRequestLogic = async (requestId, userId) => {
 // 4. جلب طلباتي مع الـ Quota المتبقية
 // ─────────────────────────────────────────────────────────────────────────────────
 exports.getMyRequestsLogic = async (userId) => {
-  const [requests, settings] = await Promise.all([
-    donationRequestRepository.findUserRequests(userId),
-    SystemSettings.getCached(),
-  ]);
-
   const currentMonth = new Date().toISOString().slice(0, 7);
   const now = new Date();
 
-  const usedThisMonth = requests.filter(
-    (request) =>
-      request.month === currentMonth &&
-      request.status === 'active' &&
-      (!request.expiresAt || new Date(request.expiresAt) > now)
-  ).length;
+  const [requests, settings, usedThisMonth] = await Promise.all([
+    donationRequestRepository.findUserRequests(userId),
+    SystemSettings.getCached(),
+    // ✅ عدّ في DB مباشرة — لا فلترة في الذاكرة
+    donationRequestRepository.countActiveMonthlyRequests({ userId, month: currentMonth, now }),
+  ]);
 
   return {
     requests,
