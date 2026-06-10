@@ -61,10 +61,7 @@ const ItemSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
-    deliveryOtp: {
-      type: String,
-      select: false,
-    },
+    // ✅ [A] حُذف حقل deliveryOtp بالكامل — النظام يعتمد على Double Confirmation
     status: {
       type: String,
       enum: ['متاح', 'محجوز', 'تم التسليم', 'مخفي'],
