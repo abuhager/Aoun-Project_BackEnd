@@ -2,10 +2,11 @@ const express  = require('express');
 const router   = express.Router();
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
-const { requireAuth }    = require('../middlewares/auth');
+const { requireAuth, requireLevel2 } = require('../middlewares/auth');
 const validateObjectId   = require('../middlewares/validateObjectId');
 const validateBody       = require('../middlewares/validateBody');
 const drController       = require('../controllers/donationRequestController');
+const { upload, verifyImageBuffer } = require('../middlewares/upload');
 
 // ✅ إصلاح ERR_ERL_KEY_GEN_IPV6:
 //    عند الاعتماد على req.ip كـ fallback يجب تمريره عبر ipKeyGenerator()
@@ -38,6 +39,17 @@ router.patch(
   requireAuth,
   validateObjectId('id'),
   drController.cancelRequest
+);
+
+router.post(
+  '/:id/respond',
+  requireAuth,
+  requireLevel2,                       // ← Level 2 مطلوب للتبرع (نفس شرط الـ bookItem)
+  validateObjectId('id'),
+  upload.single('image'),              // الصورة اختيارية
+  verifyImageBuffer,
+  validateBody('respondToRequest'),
+  drController.respondToRequest
 );
 
 module.exports = router;

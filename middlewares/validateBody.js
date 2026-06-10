@@ -152,6 +152,14 @@ const schemas = {
     condition: textField(2, 50).required(),
     safeHub: OBJECT_ID.required(),
   }).unknown(false),
+  
+  respondToRequest: Joi.object({
+  condition: textField(2, 50).required(),
+  safeHub:   OBJECT_ID.required(),
+  // حقول اختيارية يمكن للمتبرع تخصيصها
+  description: Joi.string().max(500).optional().allow('').trim(),
+  location:    textField(2, 100).optional(),
+  }).unknown(false),
 
   updateItem: Joi.object({
     title: textField(3, 100).optional(),

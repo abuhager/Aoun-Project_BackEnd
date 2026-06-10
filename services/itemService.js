@@ -5,6 +5,7 @@ const User = require('../models/User');
 const Report = require('../models/Report');
 const SystemSettings = require('../models/SystemSettings');
 const { getSettings } = require('./settingsService');
+const DonationRequest = require('../models/DonationRequest');
 
 const itemRepository = require('../repositories/itemRepository');
 const AppError = require('../utils/AppError');
@@ -531,16 +532,34 @@ exports.completeDonorDeliveryLogic = async (itemId, userId) => {
   });
 
   // ✅ [LOGIC-5 FIX] تحديث حالة طلب التبرع (DonationRequest) إلى 'fulfilled' إذا كان موجوداً
-  await DonationRequest.updateOne(
+  if (item.linkedRequestId) {
+  // الحالة الذكية: الـ Item منشأ من استجابة طلب محدد
+  await DonationRequest.findOneAndUpdate(
+    {
+      _id:       item.linkedRequestId,
+      requester: item.bookedBy._id,
+      status:    'active',
+    },
+    {
+      $set: {
+        status:         'fulfilled',
+        fulfilledByItem: item._id,
+      },
+    }
+  ).catch((err) => console.warn('[DonationRequest] فشل تحديث الطلب المرتبط:', err.message));
+} else {
+  // الحالة القديمة fallback: بحث بالـ category (يُبقى للتوافقية)
+  await DonationRequest.findOneAndUpdate(
     {
       requester: item.bookedBy._id,
       category:  item.category,
       status:    'active',
     },
     {
-      $set: { status: 'fulfilled' }
+      $set: { status: 'fulfilled' },
     }
-  ).catch((err) => console.warn('[DonationRequest] فشل تحديث حالة الطلب:', err.message));
+  ).catch((err) => console.warn('[DonationRequest] fallback فشل:', err.message));
+}
 
   // ✅ [LOGIC-1 FIX] إطلاق حدث السوكيت الحاسم لإعلام المستلم فوراً باكتمال العملية وتحديث واجهته
   try {

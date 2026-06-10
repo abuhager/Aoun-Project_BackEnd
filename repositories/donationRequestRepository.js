@@ -36,3 +36,13 @@ exports.findUserRequests = (userId) =>
   DonationRequest.find({ requester: userId })
     .sort({ createdAt: -1 })
     .lean();
+
+    // جلب طلب نشط واحد بالـ ID مع populate للـ requester
+exports.findActiveRequestById = (requestId) =>
+  DonationRequest.findOne({
+    _id:       requestId,
+    status:    'active',
+    expiresAt: { $gt: new Date() },
+  })
+  .populate('requester', 'name email')
+  .lean();

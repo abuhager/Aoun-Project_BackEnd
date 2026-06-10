@@ -2,7 +2,8 @@
 const express = require('express');
 const router  = express.Router();
 
-const { requireAuth }    = require('../middlewares/auth');
+// ✅ الإصلاح
+const { requireAuth, requireLevel2 } = require('../middlewares/auth');
 const authController     = require('../controllers/authController');
 const validateObjectId   = require('../middlewares/validateObjectId');
 const validateBody       = require('../middlewares/validateBody');

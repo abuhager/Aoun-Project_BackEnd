@@ -21,3 +21,16 @@ exports.cancelRequest = asyncHandler(async (req, res) => {
   const result = await drService.cancelRequestLogic(req.params.id, req.user.id);
   res.json(result);
 });
+exports.respondToRequest = async (req, res, next) => {
+  try {
+    const result = await donationRequestService.respondToRequestLogic(
+      req.params.id,
+      req.user.id,
+      req.body,
+      req.file ?? null   // الصورة اختيارية
+    );
+    res.status(201).json(result);
+  } catch (err) {
+    next(err);
+  }
+};

@@ -15,6 +15,11 @@ const donationRequestSchema = new mongoose.Schema({
     enum:    ['active', 'fulfilled', 'expired', 'cancelled'],
     default: 'active',
   },
+  fulfilledByItem: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'Item',
+  default: null,
+},
   month:     { type: String },
   expiresAt: { type: Date },
 }, { timestamps: true });
