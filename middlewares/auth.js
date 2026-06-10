@@ -4,6 +4,8 @@
 const AppError = require('../utils/AppError');
 const { verifyAccessToken } = require('../utils/tokenUtils');
 const banCache              = require('../utils/banCache');
+const User        = require('../models/User'); // ✅ أضف هذا
+
 
 // ─── 1. حماية المسارات العامة (الإلزامية) ─────────────────────
 exports.requireAuth = async (req, res, next) => {
@@ -20,23 +22,39 @@ exports.requireAuth = async (req, res, next) => {
 
     // 1) فحص الحظر من الـ payload + الـ Cache
     const isBannedInCache = await banCache.isUserBanned(decoded.user.id);
-
     if (decoded.user.isBanned || isBannedInCache) {
       return next(new AppError('حسابك محظور 🚫', 403, 'USER_BANNED'));
     }
 
-    // 2) التحقق من تفعيل البريد الإلكتروني (إصلاح ثغرة S-03)
+    // 2) التحقق من تفعيل البريد الإلكتروني
     if (!decoded.user.isVerified) {
       return next(new AppError('يجب تفعيل حسابك أولاً 📧', 403, 'EMAIL_NOT_VERIFIED'));
     }
 
-    // بناء كائن المستخدم بعد اجتياز كافة الفحوصات الأمنية
+    // ✅ 3) فحص sessionIssuedAt — إبطال الـ tokens الصادرة قبل تغيير كلمة المرور
+    if (decoded.iat) {
+      const user = await User.findById(decoded.user.id)
+        .select('sessionIssuedAt isBanned')
+        .lean();
+
+      if (!user) {
+        return next(new AppError('المستخدم غير موجود', 401, 'USER_NOT_FOUND'));
+      }
+
+      if (
+        user.sessionIssuedAt &&
+        decoded.iat < Math.floor(user.sessionIssuedAt.getTime() / 1000)
+      ) {
+        return next(new AppError('انتهت صلاحية الجلسة، أعد تسجيل الدخول 🔒', 401, 'SESSION_INVALIDATED'));
+      }
+    }
+
     req.user = {
       id:         decoded.user.id,
       role:       decoded.user.role,
       trustLevel: decoded.user.trustLevel ?? 1,
-      isBanned:   false, // غير محظور
-      isVerified: true,  // بريده مفعّل ومؤكد
+      isBanned:   false,
+      isVerified: true,
     };
 
     next();
