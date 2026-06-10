@@ -124,25 +124,21 @@ exports.logout = asyncHandler(async (req, res) => {
 });
 
 // ─── 11. تعديل البروفايل ───────────────────────────────────────
-exports.updateMe = [
-  upload.single('avatar'),
-  verifyImageBuffer,           
-  asyncHandler(async (req, res) => {
-    const updates = {};
+exports.updateMe = asyncHandler(async (req, res) => {
+  const updates = {};
 
-    if (req.body.name?.trim())  updates.name  = req.body.name.trim();
-    if (req.body.phone?.trim()) updates.phone = req.body.phone.trim();
+  if (req.body?.name?.trim())  updates.name  = req.body.name.trim();
+  if (req.body?.phone?.trim()) updates.phone = req.body.phone.trim();
 
-    const result = await authService.updateMeLogic(
-      req.user.id,
-      updates,
-      req.file?.buffer,
-      req.file?.mimetype
-    );
+  const result = await authService.updateMeLogic(
+    req.user.id,
+    updates,
+    req.file?.buffer,
+    req.file?.mimetype
+  );
 
-    return res.status(result.statusCode).json(result.body);
-  }),
-];
+  return res.status(result.statusCode).json(result.body);
+});
 
 // ─── 12. تغيير كلمة المرور ────────────────────────────────────
 exports.updatePassword = asyncHandler(async (req, res) => {

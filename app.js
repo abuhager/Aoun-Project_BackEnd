@@ -3,24 +3,24 @@ const express      = require('express');
 const cors         = require('cors');
 const helmet       = require('helmet');
 const cookieParser = require('cookie-parser');
-const hpp          = require('hpp');                     // ✅ إصلاح A1
+const hpp          = require('hpp');
 
 const { globalLimiter } = require('./middlewares/rateLimiter');
 const errorHandler      = require('./middlewares/errorHandler');
 const AppError          = require('./utils/AppError');
 
-const authRoutes          = require('./routes/auth');
-const itemRoutes          = require('./routes/items');
-const phoneRoutes         = require('./routes/phone');
-const hubRoutes           = require('./routes/hubs');
-const adminRoutes         = require('./routes/admin');
-const ratingRoutes        = require('./routes/ratings');
-const reportRoutes        = require('./routes/reports');
-const notificationRoutes  = require('./routes/notifications');
-const leaderboardRoutes   = require('./routes/leaderboard');
-const settingsRoutes      = require('./routes/settings');
+const authRoutes            = require('./routes/auth');
+const itemRoutes            = require('./routes/items');
+const phoneRoutes           = require('./routes/phone');
+const hubRoutes             = require('./routes/hubs');
+const adminRoutes           = require('./routes/admin');
+const ratingRoutes          = require('./routes/ratings');
+const reportRoutes          = require('./routes/reports');
+const notificationRoutes    = require('./routes/notifications');
+const leaderboardRoutes     = require('./routes/leaderboard');
+const settingsRoutes        = require('./routes/settings');
 const donationRequestRoutes = require('./routes/donationRequests');
-const conversationRoutes  = require('./routes/conversations');
+const conversationRoutes    = require('./routes/conversations');
 
 const app = express();
 
@@ -34,56 +34,56 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .map((o) => o.trim())
   .filter(Boolean);
 
-// ── Helmet — Security Headers ──────────────────────────────────
-// ✅ إصلاح A5 — تعطيل CSP لأن الصور تأتي من Cloudinary CDN خارجي
-// إذا أردت CSP كاملاً لاحقاً، حدّد directives يدوياً
+// ── Helmet — Security Headers ─────────────────────────────────
 app.use(
   helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      imgSrc: ["'self'", "https://res.cloudinary.com", "data:"],
-      scriptSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      connectSrc: ["'self'", process.env.API_URL],
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        imgSrc:     ["'self'", "https://res.cloudinary.com", "data:"],
+        scriptSrc:  ["'self'"],
+        styleSrc:   ["'self'", "'unsafe-inline'"],
+        connectSrc: ["'self'", process.env.API_URL],
+      },
     },
-  },
-  crossOriginResourcePolicy: { policy: 'cross-origin' },
-})
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  })
 );
 
-// ── CORS ───────────────────────────────────────────────────────
+// ── CORS ──────────────────────────────────────────────────────
 const corsOptions = {
   origin(origin, cb) {
-    // السماح بطلبات server-to-server (لا origin)
     if (!origin) return cb(null, true);
-
     if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
-
     return cb(
-      new AppError(
-        `CORS: Origin غير مصرح به — ${origin}`,
-        403,
-        'CORS_ORIGIN_DENIED'
-      )
+      new AppError(`CORS: Origin غير مصرح به — ${origin}`, 403, 'CORS_ORIGIN_DENIED')
     );
   },
-  credentials:         true,
-  methods:             ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders:      ['Content-Type', 'Authorization', 'X-Requested-With'],
-  exposedHeaders:      ['X-RateLimit-Limit', 'X-RateLimit-Remaining'],
+  credentials:          true,
+  methods:              ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders:       ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders:       ['X-RateLimit-Limit', 'X-RateLimit-Remaining'],
   optionsSuccessStatus: 200,
 };
 
 app.use(cors(corsOptions));
 
-// ── Body Parsing ───────────────────────────────────────────────
-app.use(express.json({ limit: '100kb' }));
-app.use(express.urlencoded({ extended: true, limit: '100kb' }));
+// ── Body Parsing ──────────────────────────────────────────────
+// ✅ [BUG FIX] تخطي multipart/form-data كلياً — multer يتولى تحليله في الـ route
+// express.json/urlencoded يقرآن الـ stream بالكامل ويُفشلان busboy لاحقاً
+app.use((req, res, next) => {
+  if ((req.headers['content-type'] ?? '').includes('multipart/form-data')) return next();
+  express.json({ limit: '100kb' })(req, res, next);
+});
+
+app.use((req, res, next) => {
+  if ((req.headers['content-type'] ?? '').includes('multipart/form-data')) return next();
+  express.urlencoded({ extended: true, limit: '100kb' })(req, res, next);
+});
+
 app.use(cookieParser());
 
-// ── إصلاح A2 — NoSQL Injection Sanitization ───────────────────
-// يمنع { "$gt": "" } في req.body / req.params / req.query
+// ── NoSQL Injection Sanitization ─────────────────────────────
 const _sanitize = (obj) => {
   if (!obj || typeof obj !== 'object') return obj;
   for (const key of Object.keys(obj)) {
@@ -98,55 +98,49 @@ const _sanitize = (obj) => {
 };
 
 app.use((req, _res, next) => {
-  // ✅ تجنب الاستدعاء على طلبات GET/HEAD التي لا تحمل body
-  if (req.body && Object.keys(req.body).length)   _sanitize(req.body);
+  if (req.body   && Object.keys(req.body).length)   _sanitize(req.body);
   if (req.params && Object.keys(req.params).length) _sanitize(req.params);
-  if (req.query && Object.keys(req.query).length)   _sanitize(req.query);
+  if (req.query  && Object.keys(req.query).length)  _sanitize(req.query);
   next();
 });
 
-// ── إصلاح A1 — HTTP Parameter Pollution ──────────────────────
-// يمنع ?sort=name&sort=email (مصفوفات غير متوقعة تكسر الـ query logic)
+// ── HTTP Parameter Pollution ──────────────────────────────────
 app.use(hpp({
-  whitelist: ['category', 'status', 'trustLevel'], // ← اسمح بتعدد هذه فقط
+  whitelist: ['category', 'status', 'trustLevel'],
 }));
 
-// ── Global Rate Limiter ────────────────────────────────────────
-// ✅ إصلاح A3 — نُطبّقه على /api فقط، لا على /health
+// ── Global Rate Limiter ───────────────────────────────────────
 app.use('/api', globalLimiter);
 
-// ── Health Check ───────────────────────────────────────────────
-// ✅ إصلاح [SEC-04]: منع كشف تفاصيل السيرفر الداخلية والبيئة للعامة بدون حماية الـ limiter
+// ── Health Check ──────────────────────────────────────────────
 app.get('/health', (_req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-// ── API Routes ─────────────────────────────────────────────────
-app.use('/api/auth',             authRoutes);
-app.use('/api/items',            itemRoutes);
-app.use('/api/phone',            phoneRoutes);
-app.use('/api/hubs',             hubRoutes);
-app.use('/api/admin',            adminRoutes);
-app.use('/api/ratings',          ratingRoutes);
-app.use('/api/reports',          reportRoutes);
-app.use('/api/notifications',    notificationRoutes);
-app.use('/api/leaderboard',      leaderboardRoutes);
-app.use('/api/settings',         settingsRoutes);
+// ── API Routes ────────────────────────────────────────────────
+app.use('/api/auth',              authRoutes);
+app.use('/api/items',             itemRoutes);
+app.use('/api/phone',             phoneRoutes);
+app.use('/api/hubs',              hubRoutes);
+app.use('/api/admin',             adminRoutes);
+app.use('/api/ratings',           ratingRoutes);
+app.use('/api/reports',           reportRoutes);
+app.use('/api/notifications',     notificationRoutes);
+app.use('/api/leaderboard',       leaderboardRoutes);
+app.use('/api/settings',          settingsRoutes);
 app.use('/api/donation-requests', donationRequestRoutes);
-app.use('/api/conversations',    conversationRoutes);
+app.use('/api/conversations',     conversationRoutes);
 
-// ── 404 Handler ────────────────────────────────────────────────
+// ── 404 Handler ───────────────────────────────────────────────
 app.use((req, _res, next) => {
-  next(
-    new AppError(
-      `المسار غير موجود: ${req.method} ${req.originalUrl}`,
-      404,
-      'ROUTE_NOT_FOUND'
-    )
-  );
+  next(new AppError(
+    `المسار غير موجود: ${req.method} ${req.originalUrl}`,
+    404,
+    'ROUTE_NOT_FOUND'
+  ));
 });
 
-// ── Centralized Error Handler — يجب أن يكون الأخير دائماً ─────
+// ── Centralized Error Handler — يجب أن يكون الأخير دائماً ────
 app.use(errorHandler);
 
 module.exports = app;

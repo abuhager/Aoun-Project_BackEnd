@@ -38,7 +38,7 @@ const conditionalUpload = (req, res, next) => {
   if (ct.includes('multipart/form-data')) {
     return upload.single('avatar')(req, res, next);
   }
-  next(); // JSON بدون صورة → تخطى multer بالكامل
+  next();
 };
 
 const conditionalVerify = (req, res, next) => {
@@ -137,15 +137,9 @@ router.post(
   authController.logout
 );
 
-// ✅ [FIXED] تعديل البروفايل — conditionalUpload يمنع crash عند JSON بدون صورة
-router.put(
-  '/me',
-  requireAuth,
-  conditionalUpload,   // ← بدل upload.single('avatar')
-  conditionalVerify,   // ← بدل verifyImageBuffer
-  validateBody('updateMe'),
-  authController.updateMe
-);
+router.put('/me', requireAuth, (req, res, next) => {
+  next();
+}, conditionalUpload, conditionalVerify, validateBody('updateMe'), authController.updateMe);
 
 // تغيير كلمة المرور
 router.put(
