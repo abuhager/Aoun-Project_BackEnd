@@ -244,7 +244,7 @@ exports.bookItemLogic = async (itemId, userId) => {
         const updatedUser = await User.findOneAndUpdate(
           { _id: userId, quota: { $gt: 0 } },
           { $inc: { quota: -1 } },
-          { session, new: true }
+          { session, returnDocument: 'after' }
         );
 
         if (!updatedUser) {
@@ -281,7 +281,7 @@ async function handleWaitlistOutside(itemId, userId) {
   const waitlistUpdated = await Item.findOneAndUpdate(
     { _id: itemId, 'waitlist.user': { $ne: userId } },
     { $push: { waitlist: { user: userId, joinedAt: new Date() } } },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   if (!waitlistUpdated) {
@@ -363,7 +363,7 @@ exports.cancelBookingLogic = async (itemId, userId) => {
         const nextValidUser = await User.findOneAndUpdate(
           { _id: waiting.user, quota: { $gt: 0 } },
           { $inc: { quota: -1 } },
-          { session, new: true }
+          { session, returnDocument: 'after' }
         );
 
         if (!nextValidUser) {
@@ -385,7 +385,7 @@ exports.cancelBookingLogic = async (itemId, userId) => {
               $addToSet: { cancelledBy: previousBooker },
             }),
           },
-          { session, new: true }
+          { session, returnDocument: 'after' }
         ).populate('safeHub', 'name address city workingHours');
 
         if (!updated) {
@@ -474,7 +474,7 @@ exports.confirmReceiptLogic = async (itemId, userId) => {
         recipientConfirmedAt: new Date(),
       },
     },
-    { new: true }
+    { returnDocument: 'after' }
   ).lean();
 
   if (!updatedItem) {

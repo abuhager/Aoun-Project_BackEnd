@@ -26,9 +26,9 @@ exports.updateById = (id, rawBody) => {
     if (rawBody[field] !== undefined) safeUpdate[field] = rawBody[field];
   }
   return SafeHub.findByIdAndUpdate(id, { $set: safeUpdate }, {
-    new: true, runValidators: true,
+    returnDocument: 'after', runValidators: true,
   });
 };
 
 exports.deactivateById = (id) =>
-  SafeHub.findByIdAndUpdate(id, { $set: { isActive: false } }, { new: true });
+  SafeHub.findByIdAndUpdate(id, { $set: { isActive: false } }, { returnDocument: 'after' });

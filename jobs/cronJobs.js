@@ -33,7 +33,7 @@ async function processExpiredItem(item) {
       const candidate = await User.findOneAndUpdate(
         { _id: entry.user, quota: { $gt: 0 }, isBanned: false },
         { $inc: { quota: -1 } },
-        { new: true }
+        { returnDocument: 'after' }
       );
       if (candidate) { 
         luckyUser = candidate; 

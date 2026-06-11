@@ -219,7 +219,7 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
     },
     { $inc: { otpAttempts: 1 } },
     { 
-      new: true, 
+      returnDocument: 'after', 
       select: '+verificationOtp +verificationOtpExpiry +otpAttempts +trustLevel +role +quota' 
     }
   ).lean(); 

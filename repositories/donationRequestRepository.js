@@ -32,7 +32,7 @@ exports.findRequests = ({ filter, skip, limit }) =>
 exports.countRequests = (filter) =>
   DonationRequest.countDocuments(filter);
 
-// ✅ إصلاح: { new: true } مُهمَل منذ Mongoose 8 — الصواب { returnDocument: 'after' }
+// ✅ إصلاح: { returnDocument: 'after' } مُهمَل منذ Mongoose 8 — الصواب { returnDocument: 'after' }
 exports.cancelOwnedActiveRequest = ({ requestId, userId }) =>
   DonationRequest.findOneAndUpdate(
     { _id: requestId, requester: userId, status: 'active' },

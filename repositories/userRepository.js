@@ -53,7 +53,7 @@ exports.rotateRefreshToken = (userId, oldHash, newHash, newIssuedAt) =>
         sessionIssuedAt: newIssuedAt,
       },
     },
-    { new: true }
+    { returnDocument: 'after' }
   ).select('_id name email role trustLevel isBanned quota trustScore');
   
 exports.findByIdWithSession = (id) =>
@@ -67,7 +67,7 @@ exports.findByIdForAdmin = (id) =>
   );
   // ─── Admin: ترقية/خفض trustLevel ─────────────────────────────
 exports.setTrustLevel = (id, level) =>
-  User.findByIdAndUpdate(id, { trustLevel: level }, { new: true })
+  User.findByIdAndUpdate(id, { trustLevel: level }, { returnDocument: 'after' })
       .select('name email trustLevel isVerifiedStudent phoneVerified isBanned');
       
 exports.findByIdWithPassword = (id) =>

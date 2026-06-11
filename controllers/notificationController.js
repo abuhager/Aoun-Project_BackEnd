@@ -31,7 +31,7 @@ exports.markOneRead = asyncHandler(async (req, res) => {
   const updated = await Notification.findOneAndUpdate(
     { _id: req.params.id, user: req.user.id },
     { $set: { isRead: true } },
-    { new: true }
+    { returnDocument: 'after' }
   ).lean();
 
   if (!updated) {

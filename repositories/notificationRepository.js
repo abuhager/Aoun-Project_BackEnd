@@ -23,5 +23,5 @@ exports.markOneReadByUser = (notificationId, userId) =>
   Notification.findOneAndUpdate(
     { _id: notificationId, user: userId },
     { $set: { isRead: true } },
-    { new: true }
+    { returnDocument: 'after' }
   );

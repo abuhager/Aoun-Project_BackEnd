@@ -372,10 +372,10 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
       }
     });
 
-    return {
-      msg:    'تم اختيار المتبرع بنجاح 🎉',
-      itemId: item._id,
-    };
+   return {
+  msg:    'تم اختيار المتبرع بنجاح 🎉',
+  itemId: item._id.toString(),   // ← toString() مهم
+};
 
   } catch (err) {
     if (session.inTransaction()) await session.abortTransaction();

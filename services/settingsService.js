@@ -48,7 +48,7 @@ exports.updateSettings = async (updates) => {
   const updated = await SystemSettings.findByIdAndUpdate(
     'global',
     { $set: sanitized },
-    { new: true, upsert: true, runValidators: true }
+    { returnDocument: 'after', upsert: true, runValidators: true }
   ).lean();
 
   // ✅ تحديث الكاش المحلي فوراً بالبيانات الجديدة وتمديد الـ TTL

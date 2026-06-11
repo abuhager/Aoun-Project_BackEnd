@@ -13,13 +13,13 @@ exports.createRating = (payload) =>
   Rating.create(payload);
 
 exports.markItemRated = (itemId) =>
-  Item.findByIdAndUpdate(itemId, { isRated: true }, { new: true });
+  Item.findByIdAndUpdate(itemId, { isRated: true }, { returnDocument: 'after' });
 
 exports.incrementUserTrustScore = (userId, trustDelta) =>
   User.findByIdAndUpdate(
     userId,
     { $inc: { trustScore: trustDelta } },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
 exports.findRatingsForUser = (userId) =>
