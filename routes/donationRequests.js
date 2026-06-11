@@ -46,5 +46,11 @@ router.post(
   validateBody('respondToRequest'),
   drController.respondToRequest
 );
+router.get(
+  '/:id',
+  requireAuth,
+  validateObjectId('id'),
+  drController.getRequestById   // ← controller جديد
+);
 
 module.exports = router;

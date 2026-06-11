@@ -293,3 +293,11 @@ exports.respondToRequestLogic = async (requestId, donorId, body, file) => {
     throw err;   // ✅ يرفع الخطأ لـ asyncHandler
   }
 };
+
+
+exports.getRequestByIdLogic = async (requestId, userId) => {
+  const request = await donationRequestRepository.findRequestByIdWithItem(requestId);
+  if (!request)
+    throw new AppError('الطلب غير موجود', 404, 'REQUEST_NOT_FOUND');
+  return request;
+};

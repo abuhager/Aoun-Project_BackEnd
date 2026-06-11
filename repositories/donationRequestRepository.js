@@ -46,3 +46,17 @@ exports.findActiveRequestById = (requestId) =>
   })
   .populate('requester', 'name email')
   .lean();
+
+
+  exports.findRequestByIdWithItem = (requestId) =>
+  DonationRequest.findById(requestId)
+    .populate('requester', 'name')
+    .populate({
+      path:     'fulfilledByItem',
+      select:   'condition status safeHub donor',
+      populate: [
+        { path: 'safeHub', select: 'name city address' },
+        { path: 'donor',   select: 'name' },
+      ],
+    })
+    .lean();
