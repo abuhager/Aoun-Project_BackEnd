@@ -37,6 +37,6 @@ exports.acceptOffer = (offerId, session) =>
   DonationOffer.findByIdAndUpdate(
     offerId,
     { $set: { status: 'accepted' } },
-    { session, returnDocument: 'after' }
+    { returnDocument: 'after', session }  // ← الصح
   ).populate('donor',   'name email')
    .populate('safeHub', 'name city address');

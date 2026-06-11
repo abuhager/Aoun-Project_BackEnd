@@ -8,6 +8,8 @@ const SafeHub                    = require('../models/SafeHub');
 const { uploadToCloudinary }     = require('../utils/uploadToCloudinary');
 const notifyUser                 = require('../utils/notifyUser');
 const DonationRequest = require('../models/DonationRequest');
+const donationOfferRepository    = require('../repositories/donationOfferRepository');
+const DonationOffer              = require('../models/DonationOffer');
 
 // ✅ منفصلتان: إنشاء الطلب vs الاستجابة (التبرع)
 const getMinTrustLevel           = (s) => s.minTrustLevelForRequests  ?? 2;
@@ -380,4 +382,11 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
     session.endSession();
     throw err;
   }
+};
+
+exports.getRequestByIdLogic = async (requestId, userId) => {
+  const request = await donationRequestRepository.findRequestById(requestId);
+  if (!request)
+    throw new AppError('الطلب غير موجود', 404, 'REQUEST_NOT_FOUND');
+  return request;
 };

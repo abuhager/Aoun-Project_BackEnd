@@ -76,3 +76,9 @@ exports.findActiveRequestById = (requestId) =>
       ],
     })
     .lean();
+
+    // جلب طلب واحد كامل بـ ID مع populate
+exports.findRequestById = (requestId) =>
+  DonationRequest.findById(requestId)
+    .populate('requester', 'name avatar trustLevel trustScore')
+    .lean();

@@ -1,8 +1,8 @@
 const express  = require('express');
 const router   = express.Router();
-const { rateLimit, ipKeyGenerator } = require('express-rate-limit'); // ✅ أضف ipKeyGenerator
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
-const { requireAuth } = require('../middlewares/auth');
+const { requireAuth }  = require('../middlewares/auth');
 const validateObjectId = require('../middlewares/validateObjectId');
 const validateBody     = require('../middlewares/validateBody');
 const drController     = require('../controllers/donationRequestController');
@@ -14,7 +14,7 @@ const strictLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders:   false,
   message: { msg: 'طلبات كثيرة جداً، يرجى المحاولة بعد دقيقة ⏳', code: 'TOO_MANY_REQUESTS' },
-  keyGenerator: (req) => req.user?.id ?? ipKeyGenerator(req), // ✅ بدل req.ip
+  keyGenerator: (req) => req.user?.id ?? ipKeyGenerator(req),
 });
 
 // ── قراءة ────────────────────────────────────────────────────
@@ -37,33 +37,26 @@ router.patch(
   drController.cancelRequest
 );
 
-router.post(
-  '/:id/respond',
-  requireAuth,
-  validateObjectId('id'),
-  upload.single('image'),
-  verifyImageBuffer,
-  validateBody('respondToRequest'),
-  drController.respondToRequest
-);
-router.get(
-  '/:id',
-  requireAuth,
-  validateObjectId('id'),
-  drController.getRequestById   // ← controller جديد
-);
-// المتبرع يقدم عرضه
+// ✅ Route الجديد — المتبرع يقدم عرضه (بديل /:id/respond)
 router.post(
   '/:id/offer',
   requireAuth,
   validateObjectId('id'),
   upload.single('image'),
   verifyImageBuffer,
-  validateBody('respondToRequest'),   // نفس schema الموجود — يكفي
+  validateBody('respondToRequest'),
   drController.submitOffer
 );
 
-// صاحب الطلب يشوف قائمة العروض
+// ── طلب واحد ─────────────────────────────────────────────────
+router.get(
+  '/:id',
+  requireAuth,
+  validateObjectId('id'),
+  drController.getRequestById
+);
+
+// ── العروض ───────────────────────────────────────────────────
 router.get(
   '/:id/offers',
   requireAuth,
@@ -71,7 +64,6 @@ router.get(
   drController.getOffers
 );
 
-// صاحب الطلب يختار عرضاً
 router.post(
   '/:id/offers/:offerId/accept',
   requireAuth,

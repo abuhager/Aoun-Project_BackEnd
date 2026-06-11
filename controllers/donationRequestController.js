@@ -23,15 +23,7 @@ exports.cancelRequest = asyncHandler(async (req, res) => {
 });
 
 // ✅ إصلاح: drService بدل donationRequestService + asyncHandler
-exports.respondToRequest = asyncHandler(async (req, res) => {
-  const result = await drService.respondToRequestLogic(
-    req.params.id,
-    req.user.id,
-    req.body,
-    req.file ?? null
-  );
-  res.status(201).json(result);
-});
+
 
 exports.getRequestById = asyncHandler(async (req, res) => {
   const request = await drService.getRequestByIdLogic(req.params.id, req.user.id);
