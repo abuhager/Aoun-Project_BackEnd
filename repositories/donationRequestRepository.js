@@ -2,12 +2,11 @@
 const DonationRequest = require('../models/DonationRequest');
 
 // ✅ تعريف واحد فقط — كان مُعرَّفاً مرتين في الملف الأصلي
-exports.countActiveMonthlyRequests = ({ userId, month, now }) =>
+// ✅ دالة جديدة: تعدّ كل طلبات الشهر بغض النظر عن الحالة
+exports.countAllMonthlyRequests = ({ userId, month }) =>
   DonationRequest.countDocuments({
     requester: userId,
-    month,
-    status:    'active',
-    expiresAt: { $gt: now },
+    month,           // الحقل موجود فعلاً في الـ Schema من createRequestLogic
   });
 
 exports.createRequest = (payload) =>
@@ -82,3 +81,10 @@ exports.findRequestById = (requestId) =>
   DonationRequest.findById(requestId)
     .populate('requester', 'name avatar trustLevel trustScore')
     .lean();
+
+    // ✅ دالة جديدة: عدد عروض المتبرع المعلّقة
+exports.countPendingOffersByDonor = (donorId) =>
+  DonationOffer.countDocuments({
+    donor:  donorId,
+    status: 'pending',
+  });

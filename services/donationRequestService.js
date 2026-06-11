@@ -38,18 +38,16 @@ exports.createRequestLogic = async (body, userId) => {
   const currentMonth = new Date().toISOString().slice(0, 7);
   const now          = new Date();
 
-  const activeCount = await donationRequestRepository.countActiveMonthlyRequests({
-    userId,
-    month: currentMonth,
-    now,
-  });
-
-  if (activeCount >= settings.maxActiveRequestsPerMonth)
-    throw new AppError(
-      `لا يمكنك نشر أكثر من ${settings.maxActiveRequestsPerMonth} طلب نشط في الشهر`,
-      429,
-      'MONTHLY_LIMIT_EXCEEDED'
-    );
+  const totalThisMonth = await donationRequestRepository.countAllMonthlyRequests({
+  userId,
+  month: currentMonth,
+});
+if (totalThisMonth >= settings.maxActiveRequestsPerMonth)
+  throw new AppError(
+    `لا يمكنك نشر أكثر من ${settings.maxActiveRequestsPerMonth} طلب في الشهر الواحد (بما فيها الملغية)`,
+    429,
+    'MONTHLY_LIMIT_EXCEEDED'
+  );
 
   if (!settings.categories?.includes(body.category))
     throw new AppError(`التصنيف "${body.category}" غير مدعوم`, 400, 'INVALID_CATEGORY');
@@ -170,14 +168,16 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
   if (!donor?.isVerified)
     throw new AppError('يجب تفعيل حسابك أولاً ✅', 403, 'ACCOUNT_NOT_VERIFIED');
 
+  // ✅ التحقق من مستوى الثقة للتبرع (Level 1 مسموح بالإعداد الافتراضي)
   const minLevel = getMinTrustLevelForDonating(settings);
   if ((donor.trustLevel ?? 1) < minLevel)
     throw new AppError(`يلزم Level ${minLevel} على الأقل للتبرع`, 403, 'INSUFFICIENT_TRUST_LEVEL');
 
-  const [alreadyOffered, safeHub, activeCount] = await Promise.all([
+  // ✅ إصلاح: نعدّ عروض التبرع المعلّقة فقط، وليس الـ Items العادية
+  const [alreadyOffered, safeHub, pendingOffersCount] = await Promise.all([
     donationOfferRepository.existsByRequestAndDonor(requestId, donorId),
     SafeHub.findOne({ _id: body.safeHub, isActive: true }).lean(),
-    Item.countDocuments({ donor: donorId, status: { $in: ['متاح', 'محجوز'] } }),
+    DonationOffer.countDocuments({ donor: donorId, status: 'pending' }),
   ]);
 
   if (alreadyOffered)
@@ -186,16 +186,15 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
   if (!safeHub)
     throw new AppError('نقطة الاستلام غير موجودة أو غير مفعّلة', 400, 'INVALID_SAFE_HUB');
 
-  const maxItems =
-    (donor.trustLevel ?? 1) >= 2
-      ? (settings.level2Quota  ?? 4)
-      : (settings.defaultQuota ?? 2);
+  // ✅ إصلاح: الحد الأقصى من SystemSettings (ديناميكي، لا hardcoded)
+  // Level 1 يتبرع بحرية طالما لم يتجاوز الحد المسموح من الآدمن
+  const maxPendingOffers = settings.maxPendingOffersPerDonor ?? 5;
 
-  if (activeCount >= maxItems)
+  if (pendingOffersCount >= maxPendingOffers)
     throw new AppError(
-      `لا يمكنك نشر أكثر من ${maxItems} غرض نشط في نفس الوقت`,
+      `لديك ${pendingOffersCount} عرض معلّق حالياً — انتظر حتى يُقبل أو يُرفض بعضها`,
       429,
-      'MAX_ACTIVE_ITEMS_REACHED'
+      'MAX_PENDING_OFFERS_REACHED'
     );
 
   let imageUrl = null, cloudinaryId = null;
