@@ -147,10 +147,10 @@ exports.getMyRequestsLogic = async (userId) => {
   };
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 5. الاستجابة لطلب تبرع
-// ─────────────────────────────────────────────────────────────────────────────
-exports.respondToRequestLogic = async (requestId, donorId, body, file) => {
+// ─────────────────────────────────────────────────────────────
+// 5. المتبرع يقدّم عرضاً (بدلاً من respond المباشر القديم)
+// ─────────────────────────────────────────────────────────────
+exports.submitOfferLogic = async (requestId, donorId, body, file) => {
   const mongoose = require('mongoose');
 
   const [request, donor, settings] = await Promise.all([
@@ -163,34 +163,23 @@ exports.respondToRequestLogic = async (requestId, donorId, body, file) => {
     throw new AppError('الطلب غير موجود أو غير نشط', 404, 'REQUEST_NOT_FOUND');
 
   if (request.requester._id.toString() === donorId)
-    throw new AppError('لا يمكنك الاستجابة لطلبك الخاص 🚫', 400, 'CANNOT_RESPOND_OWN_REQUEST');
+    throw new AppError('لا يمكنك التبرع لطلبك الخاص 🚫', 400, 'CANNOT_OFFER_OWN_REQUEST');
 
   if (!donor?.isVerified)
     throw new AppError('يجب تفعيل حسابك أولاً ✅', 403, 'ACCOUNT_NOT_VERIFIED');
 
   const minLevel = getMinTrustLevelForDonating(settings);
   if ((donor.trustLevel ?? 1) < minLevel)
-    throw new AppError(
-      `يلزم Level ${minLevel} على الأقل للتبرع`,
-      403,
-      'INSUFFICIENT_TRUST_LEVEL'
-    );
+    throw new AppError(`يلزم Level ${minLevel} على الأقل للتبرع`, 403, 'INSUFFICIENT_TRUST_LEVEL');
 
-  const [alreadyResponded, safeHub, activeCount] = await Promise.all([
-    Item.exists({
-      linkedRequestId: requestId,
-      donor:           donorId,
-      status:          { $in: ['متاح', 'محجوز'] },
-    }),
+  const [alreadyOffered, safeHub, activeCount] = await Promise.all([
+    donationOfferRepository.existsByRequestAndDonor(requestId, donorId),
     SafeHub.findOne({ _id: body.safeHub, isActive: true }).lean(),
-    Item.countDocuments({
-      donor:  donorId,
-      status: { $in: ['متاح', 'محجوز'] },
-    }),
+    Item.countDocuments({ donor: donorId, status: { $in: ['متاح', 'محجوز'] } }),
   ]);
 
-  if (alreadyResponded)
-    throw new AppError('لقد استجبت لهذا الطلب مسبقاً ⏳', 409, 'ALREADY_RESPONDED');
+  if (alreadyOffered)
+    throw new AppError('لقد قدّمت عرضاً لهذا الطلب مسبقاً ⏳', 409, 'ALREADY_OFFERED');
 
   if (!safeHub)
     throw new AppError('نقطة الاستلام غير موجودة أو غير مفعّلة', 400, 'INVALID_SAFE_HUB');
@@ -219,82 +208,171 @@ exports.respondToRequestLogic = async (requestId, donorId, body, file) => {
     cloudinaryId = uploaded.public_id;
   }
 
+  const offer = await donationOfferRepository.createOffer({
+    request:     requestId,
+    donor:       donorId,
+    safeHub:     body.safeHub,
+    condition:   body.condition,
+    description: body.description?.trim() || null,
+    imageUrl,
+    cloudinaryId,
+    status:      'pending',
+  });
+
+  // إشعار صاحب الطلب: شخص جديد عرض التبرع
+  setImmediate(async () => {
+    try {
+      const { getIO } = require('../socket');
+      getIO().to(`user_${request.requester._id}`).emit('request:new_offer', {
+        type:      'NEW_OFFER',
+        requestId: request._id,
+        offerId:   offer._id,
+        donorName: donor.name,
+        title:     request.title,
+        message:   `${donor.name} يريد التبرع بـ "${request.title}" 🎁`,
+      });
+
+      await notifyUser(request.requester._id, {
+        type:  'request_new_offer',
+        title: 'عرض تبرع جديد! 🎁',
+        body:  `${donor.name} عرض التبرع بـ "${request.title}" — راجع العروض واختر`,
+        metadata: { requestId: request._id.toString(), offerId: offer._id.toString() },
+      });
+    } catch (err) {
+      console.warn('[submitOffer] فشل الإشعار:', err.message);
+    }
+  });
+
+  return { msg: 'تم إرسال عرضك لصاحب الطلب بنجاح 🎉', offerId: offer._id };
+};
+
+// ─────────────────────────────────────────────────────────────
+// 6. جلب العروض على طلب معين (لصاحب الطلب فقط)
+// ─────────────────────────────────────────────────────────────
+exports.getOffersLogic = async (requestId, userId) => {
+  const request = await DonationRequest.findById(requestId)
+    .select('requester status')
+    .lean();
+
+  if (!request)
+    throw new AppError('الطلب غير موجود', 404, 'REQUEST_NOT_FOUND');
+
+  if (request.requester.toString() !== userId)
+    throw new AppError('غير مصرح لك برؤية هذه العروض 🚫', 403, 'FORBIDDEN');
+
+  const offers = await donationOfferRepository.findOffersByRequest(requestId);
+  return { offers };
+};
+
+// ─────────────────────────────────────────────────────────────
+// 7. صاحب الطلب يختار عرضاً ← Transaction كاملة
+// ─────────────────────────────────────────────────────────────
+exports.acceptOfferLogic = async (requestId, offerId, userId) => {
+  const mongoose = require('mongoose');
+
+  // تحقق أن صاحب الطلب هو من يختار
+  const request = await DonationRequest.findOne({
+    _id:      requestId,
+    requester: userId,
+    status:   'active',
+  }).lean();
+
+  if (!request)
+    throw new AppError('الطلب غير موجود أو لا تملك صلاحية الاختيار', 404, 'REQUEST_NOT_FOUND');
+
+  const offer = await donationOfferRepository.findOfferById(offerId);
+
+  if (!offer || offer.request.toString() !== requestId || offer.status !== 'pending')
+    throw new AppError('العرض غير موجود أو تمت معالجته مسبقاً', 404, 'OFFER_NOT_FOUND');
+
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
+    // 1. إنشاء الـ Item المرتبط
     const [item] = await Item.create(
       [{
         title:           request.title,
-        description:     body.description?.trim() || request.description,
+        description:     offer.description || request.description,
         category:        request.category,
         location:        request.location,
-        condition:       body.condition ?? 'جيد',
-        safeHub:         body.safeHub,
-        donor:           donorId,
-        imageUrl,
-        cloudinaryId,
+        condition:       offer.condition,
+        safeHub:         offer.safeHub._id,
+        donor:           offer.donor._id,
+        imageUrl:        offer.imageUrl,
+        cloudinaryId:    offer.cloudinaryId,
         linkedRequestId: requestId,
         status:          'محجوز',
-        bookedBy:        request.requester._id,
+        bookedBy:        userId,         // صاحب الطلب هو الحاجز
         bookedAt:        new Date(),
       }],
       { session }
     );
 
-    // ✅ تحديث الطلب لربطه بالغرض الجديد داخل نفس الـ Transaction
+    // 2. قبول هذا العرض
+    await donationOfferRepository.acceptOffer(offerId, session);
+
+    // 3. رفض باقي العروض المعلّقة
+    await donationOfferRepository.rejectAllPendingExcept(requestId, offerId, session);
+
+    // 4. تحديث الطلب → fulfilled
     await DonationRequest.findByIdAndUpdate(
       requestId,
-      {
-        $set: {
-          fulfilledByItem: item._id,
-          status:          'fulfilled',
-        },
-      },
+      { $set: { status: 'fulfilled', fulfilledByItem: item._id } },
       { session }
     );
 
     await session.commitTransaction();
     session.endSession();
 
-    // إشعار صاحب الطلب خارج الـ Transaction
+    // إشعارات خارج الـ Transaction
     setImmediate(async () => {
       try {
         const { getIO } = require('../socket');
-        getIO().to(`user_${request.requester._id}`).emit('request:responded', {
-          type:      'REQUEST_RESPONDED',
+
+        // إشعار المتبرع المختار
+        getIO().to(`user_${offer.donor._id}`).emit('offer:accepted', {
+          type:      'OFFER_ACCEPTED',
           requestId: request._id,
+          offerId,
           itemId:    item._id,
-          donorName: donor.name,
-          title:     request.title,
-          message:   `شخص لديه "${request.title}" ويريد التبرع به لك 🎁`,
-          safeHub: {
-            name:    safeHub.name,
-            city:    safeHub.city,
-            address: safeHub.address,
-          },
+          message:   `تم اختيارك! توجّه إلى ${offer.safeHub.name} لإتمام التسليم 🤝`,
         });
 
-        await notifyUser(request.requester._id, {
-          type:   'request_responded',
-          title:  'شخص استجاب لطلبك! 🎁',
-          body:   `"${request.title}" — توجّه لنقطة التسليم وأكّد الاستلام`,
-          itemId: item._id,
+        await notifyUser(offer.donor._id, {
+          type:   'offer_accepted',
+          title:  'تم قبول عرضك! 🎉',
+          body:   `صاحب الطلب اختارك — توجّه إلى ${offer.safeHub.name} وأكّد التسليم`,
+          itemId: item._id.toString(),
         });
+
+        // إشعار المتبرعين المرفوضين
+        const rejected = await DonationOffer.find({
+          request: requestId,
+          status:  'rejected',
+          _id:     { $ne: offerId },
+        }).select('donor').lean();
+
+        for (const r of rejected) {
+          getIO().to(`user_${r.donor}`).emit('offer:rejected', {
+            type:      'OFFER_REJECTED',
+            requestId: request._id,
+            message:   'اختار صاحب الطلب شخصاً آخر هذه المرة 🙏',
+          });
+          await notifyUser(r.donor, {
+            type:  'offer_rejected',
+            title: 'لم يتم اختيارك هذه المرة',
+            body:  'شكراً لتبرعك — حاول مرة أخرى مع طلبات أخرى 💪',
+          });
+        }
       } catch (err) {
-        console.warn('[RespondToRequest] فشل الإشعار:', err.message);
+        console.warn('[acceptOffer] فشل الإشعارات:', err.message);
       }
     });
 
     return {
-      msg:  'شكراً! تم إنشاء الغرض وحجزه لصاحب الطلب تلقائياً 🎉',
-      item: {
-        _id:      item._id,
-        title:    item.title,
-        category: item.category,
-        safeHub:  { name: safeHub.name, city: safeHub.city },
-        status:   item.status,
-      },
+      msg:    'تم اختيار المتبرع بنجاح 🎉',
+      itemId: item._id,
     };
 
   } catch (err) {
@@ -302,12 +380,4 @@ exports.respondToRequestLogic = async (requestId, donorId, body, file) => {
     session.endSession();
     throw err;
   }
-};
-
-
-exports.getRequestByIdLogic = async (requestId, userId) => {
-  const request = await donationRequestRepository.findRequestByIdWithItem(requestId);
-  if (!request)
-    throw new AppError('الطلب غير موجود', 404, 'REQUEST_NOT_FOUND');
-  return request;
 };

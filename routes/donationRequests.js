@@ -52,5 +52,32 @@ router.get(
   validateObjectId('id'),
   drController.getRequestById   // ← controller جديد
 );
+// المتبرع يقدم عرضه
+router.post(
+  '/:id/offer',
+  requireAuth,
+  validateObjectId('id'),
+  upload.single('image'),
+  verifyImageBuffer,
+  validateBody('respondToRequest'),   // نفس schema الموجود — يكفي
+  drController.submitOffer
+);
+
+// صاحب الطلب يشوف قائمة العروض
+router.get(
+  '/:id/offers',
+  requireAuth,
+  validateObjectId('id'),
+  drController.getOffers
+);
+
+// صاحب الطلب يختار عرضاً
+router.post(
+  '/:id/offers/:offerId/accept',
+  requireAuth,
+  validateObjectId('id'),
+  validateObjectId('offerId'),
+  drController.acceptOffer
+);
 
 module.exports = router;

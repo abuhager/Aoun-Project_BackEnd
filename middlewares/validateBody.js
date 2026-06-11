@@ -185,6 +185,12 @@ const schemas = {
     urgency: Joi.string().valid('low', 'medium', 'high').default('medium'),
   }).unknown(false),
 
+  submitOffer: Joi.object({
+  condition:   textField(2, 50).required(),
+  safeHub:     OBJECT_ID.required(),
+  description: Joi.string().max(500).optional().allow('').trim(),
+}).unknown(false),
+
   // ──────────── hubs ────────────────────────────────────────────
   createHub: Joi.object({
     name: Joi.string().min(3).max(100).required().trim(),

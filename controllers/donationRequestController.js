@@ -37,3 +37,31 @@ exports.getRequestById = asyncHandler(async (req, res) => {
   const request = await drService.getRequestByIdLogic(req.params.id, req.user.id);
   res.json({ request });
 });
+
+
+// المتبرع يقدم عرضاً
+exports.submitOffer = asyncHandler(async (req, res) => {
+  const result = await drService.submitOfferLogic(
+    req.params.id,
+    req.user.id,
+    req.body,
+    req.file ?? null
+  );
+  res.status(201).json(result);
+});
+
+// صاحب الطلب يشوف العروض
+exports.getOffers = asyncHandler(async (req, res) => {
+  const result = await drService.getOffersLogic(req.params.id, req.user.id);
+  res.json(result);
+});
+
+// صاحب الطلب يختار عرضاً
+exports.acceptOffer = asyncHandler(async (req, res) => {
+  const result = await drService.acceptOfferLogic(
+    req.params.id,
+    req.params.offerId,
+    req.user.id
+  );
+  res.json(result);
+});
