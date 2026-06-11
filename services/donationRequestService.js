@@ -385,7 +385,7 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
 };
 
 exports.getRequestByIdLogic = async (requestId, userId) => {
-  const request = await donationRequestRepository.findRequestById(requestId);
+  const request = await donationRequestRepository.findRequestByIdWithItem(requestId);
   if (!request)
     throw new AppError('الطلب غير موجود', 404, 'REQUEST_NOT_FOUND');
   return request;

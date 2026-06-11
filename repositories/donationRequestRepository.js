@@ -64,12 +64,12 @@ exports.findActiveRequestById = (requestId) =>
   .lean();
 
 
-  exports.findRequestByIdWithItem = (requestId) =>
+ exports.findRequestByIdWithItem = (requestId) =>
   DonationRequest.findById(requestId)
     .populate('requester', 'name')
     .populate({
-      path:     'fulfilledByItem',
-      select:   'condition status safeHub donor',
+      path:   'fulfilledByItem',
+      select: 'condition status safeHub donor recipientConfirmed donorConfirmed', // ← أضف donorConfirmed
       populate: [
         { path: 'safeHub', select: 'name city address' },
         { path: 'donor',   select: 'name' },

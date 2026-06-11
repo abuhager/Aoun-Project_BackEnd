@@ -458,7 +458,7 @@ exports.confirmReceiptLogic = async (itemId, userId) => {
 
   if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
   if (item.status !== 'محجوز') throw new AppError('الغرض غير محجوز حالياً', 400, 'ITEM_NOT_BOOKED');
-  if (item.bookedBy?.toString() !== userId.toString()) throw new AppError('أنت لستَ الحاجز لهذا الغرض', 403, 'NOT_BOOKER');
+if (item.bookedBy?.toString() !== userId.toString()) throw new AppError('أنت لستَ الحاجز لهذا الغرض', 403, 'NOT_BOOKER');
   if (item.recipientConfirmed) throw new AppError('لقد أكّدت الاستلام مسبقاً ⏳', 400, 'RECIPIENT_ALREADY_CONFIRMED');
 
   const updatedItem = await Item.findOneAndUpdate(
@@ -519,12 +519,13 @@ exports.completeDonorDeliveryLogic = async (itemId, userId) => {
   const now = new Date();
 
   await Item.findByIdAndUpdate(itemId, {
-    $set: {
-      status:         'تم التسليم',
-      donorConfirmedAt: now,
-      deliveredAt:      now,
-    },
-  });
+  $set: {
+    status:           'تم التسليم',
+    donorConfirmed:   true,       // ← هذا السطر مفقود
+    donorConfirmedAt: now,
+    deliveredAt:      now,
+  },
+});
 
   await User.findByIdAndUpdate(userId, {
     $inc: {

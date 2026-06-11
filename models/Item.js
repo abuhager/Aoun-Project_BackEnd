@@ -73,6 +73,11 @@ const ItemSchema = new mongoose.Schema(
       default: false,
       index: true,
     },
+    donorConfirmed: {
+  type:    Boolean,
+  default: false,
+  index:   true,
+},
     recipientConfirmedAt: {
       type: Date,
       default: null,
@@ -81,6 +86,7 @@ const ItemSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    
     deliveredAt: {
       type: Date,
       default: null,
