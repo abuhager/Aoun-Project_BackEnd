@@ -104,12 +104,16 @@ exports.getMyItemsLogic = async (userId) => {
 // 3. جلب غرض بالـ ID
 // ─────────────────────────────────────────────────────────────────────────────────
 exports.getItemByIdLogic = async (itemId, requesterId) => {
-  // ✅ لا يوجد أي filter على status — يُرجع الغرض بغض النظر عن حالته
   const item = await itemRepository.findItemDetails(itemId);
-
   if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
 
-  return item.toObject ? item.toObject() : { ...item };
+  const settings = await SystemSettings.getCached(); // ✅ من Admin
+  const obj = item.toObject ? item.toObject() : { ...item };
+
+  // ✅ أضف expiryHours من الـ Settings مباشرةً
+  obj.expiryHours = settings.bookingExpiryHours ?? 72;
+
+  return obj;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────────
@@ -499,7 +503,9 @@ if (item.bookedBy?.toString() !== userId.toString()) throw new AppError('أنت 
     itemId: item._id,
   }).catch((err) => console.warn('[Notify] فشل إشعار تأكيد الاستلام:', err.message));
 
-  return { msg: 'تم تأكيد استلامك ✅ — بانتظار تأكيد المتبرع' };
+  return { msg: 'تم تأكيد استلامك ✅ — بانتظار تأكيد المتبرع' ,
+    status: 'waiting_donor'
+  };
 };
 
 // ─── دالة التأكيد النهائي الخاصة بالمتبرع (Donor Logic) ───
@@ -595,7 +601,9 @@ exports.completeDonorDeliveryLogic = async (itemId, userId) => {
     `,
   }).catch((err) => console.error('[Email] فشل إرسال تأكيد التسليم:', err.message));
 
-  return { msg: 'تم إتمام التسليم بنجاح 🎉' };
+  return { msg: 'تم إتمام التسليم بنجاح 🎉' 
+    ,status: 'delivered'
+  };
 };
 
 // ─────────────────────────────────────────────────────────────────────────────────

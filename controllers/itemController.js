@@ -38,10 +38,16 @@ exports.cancelBooking = asyncHandler(async (req, res) => {
 });
 
 exports.completeDelivery = asyncHandler(async (req, res) => {
-  // ✅ إذا وصل الطلب عبر confirm-receipt، نحدد النوع تلقائياً
-  const confirmationType =
-    req.body?.confirmationType ??
-    (req.path.includes('confirm-receipt') ? 'recipient_confirm' : undefined);
+  const { confirmationType } = req.body;
+
+  // ✅ تحقق مبكر في الـ Controller — أوضح رسالة للـ Developer
+  if (!confirmationType) {
+    return res.status(400).json({
+      success: false,
+      code: 'MISSING_CONFIRMATION_TYPE',
+      msg: 'يجب إرسال confirmationType في الـ body',
+    });
+  }
 
   const result = await itemService.completeDeliveryLogic(
     req.params.id,
@@ -49,13 +55,14 @@ exports.completeDelivery = asyncHandler(async (req, res) => {
     confirmationType
   );
 
-  if (result?.status === 'delivered' || result?.msg?.includes('إتمام')) {
+  // ✅ الإصلاح: اعتمد على result.status بدلاً من String matching
+  if (result?.status === 'delivered') {
     try {
       getIO().to('leaderboard_subscribers').emit('leaderboard:update');
     } catch (_) {}
   }
 
-  res.json(result);
+  res.json({ success: true, ...result });
 });
 
 exports.updateItem = asyncHandler(async (req, res) => {

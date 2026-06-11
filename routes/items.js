@@ -63,17 +63,18 @@ router.put(
 
 router.put(
   '/complete/:id',
-  requireAuth,             
+  requireAuth,
   validateObjectId('id'),
   validateBody('completeDelivery'),
-  completeDelivery      
+  completeDelivery
 );
 
+// ✅ Route مختصر للمستلم فقط — لا يحتاج body
 router.post(
   '/:id/confirm-receipt',
   requireAuth,
   validateObjectId('id'),
-  completeDelivery        // ← مباشرة بدون validateBody
+  completeDelivery   // req.route.path سيكون '/:id/confirm-receipt' ✅
 );
 
 router.put(
