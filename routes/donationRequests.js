@@ -2,7 +2,7 @@ const express  = require('express');
 const router   = express.Router();
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
-const { requireAuth }  = require('../middlewares/auth');
+const { requireAuth, optionalAuth } = require('../middlewares/auth');
 const validateObjectId = require('../middlewares/validateObjectId');
 const validateBody     = require('../middlewares/validateBody');
 const drController     = require('../controllers/donationRequestController');
@@ -51,15 +51,15 @@ router.post(
 // ── طلب واحد ─────────────────────────────────────────────────
 router.get(
   '/:id',
-  requireAuth,
+  optionalAuth,          // ✅ بدل requireAuth
   validateObjectId('id'),
   drController.getRequestById
 );
 
-// ── العروض ───────────────────────────────────────────────────
+// ── العروض — خاص بصاحب الطلب (يحتاج تسجيل) ──────────────────
 router.get(
   '/:id/offers',
-  requireAuth,
+  requireAuth,           // ✅ يبقى requireAuth — لأن العروض سرية
   validateObjectId('id'),
   drController.getOffers
 );
