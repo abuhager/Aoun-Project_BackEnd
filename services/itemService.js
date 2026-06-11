@@ -104,8 +104,10 @@ exports.getMyItemsLogic = async (userId) => {
 // 3. جلب غرض بالـ ID
 // ─────────────────────────────────────────────────────────────────────────────────
 exports.getItemByIdLogic = async (itemId, requesterId) => {
+  // ✅ لا يوجد أي filter على status — يُرجع الغرض بغض النظر عن حالته
   const item = await itemRepository.findItemDetails(itemId);
-  if (!item) throw Object.assign(new Error('الغرض غير موجود'), { status: 404 });
+
+  if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
 
   return item.toObject ? item.toObject() : { ...item };
 };
