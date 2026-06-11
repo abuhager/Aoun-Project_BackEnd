@@ -28,6 +28,7 @@ const notificationSchema = new mongoose.Schema({
     'matching_item',         // ✅ مضاف — موجود في itemService.js
   ],
   required: true,
+},
   title:   { type: String, required: true },
   body:    { type: String, required: true },
   itemId:  { type: mongoose.Schema.Types.ObjectId, ref: 'Item', default: null },
