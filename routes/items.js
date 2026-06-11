@@ -42,6 +42,7 @@ router.post(
   createItem
 );
 
+
 router.put(
   '/book/:id',
   requireAuth,
@@ -66,6 +67,13 @@ router.put(
   validateObjectId('id'),
   validateBody('completeDelivery'),
   completeDelivery      
+);
+
+router.post(
+  '/:id/confirm-receipt',
+  requireAuth,
+  validateObjectId('id'),
+  completeDelivery        // ← مباشرة بدون validateBody
 );
 
 router.put(

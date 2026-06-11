@@ -38,17 +38,20 @@ exports.cancelBooking = asyncHandler(async (req, res) => {
 });
 
 exports.completeDelivery = asyncHandler(async (req, res) => {
+  // ✅ إذا وصل الطلب عبر confirm-receipt، نحدد النوع تلقائياً
+  const confirmationType =
+    req.body?.confirmationType ??
+    (req.path.includes('confirm-receipt') ? 'recipient_confirm' : undefined);
+
   const result = await itemService.completeDeliveryLogic(
     req.params.id,
     req.user.id,
-    req.body.confirmationType
+    confirmationType
   );
 
-  // ✅ emit leaderboard فقط عند إتمام التسليم الكامل، وليس عند تأكيد المستلم فقط
   if (result?.status === 'delivered' || result?.msg?.includes('إتمام')) {
     try {
-     getIO().to('leaderboard_subscribers').emit('leaderboard:update');
-
+      getIO().to('leaderboard_subscribers').emit('leaderboard:update');
     } catch (_) {}
   }
 

@@ -7,6 +7,7 @@ const Item                       = require('../models/Item');
 const SafeHub                    = require('../models/SafeHub');
 const { uploadToCloudinary }     = require('../utils/uploadToCloudinary');
 const notifyUser                 = require('../utils/notifyUser');
+const DonationRequest = require('../models/DonationRequest');
 
 // ✅ منفصلتان: إنشاء الطلب vs الاستجابة (التبرع)
 const getMinTrustLevel           = (s) => s.minTrustLevelForRequests  ?? 2;
@@ -167,7 +168,6 @@ exports.respondToRequestLogic = async (requestId, donorId, body, file) => {
   if (!donor?.isVerified)
     throw new AppError('يجب تفعيل حسابك أولاً ✅', 403, 'ACCOUNT_NOT_VERIFIED');
 
-  // ✅ trustLevel للتبرع (منفصل عن إنشاء الطلب)
   const minLevel = getMinTrustLevelForDonating(settings);
   if ((donor.trustLevel ?? 1) < minLevel)
     throw new AppError(
@@ -176,7 +176,6 @@ exports.respondToRequestLogic = async (requestId, donorId, body, file) => {
       'INSUFFICIENT_TRUST_LEVEL'
     );
 
-  // ✅ 3 queries بالتوازي
   const [alreadyResponded, safeHub, activeCount] = await Promise.all([
     Item.exists({
       linkedRequestId: requestId,
@@ -208,7 +207,6 @@ exports.respondToRequestLogic = async (requestId, donorId, body, file) => {
       'MAX_ACTIVE_ITEMS_REACHED'
     );
 
-  // رفع الصورة إن وُجدت
   let imageUrl = null, cloudinaryId = null;
   if (file) {
     const ALLOWED = ['image/jpeg', 'image/png', 'image/webp'];
@@ -230,8 +228,8 @@ exports.respondToRequestLogic = async (requestId, donorId, body, file) => {
         title:           request.title,
         description:     body.description?.trim() || request.description,
         category:        request.category,
-        location:        request.location,           // ✅ دائماً من الطلب
-        condition:       body.condition ?? 'جيد',    // ✅ default آمن
+        location:        request.location,
+        condition:       body.condition ?? 'جيد',
         safeHub:         body.safeHub,
         donor:           donorId,
         imageUrl,
@@ -244,8 +242,20 @@ exports.respondToRequestLogic = async (requestId, donorId, body, file) => {
       { session }
     );
 
+    // ✅ تحديث الطلب لربطه بالغرض الجديد داخل نفس الـ Transaction
+    await DonationRequest.findByIdAndUpdate(
+      requestId,
+      {
+        $set: {
+          fulfilledByItem: item._id,
+          status:          'fulfilled',
+        },
+      },
+      { session }
+    );
+
     await session.commitTransaction();
-    try { session.endSession(); } catch (_) {}
+    session.endSession();
 
     // إشعار صاحب الطلب خارج الـ Transaction
     setImmediate(async () => {
@@ -289,8 +299,8 @@ exports.respondToRequestLogic = async (requestId, donorId, body, file) => {
 
   } catch (err) {
     if (session.inTransaction()) await session.abortTransaction();
-    try { session.endSession(); } catch (_) {}
-    throw err;   // ✅ يرفع الخطأ لـ asyncHandler
+    session.endSession();
+    throw err;
   }
 };
 

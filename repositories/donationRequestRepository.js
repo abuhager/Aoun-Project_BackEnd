@@ -16,6 +16,14 @@ exports.createRequest = (payload) =>
 exports.findRequests = ({ filter, skip, limit }) =>
   DonationRequest.find(filter)
     .populate('requester', 'name avatar trustLevel trustScore')
+    .populate({                        // ✅ أضف هاد
+      path:   'fulfilledByItem',
+      select: '_id condition status safeHub donor',
+      populate: [
+        { path: 'safeHub', select: 'name city address' },
+        { path: 'donor',   select: 'name' },
+      ],
+    })
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(limit)
@@ -35,6 +43,14 @@ exports.cancelOwnedActiveRequest = ({ requestId, userId }) =>
 exports.findUserRequests = (userId) =>
   DonationRequest.find({ requester: userId })
     .sort({ createdAt: -1 })
+    .populate({
+      path:   'fulfilledByItem',
+      select: '_id condition status safeHub donor',
+      populate: [
+        { path: 'safeHub', select: 'name city address' },
+        { path: 'donor',   select: 'name' },
+      ],
+    })
     .lean();
 
     // جلب طلب نشط واحد بالـ ID مع populate للـ requester
