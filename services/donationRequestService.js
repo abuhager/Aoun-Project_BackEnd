@@ -7,12 +7,11 @@ const Item                       = require('../models/Item');
 const SafeHub                    = require('../models/SafeHub');
 const { uploadToCloudinary }     = require('../utils/uploadToCloudinary');
 const notifyUser                 = require('../utils/notifyUser');
-const DonationRequest = require('../models/DonationRequest');
+const DonationRequest            = require('../models/DonationRequest');
 const donationOfferRepository    = require('../repositories/donationOfferRepository');
 const DonationOffer              = require('../models/DonationOffer');
 
-// ✅ منفصلتان: إنشاء الطلب vs الاستجابة (التبرع)
-const getMinTrustLevel           = (s) => s.minTrustLevelForRequests  ?? 2;
+const getMinTrustLevel            = (s) => s.minTrustLevelForRequests  ?? 2;
 const getMinTrustLevelForDonating = (s) => s.minTrustLevelForDonating ?? 1;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,18 +35,17 @@ exports.createRequestLogic = async (body, userId) => {
     );
 
   const currentMonth = new Date().toISOString().slice(0, 7);
-  const now          = new Date();
 
   const totalThisMonth = await donationRequestRepository.countAllMonthlyRequests({
-  userId,
-  month: currentMonth,
-});
-if (totalThisMonth >= settings.maxActiveRequestsPerMonth)
-  throw new AppError(
-    `لا يمكنك نشر أكثر من ${settings.maxActiveRequestsPerMonth} طلب في الشهر الواحد (بما فيها الملغية)`,
-    429,
-    'MONTHLY_LIMIT_EXCEEDED'
-  );
+    userId,
+    month: currentMonth,
+  });
+  if (totalThisMonth >= settings.maxActiveRequestsPerMonth)
+    throw new AppError(
+      `لا يمكنك نشر أكثر من ${settings.maxActiveRequestsPerMonth} طلب في الشهر الواحد (بما فيها الملغية)`,
+      429,
+      'MONTHLY_LIMIT_EXCEEDED'
+    );
 
   if (!settings.categories?.includes(body.category))
     throw new AppError(`التصنيف "${body.category}" غير مدعوم`, 400, 'INVALID_CATEGORY');
@@ -77,11 +75,11 @@ if (totalThisMonth >= settings.maxActiveRequestsPerMonth)
 // 2. جلب قائمة طلبات التبرع
 // ─────────────────────────────────────────────────────────────────────────────
 exports.getDonationRequestsLogic = async (query, userId) => {
-  const page     = Math.max(1, parseInt(query.page,  10) || 1);
-  const settings = await SystemSettings.getCached();
+  const page        = Math.max(1, parseInt(query.page, 10) || 1);
+  const settings    = await SystemSettings.getCached();
   const maxPageSize = settings.maxPageSize ?? 20;
-  const limit    = Math.min(maxPageSize, Math.max(1, parseInt(query.limit, 10) || 10));
-  const skip     = (page - 1) * limit;
+  const limit       = Math.min(maxPageSize, Math.max(1, parseInt(query.limit, 10) || 10));
+  const skip        = (page - 1) * limit;
 
   const mine   = String(query.mine).toLowerCase() === 'true';
   const filter = {};
@@ -91,9 +89,9 @@ exports.getDonationRequestsLogic = async (query, userId) => {
   if (query.urgency  && query.urgency  !== 'all') filter.urgency  = query.urgency;
 
   if (mine) {
-    filter.requester = userId;             // طلباتي — كل الحالات
+    filter.requester = userId;
   } else {
-    filter.status    = 'active';           // الكل — النشطة فقط
+    filter.status    = 'active';
     filter.expiresAt = { $gt: new Date() };
   }
 
@@ -147,12 +145,10 @@ exports.getMyRequestsLogic = async (userId) => {
   };
 };
 
-// ─────────────────────────────────────────────────────────────
-// 5. المتبرع يقدّم عرضاً (بدلاً من respond المباشر القديم)
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. المتبرع يقدّم عرضاً
+// ─────────────────────────────────────────────────────────────────────────────
 exports.submitOfferLogic = async (requestId, donorId, body, file) => {
-  const mongoose = require('mongoose');
-
   const [request, donor, settings] = await Promise.all([
     donationRequestRepository.findActiveRequestById(requestId),
     User.findById(donorId).select('isVerified trustLevel name').lean(),
@@ -168,12 +164,10 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
   if (!donor?.isVerified)
     throw new AppError('يجب تفعيل حسابك أولاً ✅', 403, 'ACCOUNT_NOT_VERIFIED');
 
-  // ✅ التحقق من مستوى الثقة للتبرع (Level 1 مسموح بالإعداد الافتراضي)
   const minLevel = getMinTrustLevelForDonating(settings);
   if ((donor.trustLevel ?? 1) < minLevel)
     throw new AppError(`يلزم Level ${minLevel} على الأقل للتبرع`, 403, 'INSUFFICIENT_TRUST_LEVEL');
 
-  // ✅ إصلاح: نعدّ عروض التبرع المعلّقة فقط، وليس الـ Items العادية
   const [alreadyOffered, safeHub, pendingOffersCount] = await Promise.all([
     donationOfferRepository.existsByRequestAndDonor(requestId, donorId),
     SafeHub.findOne({ _id: body.safeHub, isActive: true }).lean(),
@@ -186,10 +180,7 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
   if (!safeHub)
     throw new AppError('نقطة الاستلام غير موجودة أو غير مفعّلة', 400, 'INVALID_SAFE_HUB');
 
-  // ✅ إصلاح: الحد الأقصى من SystemSettings (ديناميكي، لا hardcoded)
-  // Level 1 يتبرع بحرية طالما لم يتجاوز الحد المسموح من الآدمن
   const maxPendingOffers = settings.maxPendingOffersPerDonor ?? 5;
-
   if (pendingOffersCount >= maxPendingOffers)
     throw new AppError(
       `لديك ${pendingOffersCount} عرض معلّق حالياً — انتظر حتى يُقبل أو يُرفض بعضها`,
@@ -220,7 +211,6 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
     status:      'pending',
   });
 
-  // إشعار صاحب الطلب: شخص جديد عرض التبرع
   setImmediate(async () => {
     try {
       const { getIO } = require('../socket');
@@ -232,7 +222,6 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
         title:     request.title,
         message:   `${donor.name} يريد التبرع بـ "${request.title}" 🎁`,
       });
-
       await notifyUser(request.requester._id, {
         type:  'request_new_offer',
         title: 'عرض تبرع جديد! 🎁',
@@ -247,9 +236,9 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
   return { msg: 'تم إرسال عرضك لصاحب الطلب بنجاح 🎉', offerId: offer._id };
 };
 
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // 6. جلب العروض على طلب معين (لصاحب الطلب فقط)
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 exports.getOffersLogic = async (requestId, userId) => {
   const request = await DonationRequest.findById(requestId)
     .select('requester status')
@@ -265,17 +254,16 @@ exports.getOffersLogic = async (requestId, userId) => {
   return { offers };
 };
 
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // 7. صاحب الطلب يختار عرضاً ← Transaction كاملة
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 exports.acceptOfferLogic = async (requestId, offerId, userId) => {
   const mongoose = require('mongoose');
 
-  // تحقق أن صاحب الطلب هو من يختار
   const request = await DonationRequest.findOne({
-    _id:      requestId,
+    _id:       requestId,
     requester: userId,
-    status:   'active',
+    status:    'active',
   }).lean();
 
   if (!request)
@@ -304,7 +292,7 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
         cloudinaryId:    offer.cloudinaryId,
         linkedRequestId: requestId,
         status:          'محجوز',
-        bookedBy:        userId,         // صاحب الطلب هو الحاجز
+        bookedBy:        userId,
         bookedAt:        new Date(),
       }],
       { session }
@@ -324,19 +312,18 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
     );
 
     await session.commitTransaction();
-    session.endSession();
+    try { session.endSession(); } catch (_) {}
 
     // إشعارات خارج الـ Transaction
     setImmediate(async () => {
       try {
         const { getIO } = require('../socket');
 
-        // إشعار المتبرع المختار
         getIO().to(`user_${offer.donor._id}`).emit('offer:accepted', {
           type:      'OFFER_ACCEPTED',
           requestId: request._id,
           offerId,
-          itemId:    item._id,
+          itemId:    item._id.toString(),
           message:   `تم اختيارك! توجّه إلى ${offer.safeHub.name} لإتمام التسليم 🤝`,
         });
 
@@ -347,7 +334,6 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
           itemId: item._id.toString(),
         });
 
-        // إشعار المتبرعين المرفوضين
         const rejected = await DonationOffer.find({
           request: requestId,
           status:  'rejected',
@@ -371,19 +357,22 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
       }
     });
 
-   return {
-  msg:    'تم اختيار المتبرع بنجاح 🎉',
-  itemId: item._id.toString(),   // ← toString() مهم
-};
+    return {
+      msg:    'تم اختيار المتبرع بنجاح 🎉',
+      itemId: item._id.toString(),
+    };
 
   } catch (err) {
     if (session.inTransaction()) await session.abortTransaction();
-    session.endSession();
+    try { session.endSession(); } catch (_) {}
     throw err;
   }
 };
 
-exports.getRequestByIdLogic = async (requestId, userId) => {
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. جلب طلب بحسب الـ ID
+// ─────────────────────────────────────────────────────────────────────────────
+exports.getRequestByIdLogic = async (requestId) => {
   const request = await donationRequestRepository.findRequestByIdWithItem(requestId);
   if (!request)
     throw new AppError('الطلب غير موجود', 404, 'REQUEST_NOT_FOUND');
