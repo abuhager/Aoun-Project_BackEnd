@@ -25,6 +25,10 @@ exports.updateById = (id, rawBody) => {
   for (const field of ALLOWED_UPDATE_FIELDS) {
     if (rawBody[field] !== undefined) safeUpdate[field] = rawBody[field];
   }
+
+  // ✅ Guard: لا تُنفّذ query إذا لم يكن هناك شيء للتحديث
+  if (Object.keys(safeUpdate).length === 0) return Promise.resolve(null);
+
   return SafeHub.findByIdAndUpdate(id, { $set: safeUpdate }, {
     returnDocument: 'after', runValidators: true,
   });

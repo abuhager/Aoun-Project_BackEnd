@@ -36,8 +36,14 @@ exports.updateHub = async (hubId, rawBody) => {
     return { statusCode: 400, body: { msg: 'معرّف المركز غير صحيح' } };
 
   const hub = await hubRepository.updateById(hubId, rawBody);
-  if (!hub)
-    return { statusCode: 404, body: { msg: 'المركز غير موجود' } };
+
+  if (hub === null) {
+    // تحقق: هل السبب عدم وجود Hub أم عدم وجود حقول؟
+    const exists = await hubRepository.findById(hubId);
+    if (!exists)
+      return { statusCode: 404, body: { msg: 'المركز غير موجود' } };
+    return { statusCode: 400, body: { msg: 'لم يتم تحديد أي حقل للتعديل' } };
+  }
 
   return { statusCode: 200, body: hubDto.toAdminHub(hub) };
 };
