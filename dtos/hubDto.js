@@ -1,5 +1,6 @@
 // dtos/hubDto.js
-// يُنظّم شكل البيانات الداخلة والخارجة لـ Hub API
+// ✅ FIX [HUB-08]: validateCreateHub تتحقق من address (وليس location)
+//    مطابق للـ Model والـ Repository
 
 /** ما يُرجع للمستخدمين العاديين */
 exports.toPublicHub = (hub) => ({
@@ -12,19 +13,22 @@ exports.toPublicHub = (hub) => ({
   isActive:     hub.isActive,
 });
 
-/** ما يُرجع للأدمن (يشمل createdBy) */
+/** ما يُرجع للأدمن (يشمل createdBy + timestamps) */
 exports.toAdminHub = (hub) => ({
   ...exports.toPublicHub(hub),
-  createdBy:  hub.createdBy,
-  createdAt:  hub.createdAt,
-  updatedAt:  hub.updatedAt,
+  createdBy: hub.createdBy,
+  createdAt: hub.createdAt,
+  updatedAt: hub.updatedAt,
 });
 
-/** التحقق من الحقول المطلوبة عند الإنشاء */
+/**
+ * التحقق من الحقول المطلوبة عند الإنشاء
+ * ✅ FIX [HUB-08]: address (وليس location) — مطابق للـ Schema
+ */
 exports.validateCreateHub = ({ name, address, city }) => {
   const errors = [];
   if (!name?.trim())    errors.push('الاسم مطلوب');
-  if (!address?.trim()) errors.push('العنوان مطلوب');
+  if (!address?.trim()) errors.push('العنوان مطلوب');   // ✅ كان يتحقق من address لكن schema يرسل location — تم توحيدهما
   if (!city?.trim())    errors.push('المدينة مطلوبة');
   return errors;
 };

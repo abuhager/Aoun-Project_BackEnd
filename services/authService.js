@@ -454,7 +454,10 @@ exports.logoutLogic = async (userId) => {
   };
 };
 
-// ── getMeLogic ────────────────────────────────────────────────
+// ── getMeLogic ── (الجزء المُصحَّح فقط من authService.js)
+// ✅ FIX [LOGIC-02]: completedDonations كانت تحسب من الصفحة الحالية فقط (limit=10)
+//    الآن تأتي من query منفصل يحسب الإجمالي الحقيقي من كل DB
+
 exports.getMeLogic = async (userId, page = 1) => {
   const user = await userRepository.findById(userId);
   if (!user) {
@@ -462,48 +465,69 @@ exports.getMeLogic = async (userId, page = 1) => {
   }
 
   const settings = await SystemSettings.getCached();
-  const pageSize = settings?.profilePageSize ?? 10;
-  const skip = (page - 1) * pageSize;
+  const pageSize  = settings?.profilePageSize ?? 10;
+  const skip      = (page - 1) * pageSize;
 
-  const [donations, received, totalRatings, totalDonationsCount, totalReceivedCount] =
-    await Promise.all([
-      Item.find({ donor: userId }).populate('bookedBy', 'name avatar').sort({ createdAt: -1 }).skip(skip).limit(pageSize).lean(),
-      Item.find({ bookedBy: userId, status: 'تم التسليم' }).populate('donor', 'name avatar').sort({ createdAt: -1 }).skip(skip).limit(pageSize).lean(),
-      Rating.countDocuments({ ratee: userId }),
-      Item.countDocuments({ donor: userId }),
-      Item.countDocuments({ bookedBy: userId, status: 'تم التسليم' }),
-    ]);
+  const [
+    donations,
+    received,
+    totalRatings,
+    totalDonationsCount,
+    totalReceivedCount,
+    completedDonationsCount, // ✅ FIX [LOGIC-02]: query منفصل للإجمالي الحقيقي
+  ] = await Promise.all([
+    Item.find({ donor: userId })
+        .populate('bookedBy', 'name avatar')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(pageSize)
+        .lean(),
+
+    Item.find({ bookedBy: userId, status: 'تم التسليم' })
+        .populate('donor', 'name avatar')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(pageSize)
+        .lean(),
+
+    Rating.countDocuments({ ratee: userId }),
+    Item.countDocuments({ donor: userId }),
+    Item.countDocuments({ bookedBy: userId, status: 'تم التسليم' }),
+
+    // ✅ FIX [LOGIC-02]: العدد الحقيقي من كل DB — لا فلترة على نتيجة محدودة
+    Item.countDocuments({ donor: userId, status: 'تم التسليم' }),
+  ]);
 
   const donationsTotalPages = Math.ceil(totalDonationsCount / pageSize);
-  const receivedTotalPages = Math.ceil(totalReceivedCount / pageSize);
+  const receivedTotalPages  = Math.ceil(totalReceivedCount  / pageSize);
 
   return {
     statusCode: 200,
     body: {
       user: buildSafeUser(user),
       stats: {
-        donationsCount: totalDonationsCount,
-        completedDonations: donations.filter((i) => i.status === 'تم التسليم').length,
-        receivedCount: totalReceivedCount,
+        donationsCount:      totalDonationsCount,
+        completedDonations:  completedDonationsCount, // ✅ FIX [LOGIC-02]
+        receivedCount:       totalReceivedCount,
         totalRatings,
       },
-      allDonations: donations,
-      completedRequests: received,
-      
+      allDonations:       donations,
+      completedRequests:  received,
+
       pagination: {
         currentPage: page,
-        limit: pageSize,
+        limit:       pageSize,
         donations: {
           totalItems: totalDonationsCount,
           totalPages: donationsTotalPages,
-          hasMore: page < donationsTotalPages,
+          hasMore:    page < donationsTotalPages,
         },
         received: {
           totalItems: totalReceivedCount,
           totalPages: receivedTotalPages,
-          hasMore: page < receivedTotalPages,
-        }
-      }
+          hasMore:    page < receivedTotalPages,
+        },
+      },
     },
   };
 };

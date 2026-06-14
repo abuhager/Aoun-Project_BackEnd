@@ -1,3 +1,7 @@
+// models/SafeHub.js
+// ✅ FIX [HUB-09]: إضافة compound index على city + isActive
+//    يُسرّع الـ query الأكثر استخداماً: findAllActive() + findByCity()
+
 const mongoose = require('mongoose');
 
 const safeHubSchema = new mongoose.Schema(
@@ -37,5 +41,8 @@ const safeHubSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// ✅ FIX [HUB-09]: compound index — كل query تفلتر بـ isActive أولاً ثم city
+safeHubSchema.index({ isActive: 1, city: 1 });
 
 module.exports = mongoose.model('SafeHub', safeHubSchema);

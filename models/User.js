@@ -1,13 +1,13 @@
 // models/User.js
+// ✅ FIX [HC-01]: إضافة TTL Index على verificationOtpExpiry لتنظيف الحسابات
+//    غير المفعَّلة تلقائياً من MongoDB بعد انتهاء فترة السماح
+
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema(
   {
     name:              { type: String, required: true, trim: true },
-
-    // ✅ إصلاح Duplicate Index: حذف unique:true من هنا — الفهرس مُعرَّف أسفله في schema.index()
     email:             { type: String, required: true },
-
     password:          { type: String, required: true, select: false },
     avatar:            { type: String, default: '' },
     isBanned:          { type: Boolean, default: false },
@@ -20,7 +20,6 @@ const userSchema = new mongoose.Schema(
     otpAttempts:           { type: Number, default: 0, select: false },
 
     // ── OTP الهاتف ─────────────────────────────────────────
-    // ✅ إصلاح Duplicate Index: حذف sparse:true من هنا — الفهرس مُعرَّف أسفله
     phone:             { type: String },
     phoneVerified:     { type: Boolean, default: false },
     phoneOtp:          { type: String, select: false },
@@ -54,5 +53,18 @@ userSchema.index({ trustScore: -1 });
 userSchema.index({ totalDonations: -1 });
 userSchema.index({ createdAt: -1 });
 userSchema.index({ resetPasswordToken: 1 }, { sparse: true });
+
+// ✅ FIX [HC-01]: TTL Index — يحذف MongoDB تلقائياً أي مستخدم غير مفعَّل
+// بعد مرور (expireAfterSeconds) ثانية من قيمة verificationOtpExpiry
+// partialFilterExpression يضمن أن المفعَّلين (isVerified: true) لن يُمسوا أبداً
+// القيمة من env أو 3600 ثانية (ساعة grace period) افتراضياً
+userSchema.index(
+  { verificationOtpExpiry: 1 },
+  {
+    expireAfterSeconds:        parseInt(process.env.UNVERIFIED_USER_TTL_SECONDS || '3600'),
+    partialFilterExpression:   { isVerified: false },
+    name:                      'ttl_unverified_users',
+  }
+);
 
 module.exports = mongoose.model('User', userSchema);

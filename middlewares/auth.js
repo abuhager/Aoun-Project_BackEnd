@@ -1,27 +1,10 @@
 // middlewares/auth.js
+// ✅ FIX [SEC-01]: حذف دالة validateSession الميتة — كانت مُعرَّفة ولا تُستخدم أبداً
 
 const AppError              = require('../utils/AppError');
 const { verifyAccessToken } = require('../utils/tokenUtils');
 const banCache              = require('../utils/banCache');
 const User                  = require('../models/User');
-
-// ─────────────────────────────────────────────────────────────
-// Helper: جلب بيانات المستخدم من DB مرة واحدة فقط عند الحاجة
-// يُدمج فحص الحظر + sessionIssuedAt في query واحد
-// ─────────────────────────────────────────────────────────────
-async function validateSession(decoded) {
-  // ✅ لو لا يوجد sessionIssuedAt في الـ payload → لا داعي لضرب DB
-  // (يعني الـ token قديم صدر قبل إضافة هذه الميزة → نثق به)
-  const needsDbCheck = !!decoded.user.sessionIssuedAt !== false;
-  // decoded.iat دائماً موجود — لكن نضرب DB فقط إذا الـ payload لا يحمل تاريخ الجلسة
-  // أو إذا احتجنا التحقق الأكيد من isBanned (banCache لا يكفي وحده)
-  
-  const user = await User.findById(decoded.user.id)
-    .select('sessionIssuedAt isBanned')
-    .lean();
-
-  return user;
-}
 
 // ─────────────────────────────────────────────────────────────
 // 1. requireAuth — إلزامي
@@ -49,7 +32,7 @@ exports.requireAuth = async (req, res, next) => {
       return next(new AppError('يجب تفعيل حسابك أولاً 📧', 403, 'EMAIL_NOT_VERIFIED'));
     }
 
-    // ── 3) فحص sessionIssuedAt — ضرب DB مرة واحدة فقط ─────────────────
+    // ── 3) فحص sessionIssuedAt و isBanned من DB ─────────────────────────
     const user = await User.findById(decoded.user.id)
       .select('sessionIssuedAt isBanned')
       .lean();
@@ -58,12 +41,12 @@ exports.requireAuth = async (req, res, next) => {
       return next(new AppError('المستخدم غير موجود', 401, 'USER_NOT_FOUND'));
     }
 
-    // ✅ [BUG-2 FIX] استخدام isBanned من DB كطبقة ثانية (الحظر اليدوي الجديد)
+    // طبقة ثانية لفحص الحظر (الحظر اليدوي الجديد من الآدمن)
     if (user.isBanned) {
       return next(new AppError('حسابك محظور 🚫', 403, 'USER_BANNED'));
     }
 
-    // ✅ [BUG-1 FIX] sessionIssuedAt — نفحصه فقط إذا موجود في DB
+    // فحص صلاحية الجلسة — نُطبَّق فقط إذا sessionIssuedAt موجود في DB
     if (
       user.sessionIssuedAt &&
       decoded.iat < Math.floor(user.sessionIssuedAt.getTime() / 1000)
@@ -141,14 +124,12 @@ exports.optionalAuth = async (req, res, next) => {
   try {
     const decoded = verifyAccessToken(token);
 
-    // ── فحص سريع من الـ Cache ────────────────────────────────────────────
     const isBannedInCache = await banCache.isUserBanned(decoded.user.id);
     if (decoded.user.isBanned || isBannedInCache) {
       req.user = null;
       return next();
     }
 
-    // ✅ [BUG-3 FIX] فحص sessionIssuedAt في optionalAuth أيضاً
     const user = await User.findById(decoded.user.id)
       .select('sessionIssuedAt isBanned')
       .lean();

@@ -1,39 +1,27 @@
 // services/settingsService.js
-const SystemSettings = require('../models/SystemSettings');
+// ✅ FIX [HUB-06]: حذف الـ cache المكرر من هنا — SystemSettings.js يملك getCached()
+// ✅ FIX [HUB-05]: في بيئة PM2 cluster — cache واحد في مستوى الـ Model أفضل من اثنين
+//    settingsService الآن delegate نظيف بدون cache مكرر
 
-// ─── إعدادات الـ In-Memory Cache ──────────────────────────────
-let _settingsCache = null;
-let _cacheExpiresAt = 0;
-const CACHE_TTL_MS = 60 * 1000; // صلاحية الكاش: دقيقة واحدة
+const SystemSettings = require('../models/SystemSettings');
 
 const ALLOWED_FIELDS = [
   'defaultQuota', 'level2Quota', 'maxBookingsPerUser',
   'maxActiveRequestsPerMonth', 'requestExpiryDays',
-  'categories', 'reportReasons', 'autoReportBanThreshold',
-  'universityEmailDomains', 'requireHubForBooking',
-  'maintenanceMode', 'platformName', 'contactEmail', 'quotaResetDayOfMonth',
+  'donorQuotaReward', 'trustScorePerDonation', 'trustScorePerRequest',
+  'bookingExpiryHours', 'categories', 'reportReasons',
+  'autoReportBanThreshold', 'universityEmailDomains',
+  'requireHubForBooking', 'maintenanceMode',
+  'platformName', 'contactEmail', 'quotaResetDayOfMonth',
 ];
 
-// ─── جلب الإعدادات مع الفحص من الـ Cache ──────────────────────
+// ── جلب الإعدادات — يعتمد على getCached() الموجود في Model ──
+// ✅ FIX [HUB-06]: لا cache هنا — SystemSettings.getCached() يكفي
 exports.getSettings = async () => {
-  const now = Date.now();
-
-  // ✅ إذا كان الكاش متوفراً ولم تنتهِ صلاحيته، أعده فوراً بدون الاتصال بقاعدة البيانات
-  if (_settingsCache && now < _cacheExpiresAt) {
-    return _settingsCache;
-  }
-
-  // في حال عدم وجود كاش أو انتهاء صلاحيته، نقوم بجلب البيانات من DB
-  const settings = await SystemSettings.findById('global').lean();
-
-  // تحديث الكاش المحلي ووقت انتهاء الصلاحية
-  _settingsCache = settings;
-  _cacheExpiresAt = now + CACHE_TTL_MS;
-
-  return settings;
+  return SystemSettings.getCached();
 };
 
-// ─── تحديث الإعدادات وإبطال الكاش فوراً ────────────────────────
+// ── تحديث الإعدادات وإبطال الكاش فوراً ────────────────────
 exports.updateSettings = async (updates) => {
   // تصفية الحقول لمنع حقن إعدادات غير مصرح بها
   const sanitized = Object.fromEntries(
@@ -44,16 +32,14 @@ exports.updateSettings = async (updates) => {
     throw Object.assign(new Error('لا توجد حقول صالحة للتحديث'), { status: 400 });
   }
 
-  // تحديث المستند في قاعدة البيانات
   const updated = await SystemSettings.findByIdAndUpdate(
     'global',
     { $set: sanitized },
     { returnDocument: 'after', upsert: true, runValidators: true }
   ).lean();
 
-  // ✅ تحديث الكاش المحلي فوراً بالبيانات الجديدة وتمديد الـ TTL
-  _settingsCache = updated;
-  _cacheExpiresAt = Date.now() + CACHE_TTL_MS;
+  // ✅ إبطال الكاش المركزي في SystemSettings بعد كل تحديث
+  SystemSettings.invalidateCache();
 
   return updated;
 };
