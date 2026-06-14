@@ -4,6 +4,10 @@ const asyncHandler = require('../utils/asyncHandler');
 const AppError = require('../utils/AppError');
 const { validatePromote } = require('../dtos/adminDto');
 
+// استيراد الموديلات المطلوبة للـ Cascade Cleanup عند الحظر
+const Item = require('../models/Item');
+const { getIO } = require('../socket'); // تأكد من استيراد دالة getIO من ملف السوكيت الخاص بمشروعك
+
 // ─── Users ────────────────────────────────────────────────────
 exports.promoteUser = asyncHandler(async (req, res) => {
   const { error } = validatePromote(req.body);
@@ -49,15 +53,58 @@ exports.listUsers = asyncHandler(async (req, res) => {
 });
 
 exports.banUser = asyncHandler(async (req, res) => {
+  const targetUserId = req.params.id;
+
+  // 1. تنفيذ الحظر الأساسي وتحديث refreshTokenVersion وإلغاء الكاش عبر الـ Service
   const user = await adminService.banUser(
-    req.params.id,
+    targetUserId,
     req.user.id,
     req.body.reason,
     req.body.adminNote
   );
 
+  // ✅ 2. منطق الحظر المتتالي (Cascade Ban) لحماية الأغراض والحجوزات المعلقة:
+  
+  // أ) إذا كان المحظور هو (المتبرع): إخفاء أغراضه المعروضة بالكامل لمنع حجزها
+  await Item.updateMany(
+    { donor: targetUserId, status: 'متاح' },
+    { $set: { status: 'ملغى' } }
+  );
+
+  // ب) إذا كان المحظور هو (المتبرع) ولديه قطع "محجوزة" لم تُسلم بعد: نلغي حجزها ونخفيها
+  await Item.updateMany(
+    { donor: targetUserId, status: 'محجوز' },
+    { $set: { status: 'ملغى', bookedBy: null, bookedAt: null } }
+  );
+
+  // جـ) إذا كان المحظور هو (الحاجز): تحرير الأغراض التي حجزها وإعادتها "متاحة" فوراً للجميع
+  await Item.updateMany(
+    { bookedBy: targetUserId, status: 'محجوز' },
+    { $set: { status: 'متاح', bookedBy: null, bookedAt: null, recipientConfirmed: false, donorConfirmed: false } }
+  );
+
+  // د) سحب المستخدم المحظور من كافة قوائم الانتظار (Waitlists) في جميع الأغراض
+  await Item.updateMany(
+    { waitlist: targetUserId },
+    { $pull: { waitlist: targetUserId } }
+  );
+
+  // ✅ 3. طرد المستخدم فوراً من جلسة الـ Socket الحية (Real-time Socket Disconnect)
+  try {
+    const io = getIO();
+    const userRoom = `user_${targetUserId}`;
+    const activeSockets = await io.in(userRoom).fetchSockets();
+    
+    activeSockets.forEach((socket) => {
+      socket.emit('auth:forced_logout', { msg: 'تم حظر حسابك من قبل الإدارة 🚫' });
+      socket.disconnect(true);
+    });
+  } catch (socketErr) {
+    console.warn('[Socket Ban Cleanup] تعذر الاتصال بالسوكت لطرد المستخدم:', socketErr.message);
+  }
+
   res.json({
-    msg: `تم حظر ${user.name}`,
+    msg: `تم حظر ${user.name} وتطهير كافة حجوزاته وجلساته النشطة بنجاح 🚫`,
     user,
   });
 });
@@ -97,9 +144,16 @@ exports.deleteItem = asyncHandler(async (req, res) => {
 
 // ─── Reports ──────────────────────────────────────────────────
 exports.listReports = asyncHandler(async (req, res) => {
-  const result = await adminService.listReports(req.query);
+  // ✅ يدعم ?status=pending|actioned|dismissed للفلترة من الـ Dashboard
+  const { page = 1, status = 'pending' } = req.query;
+
+  const ALLOWED_STATUSES = ['pending', 'actioned', 'dismissed', 'reviewed'];
+  const safeStatus = ALLOWED_STATUSES.includes(status) ? status : 'pending';
+
+  const result = await adminService.listReports({ page, status: safeStatus });
   res.json(result);
 });
+
 
 exports.resolveReport = asyncHandler(async (req, res) => {
   const report = await adminService.resolveReport(

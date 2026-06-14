@@ -140,23 +140,27 @@ exports.deleteItem = async (itemId, adminId, adminNote) => {
 
 
 // ─── Reports ──────────────────────────────────────────────────
-exports.listReports = async ({ page = 1 }) => {
+exports.listReports = async ({ page = 1, status = 'pending' } = {}) => {
   const normalizedPage = Math.max(1, +page || 1);
 
-  const [reports, total] = await Promise.all([
-    adminRepo.findPendingReports({ page: normalizedPage }),
-    adminRepo.countPendingReports(),
-  ]);
+  // ✅ BUG-05 + BUG-06: استخدام findPendingReportsWithCounts بدلاً من findPendingReports
+  // تُرجع: isRepeatOffender, totalReportsAgainstUser, pendingReportsAgainstUser
+  const { reports, total } = await adminRepo.findPendingReportsWithCounts({
+    page:   normalizedPage,
+    limit:  20,
+    status, // ✅ يدعم فلترة بالـ status من الـ query
+  });
 
   return {
     reports,
     total,
-    page: normalizedPage,
+    page:  normalizedPage,
     pages: Math.ceil(total / 20),
   };
 };
 
 
+// services/adminService.js — دالة resolveReport المُصلَحة
 exports.resolveReport = async (reportId, adminId, action, _adminName, adminNote = null) => {
   const allowedActions = ['warn', 'ban', 'dismiss'];
   if (!allowedActions.includes(action)) {
@@ -164,84 +168,76 @@ exports.resolveReport = async (reportId, adminId, action, _adminName, adminNote 
   }
 
   const statusMap = {
-    warn: 'actioned',
-    ban: 'actioned',
+    warn:    'actioned',
+    ban:     'actioned',
     dismiss: 'dismissed',
   };
 
   const newStatus = statusMap[action];
-  const report = await adminRepo.resolveReport(reportId, adminId, newStatus);
+  const report    = await adminRepo.resolveReport(reportId, adminId, newStatus);
 
   if (!report) {
     throw new AppError('البلاغ غير موجود', 404, 'REPORT_NOT_FOUND');
   }
 
-  const Report = require('../models/Report');
+  // ✅ جلب التفاصيل الكاملة مع حماية null
+  const Report     = require('../models/Report');
   const fullReport = await Report.findById(reportId)
-    .populate('reportedUser', 'name email')
-    .populate('reporter', 'name email')
-    .populate('relatedItem', 'title');
+    .populate('reportedUser', 'name email isBanned')
+    .populate('reporter',     'name email')
+    .populate('relatedItem',  'title');
 
-  const actionLabel = {
-    warn: 'تحذير',
-    ban: 'حظر',
-    dismiss: 'رفض البلاغ',
-  }[action];
+  const actionLabel = { warn: 'تحذير', ban: 'حظر', dismiss: 'رفض البلاغ' }[action];
 
+  // ✅ سجّل إجراء البلاغ أولاً
   await adminRepo.logAdminAction({
     adminId,
-    action: 'REPORT_ACTION',
-    targetId: reportId,
+    action:      'REPORT_ACTION',
+    targetId:    reportId,
     targetModel: 'Report',
-    reason: actionLabel,
-    adminNote: adminNote ?? null,
+    reason:      actionLabel,
+    adminNote:   adminNote ?? null,
     meta: {
-      targetName: fullReport?.reportedUser?.name ?? '—',
-      reportedBy: fullReport?.reporter?.name ?? '—',
-      reason: fullReport?.reason ?? '—',
-      action: actionLabel,
-      relatedItemTitle: fullReport?.relatedItem?.title ?? null,
+      targetName:       fullReport?.reportedUser?.name   ?? '—',
+      reportedBy:       fullReport?.reporter?.name       ?? '—',
+      reason:           fullReport?.reason               ?? '—',
+      action:           actionLabel,
+      relatedItemTitle: fullReport?.relatedItem?.title   ?? null,
     },
   });
 
+  // ── تحذير ────────────────────────────────────────────────
   if (action === 'warn' && report.reportedUser) {
     await notifyUser(report.reportedUser, {
-      type: 'admin_warning',
-      title: 'تحذير من الإدارة',
-      body: '⚠️ تلقيت تحذيراً من الإدارة بسبب بلاغ مقدم ضدك.',
+      type:   'admin_warning',
+      title:  'تحذير من الإدارة',
+      body:   '⚠️ تلقيت تحذيراً من الإدارة بسبب بلاغ مقدم ضدك.',
       itemId: fullReport?.relatedItem?._id ?? null,
     });
   }
 
+  // ── حظر ──────────────────────────────────────────────────
   if (action === 'ban' && report.reportedUser) {
-    await adminRepo.banUser(report.reportedUser, 'حظر من بلاغ مؤكد', adminId);
+    // ✅ BUG-03: استخدام exports.banUser الذي يحتوي بالفعل على:
+    //    adminRepo.banUser + refreshTokenVersion++ + sessionCache.invalidate + logAdminAction
+    //    → لا تكرار، لا double-ban، لا double cache invalidation
+    const targetUserId = report.reportedUser.toString();
 
-    // 2. إبطال الـ refresh tokens للمستخدم أيضاً عند حظره تلقائياً من خلال البلاغات
-    await User.findByIdAndUpdate(report.reportedUser, { 
-      $inc: { refreshTokenVersion: 1 } 
-    });
-
-    // ✅ تصفير الـ Cache أيضاً في حالة الحظر التلقائي الناتج عن معالجة البلاغات
-    sessionCache.invalidate(report.reportedUser);
+    // ✅ Guard: لا نُعيد حظر مستخدم محظور مسبقاً
+    if (!fullReport?.reportedUser?.isBanned) {
+      await exports.banUser(
+        targetUserId,
+        adminId,
+        'حظر تلقائي من معالجة بلاغ',
+        adminNote ?? null
+      );
+    }
 
     await notifyUser(report.reportedUser, {
-      type: 'admin_ban',
-      title: 'تم حظر حسابك',
-      body: '🚫 تم حظر حسابك من قبل الإدارة.',
+      type:   'admin_ban',
+      title:  'تم حظر حسابك',
+      body:   '🚫 تم حظر حسابك من قبل الإدارة.',
       itemId: fullReport?.relatedItem?._id ?? null,
-    });
-
-    await adminRepo.logAdminAction({
-      adminId,
-      action: 'BAN',
-      targetId: report.reportedUser,
-      targetModel: 'User',
-      reason: 'حظر تلقائي من معالجة بلاغ',
-      adminNote: adminNote ?? null,
-      meta: {
-        targetName: fullReport?.reportedUser?.name ?? '—',
-        targetEmail: fullReport?.reportedUser?.email ?? null,
-      },
     });
   }
 
