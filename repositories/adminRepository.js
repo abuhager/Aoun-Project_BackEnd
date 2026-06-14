@@ -194,10 +194,10 @@ exports.findPendingReportsWithCounts = async ({
 
     {
       $lookup: {
-        from:     'users',
-        localField: 'reportedUser',
+        from:         'users',
+        localField:   'reportedUser',
         foreignField: '_id',
-        as:       'reportedUserData',
+        as:           'reportedUserData',
         pipeline: [{
           $project: {
             name: 1, email: 1, avatar: 1,
@@ -209,20 +209,20 @@ exports.findPendingReportsWithCounts = async ({
 
     {
       $lookup: {
-        from:     'users',
-        localField: 'reporter',
+        from:         'users',
+        localField:   'reporter',
         foreignField: '_id',
-        as:       'reporterData',
+        as:           'reporterData',
         pipeline: [{ $project: { name: 1, avatar: 1, trustLevel: 1 } }],
       },
     },
 
     {
       $lookup: {
-        from:     'items',
-        localField: 'relatedItem',
+        from:         'items',
+        localField:   'relatedItem',
         foreignField: '_id',
-        as:       'relatedItemData',
+        as:           'relatedItemData',
         pipeline: [{ $project: { title: 1, imageUrl: 1, status: 1 } }],
       },
     },
@@ -262,9 +262,10 @@ exports.findPendingReportsWithCounts = async ({
 
     {
       $addFields: {
-        reportedUserData: { $arrayElemAt: ['$reportedUserData', 0] },
-        reporterData:     { $arrayElemAt: ['$reporterData',     0] },
-        relatedItemData:  { $arrayElemAt: ['$relatedItemData',  0] },
+        // ✅ الإصلاح: إعادة التسمية لتطابق ما يتوقعه الـ Frontend
+        reporter:     { $arrayElemAt: ['$reporterData',     0] },
+        reportedUser: { $arrayElemAt: ['$reportedUserData', 0] },
+        relatedItem:  { $arrayElemAt: ['$relatedItemData',  0] },
         totalReportsAgainstUser: {
           $ifNull: [{ $arrayElemAt: ['$totalReportsLookup.total',  0] }, 0],
         },
@@ -281,9 +282,13 @@ exports.findPendingReportsWithCounts = async ({
     },
 
     {
+      // ✅ حذف كل الأسماء المؤقتة من الـ response النهائي
       $project: {
         totalReportsLookup:   0,
         pendingReportsLookup: 0,
+        reporterData:         0,
+        reportedUserData:     0,
+        relatedItemData:      0,
       },
     },
   ]);
