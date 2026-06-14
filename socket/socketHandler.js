@@ -29,7 +29,7 @@ const initSocket = (httpServer) => {
   });
 
   // ─── 1. برمجية التحقق من الهوية (Authentication Middleware) ───
-   io.use((socket, next) => {
+  io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) return next(new Error('AUTH_REQUIRED'));
 
@@ -53,6 +53,7 @@ const initSocket = (httpServer) => {
       return next(new Error('INVALID_TOKEN'));
     }
   });
+
   // ─── 2. أحداث الاتصال وإدارة الغرف والمحادثات ───
   io.on('connection', (socket) => {
     
@@ -79,7 +80,11 @@ const initSocket = (httpServer) => {
         }
 
         // إيجاد المحادثة أو إنشاؤها إن لم تكن موجودة
-        let conv = await Conversation.findOne({ item: itemId });
+        let conv = await Conversation.findOne({ item: itemId }, {
+          participants: 1,
+          messages: { $slice: -50 } // ✅ الإصلاح: تحجيم جلب الرسائل من الـ Database مباشرة لآخر 50 رسالة
+        });
+
         if (!conv) {
           conv = await Conversation.create({
             item: itemId,
@@ -90,8 +95,8 @@ const initSocket = (httpServer) => {
         // جعل السوكيت ينضم لغرفة المحادثة المشتركة
         socket.join(`conv_${conv._id}`);
 
-        // جلب آخر 50 رسالة فقط للأداء العالي
-        const messages = conv.messages.slice(-50).map((m) => ({
+        // تحويل وتجهيز آخر 50 رسالة بعد جلبها بكفاءة
+        const messages = conv.messages.map((m) => ({
           _id: m._id,
           sender: m.sender,
           text: m.text,
@@ -202,8 +207,21 @@ const initSocket = (httpServer) => {
       }
     });
 
+    // ✅ الإصلاح: استخدام حدث disconnecting للوصول إلى الغرف قبل مغادرتها وتصفير مؤشر الكتابة
+    socket.on('disconnecting', () => {
+      try {
+        for (const room of socket.rooms) {
+          if (room.startsWith('conv_')) {
+            socket.to(room).emit('userStopTyping', { userId: socket.userId });
+          }
+        }
+      } catch (err) {
+        console.error('Socket cleanup error on disconnect:', err.message);
+      }
+    });
+
     socket.on('disconnect', () => {
-      // تنظيف تلقائي عند قطع الاتصال يتم بواسطة Socket.io
+      // تنظيف الغرف النهائي يتم تلقائياً بواسطة Socket.io
     });
   });
 
