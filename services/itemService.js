@@ -343,98 +343,77 @@ async function triggerBookingNotifications(bookedItem, user) {
 // ─────────────────────────────────────────────────────────────────────────────────
 exports.cancelBookingLogic = async (itemId, userId) => {
   const item = await itemRepository.findItemForAction(itemId);
-
   if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
 
-  const isBooker = item.bookedBy && item.bookedBy.toString() === userId;
-  const isDonor  = item.donor.toString() === userId;
+  const isBooker = item.bookedBy?.toString() === userId;
+  const isDonor  = item.donor.toString()     === userId;
   const inWait   = item.waitlist?.some((w) => w.user.toString() === userId);
 
-  if (!isBooker && !isDonor && !inWait) {
+  if (!isBooker && !isDonor && !inWait)
     throw new AppError('غير مصرح لك', 403, 'FORBIDDEN');
-  }
 
+  // ─── انسحاب من Waitlist فقط ────────────────────────────────
   if (inWait && !isBooker && !isDonor) {
-    await Item.findByIdAndUpdate(item._id, {
-      $pull: { waitlist: { user: userId } },
-    });
+    await Item.findByIdAndUpdate(item._id, { $pull: { waitlist: { user: userId } } });
     return { msg: 'تم انسحابك من قائمة الانتظار 🚶‍♂️' };
   }
 
   const previousBooker = item.bookedBy;
 
+  // ─── محاولة ترقية أول شخص valid من الـ waitlist ───────────
   if (item.waitlist?.length > 0) {
-    const topWaiting = item.waitlist.slice(0, 3);
-
-    for (const waiting of topWaiting) {
+    // ✅ نجرّب واحداً في كل مرة فقط — لا loop بمتعدد sessions
+    for (const waiting of item.waitlist) {
       const session = await mongoose.startSession();
       session.startTransaction();
-
       try {
-        const nextValidUser = await User.findOneAndUpdate(
+        // ✅ atomic: حسم quota + تغيير status + إزالة من waitlist في transaction واحدة
+        const nextUser = await User.findOneAndUpdate(
           { _id: waiting.user, quota: { $gt: 0 } },
           { $inc: { quota: -1 } },
           { session, returnDocument: 'after' }
         );
+        if (!nextUser) { await session.abortTransaction(); session.endSession(); continue; }
 
-        if (!nextValidUser) {
-          await session.abortTransaction();
-          try { session.endSession(); } catch (_) {}
-          continue;
-        }
-
-        const updated = await Item.findOneAndUpdate(
-          { _id: item._id, 'waitlist.user': nextValidUser._id },
+        const promoted = await Item.findOneAndUpdate(
           {
-            $set: {
-              status:   'محجوز',
-              bookedBy: nextValidUser._id,
-              bookedAt: new Date(),
-            },
-            $pull: { waitlist: { user: nextValidUser._id } },
-            ...(previousBooker && {
-              $addToSet: { cancelledBy: previousBooker },
-            }),
+            _id:              item._id,
+            status:           'محجوز',   // ✅ guard: لم يتغير الـ status بينما نعمل
+            'waitlist.user':  nextUser._id,
+          },
+          {
+            $set:       { status: 'محجوز', bookedBy: nextUser._id, bookedAt: new Date() },
+            $pull:      { waitlist: { user: nextUser._id } },
+            $addToSet:  { cancelledBy: previousBooker },
           },
           { session, returnDocument: 'after' }
         ).populate('safeHub', 'name address city workingHours');
 
-        if (!updated) {
-          await session.abortTransaction();
-          try { session.endSession(); } catch (_) {}
-          continue;
-        }
+        if (!promoted) { await session.abortTransaction(); session.endSession(); continue; }
 
-        // ✅ [BUG-3 FIX] إعادة الـ Quota للمحجوز السابق داخل الـ session لمنع الـ Race Condition
+        // ✅ إعادة quota للحاجز السابق داخل نفس الـ session
         if (previousBooker && previousBooker.toString() !== item.donor.toString()) {
-          await User.findByIdAndUpdate(
-            previousBooker,
-            { $inc: { quota: 1 } },
-            { session } // تم إضافة الـ session هنا
-          );
+          await User.findByIdAndUpdate(previousBooker, { $inc: { quota: 1 } }, { session });
         }
 
         await session.commitTransaction();
-        try { session.endSession(); } catch (_) {}
+        session.endSession();
 
-        triggerBookingNotifications(updated, nextValidUser);
-        notifyUser(previousBooker, {
-          type:   'booking_cancelled',
-          title:  'تم إلغاء حجزك',
-          body:   `تم إلغاء حجز "${item.title}"`,
-          itemId: item._id,
-        }).catch((err) => console.warn('[Notify] فشل إشعار الإلغاء:', err.message));
+        // notifications خارج الـ transaction (لا تُؤثر على الـ commit)
+        triggerBookingNotifications(promoted, nextUser).catch(console.warn);
+        notifyUser(previousBooker, { type: 'booking_cancelled', title: 'تم إلغاء حجزك',
+          body: `تم إلغاء حجز "${item.title}"`, itemId: item._id })
+          .catch(console.warn);
 
         return { msg: 'تم إلغاء الحجز ومُرِّر لأول شخص في القائمة ✅' };
 
       } catch (err) {
         if (session.inTransaction()) await session.abortTransaction();
         try { session.endSession(); } catch (_) {}
-        throw err;
+        throw err; // ✅ رمي الخطأ فوراً — لا نكمل الـ loop على خطأ حقيقي
       }
     }
   }
-
   // في حالة عدم وجود waitlist أو فشل الجميع
   const fallbackSession = await mongoose.startSession();
   fallbackSession.startTransaction();
@@ -633,20 +612,35 @@ exports.completeDonorDeliveryLogic = async (itemId, userId) => {
 };
 // 8. تعديل غرض
 // ─────────────────────────────────────────────────────────────────────────────────
+// services/itemService.js
+
 exports.updateItemLogic = async (itemId, userId, body, file) => {
   const item = await Item.findById(itemId);
   if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+  
   if (item.donor.toString() !== userId.toString())
     throw new AppError('غير مصرح لك بتعديل هذا الغرض', 403, 'FORBIDDEN');
+    
   if (item.status === 'محجوز')
     throw new AppError('لا يمكن تعديل غرض محجوز — يرجى إلغاء الحجز أولاً', 400, 'ITEM_IS_BOOKED');
 
   const settings = await SystemSettings.getCached();
 
+  // 1. التحقق من صحة التصنيف
   if (body.category && !settings.categories?.includes(body.category)) {
     throw new AppError(`التصنيف "${body.category}" غير مدعوم`, 400, 'INVALID_CATEGORY');
   }
 
+  // ✅ 2. التحقق من صحة نقطة الاستلام (SafeHub) في حال إرسالها للتحديث
+  if (body.safeHub) {
+    const SafeHub = require('../models/SafeHub'); // تأكد من استيراد الموديل إذا لم يكن مستورداً في أعلى الملف
+    const validHub = await SafeHub.findOne({ _id: body.safeHub, isActive: true }).lean();
+    if (!validHub) {
+      throw new AppError('نقطة الاستلام غير موجودة أو غير مفعّلة', 400, 'INVALID_SAFE_HUB');
+    }
+  }
+
+  // 3. معالجة وتحديث الصورة إن وجدت
   if (file) {
     validateImageFile(file);
     // حذف الصورة القديمة من Cloudinary قبل رفع الجديدة
@@ -661,6 +655,7 @@ exports.updateItemLogic = async (itemId, userId, body, file) => {
     item.cloudinaryId = uploadResult.public_id;
   }
 
+  // 4. تحديث باقي الحقول المسموحة
   const allowedFields = ['title', 'description', 'category', 'location', 'condition', 'safeHub'];
   allowedFields.forEach((key) => {
     if (body[key] !== undefined) item[key] = typeof body[key] === 'string' ? body[key].trim() : body[key];
@@ -674,30 +669,43 @@ exports.updateItemLogic = async (itemId, userId, body, file) => {
 // ─────────────────────────────────────────────────────────────────────────────────
 exports.deleteItemLogic = async (itemId, userId, isAdmin = false) => {
   const item = await Item.findById(itemId).populate('bookedBy', 'name email');
-
   if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
   if (!isAdmin && item.donor.toString() !== userId)
     throw new AppError('غير مصرح لك بحذف هذا الغرض', 403, 'FORBIDDEN');
   if (!isAdmin && item.status === 'محجوز')
     throw new AppError('لا يمكن حذف غرض محجوز — يرجى إلغاء الحجز أولاً', 400, 'ITEM_IS_BOOKED');
 
-  if (item.bookedBy) {
-    notifyUser(item.bookedBy._id, {
-      type:   'item_deleted',
-      title:  'تم حذف غرض كنت قد حجزته',
-      body:   `"${item.title}" لم يعد متاحاً`,
-      itemId: item._id,
-    }).catch((err) => console.warn('[Notify] فشل إشعار الحذف:', err.message));
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    // ✅ الحذف وإعادة الـ quota في نفس الـ transaction
+    await Item.findByIdAndUpdate(item._id, { $set: { status: 'مخفي' } }, { session });
 
-    fireSendEmail({
-      email:   item.bookedBy.email,
-      subject: 'تنبيه: تم حذف غرض محجوز',
-      message: `<div dir="rtl"><p>تم حذف "<b>${item.title}</b>" الذي كنت قد حجزته.</p></div>`,
-    }).catch((err) => console.error('[Email] فشل إرسال إشعار حذف الغرض:', err.message));
-
-    await User.findByIdAndUpdate(item.bookedBy._id, { $inc: { quota: 1 } });
+    if (item.bookedBy) {
+      await User.findByIdAndUpdate(
+        item.bookedBy._id,
+        { $inc: { quota: 1 } },
+        { session }
+      );
+    }
+    await session.commitTransaction();
+  } catch (err) {
+    if (session.inTransaction()) await session.abortTransaction();
+    throw err;
+  } finally {
+    try { session.endSession(); } catch (_) {}
   }
 
+  // ✅ حذف الوثيقة الفعلي بعد الـ commit (أو Soft Delete بـ status: 'مخفي')
   await item.deleteOne();
+
+  // notifications بعد النجاح الكامل فقط
+  if (item.bookedBy) {
+    notifyUser(item.bookedBy._id, { type: 'item_deleted', title: 'تم حذف غرض كنت قد حجزته',
+      body: `"${item.title}" لم يعد متاحاً`, itemId: item._id }).catch(console.warn);
+    fireSendEmail({ email: item.bookedBy.email, subject: 'تنبيه: تم حذف غرض محجوز',
+      message: `<div dir="rtl"><p>تم حذف "<b>${item.title}</b>"</p></div>` }).catch(console.error);
+  }
+
   return { msg: 'تم حذف الغرض ✅' };
 };
