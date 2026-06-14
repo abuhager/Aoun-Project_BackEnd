@@ -1,13 +1,11 @@
-// server.js — النسخة المصحّحة (Flow-1 Audit)
-// ✅ إصلاح BUG-01: هذا الملف هو المتحكم الوحيد بـ SIGTERM/SIGINT — db.js لا يسجّل listeners
-// ✅ إصلاح BUG-03: فحص متغيرات البيئة الإلزامية عند الـ startup قبل أي شيء
+// server.js — النسخة المصحَّحة كاملاً
+// ✅ LOGIC-01: unhandledRejection يُعالَج بشكل صحيح (تسجيل فقط — بدون crash)
+// ✅ LOGIC-02: initCronJobs يُشغَّل داخل listen callback (بعد DB + HTTP جاهزَين)
+// ✅ gracefulShutdown يُغلق io + mongoose بالترتيب الصحيح
 
 require('dotenv').config();
 
-// ─────────────────────────────────────────────────────────────
-// ✅ BUG-03: فحص إلزامي لمتغيرات البيئة — يُنهي العملية فوراً إذا كان ناقصاً
-// أضف هنا كل متغير يجب أن يكون موجوداً قبل بدء الخادم
-// ─────────────────────────────────────────────────────────────
+// ── فحص متغيرات البيئة الإلزامية عند الـ Startup ─────────────
 const REQUIRED_ENV = [
   'MONGO_URI',
   'JWT_SECRET',
@@ -23,50 +21,44 @@ const REQUIRED_ENV = [
 const missingEnv = REQUIRED_ENV.filter((k) => !process.env[k]);
 if (missingEnv.length) {
   console.error(
-    '❌ [Startup] متغيرات بيئة إلزامية مفقودة — أضفها في .env أو في Render/Vercel Dashboard:\n',
+    '❌ [Startup] متغيرات بيئة إلزامية مفقودة:\n',
     missingEnv.map((k) => `  • ${k}`).join('\n')
   );
   process.exit(1);
 }
 
-const http      = require('http');
-const app       = require('./app');
-const connectDB = require('./config/db');
-const { initCronJobs } = require('./jobs/cronJobs');
-const { initSocket }   = require('./socket/socketHandler');
+const http              = require('http');
+const app               = require('./app');
+const connectDB         = require('./config/db');
+const { initCronJobs }  = require('./jobs/cronJobs');
+const { initSocket }    = require('./socket/socketHandler');
 
 const PORT   = process.env.PORT || 5000;
 const server = http.createServer(app);
 
 // ── Socket.io ─────────────────────────────────────────────────
 const io = initSocket(server);
-app.set('io', io); // controllers تصل إليه عبر req.app.get('io')
+app.set('io', io);
 
-// ─────────────────────────────────────────────────────────────
-// ✅ BUG-01: Graceful Shutdown المركزي — الوحيد في المشروع
-// db.js لا يسجّل SIGTERM/SIGINT — هذا الملف فقط هو المسؤول
-// ─────────────────────────────────────────────────────────────
+// ── Graceful Shutdown المركزي ─────────────────────────────────
 const gracefulShutdown = (signal) => {
-  console.log(`\n🛑 [${signal}] بدء الإغلاق الآمن للخادم...`);
+  console.log(`\n🛑 [${signal}] بدء الإغلاق الآمن...`);
 
-  // 1. أوقف استقبال اتصالات HTTP جديدة
   server.close(async (err) => {
     if (err) {
       console.error('❌ خطأ أثناء إغلاق HTTP server:', err);
       process.exit(1);
     }
-
     try {
-      // 2. أغلق Socket.io بشكل نظيف
+      // 1. أغلق Socket.io
       await new Promise((resolve) => io.close(resolve));
       console.log('✅ Socket.io أُغلق');
 
-      // 3. أغلق اتصال MongoDB (Mongoose v7+ — Promise فقط)
+      // 2. أغلق MongoDB
       const mongoose = require('mongoose');
       await mongoose.connection.close(false);
       console.log('✅ MongoDB أُغلق');
 
-      console.log('✅ الإغلاق الآمن اكتمل بنجاح');
       process.exit(0);
     } catch (shutdownErr) {
       console.error('❌ خطأ أثناء الإغلاق:', shutdownErr);
@@ -74,50 +66,53 @@ const gracefulShutdown = (signal) => {
     }
   });
 
-  // ✅ Forced exit بعد 15 ثانية إذا تعطّل الإغلاق
-  // .unref() يمنع الـ timeout من إبقاء العملية حيّة إذا أنهت مبكراً
+  // Forced exit بعد 15 ثانية إذا تعطّل الإغلاق
   setTimeout(() => {
     console.error('⚠️  الإغلاق تجاوز 15 ثانية — إغلاق قسري');
     process.exit(1);
   }, 15_000).unref();
 };
 
-// ── Unhandled Errors ───────────────────────────────────────────
-// ✅ أي Promise يُرفض دون catch — يُسجَّل ولا يسقط الخادم
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ [unhandledRejection]:', { reason, promise });
-  // لا نُنهي العملية — فقط نسجّل ونترك errorHandler يتعامل معه
+// ── ✅ LOGIC-01: unhandledRejection — تسجيل فقط، بدون crash ──
+// Node.js v15+ يُنهي العملية افتراضياً عند unhandledRejection
+// نتحكم نحن بالسلوك: نسجّل ونترك PM2/Docker يُعيد التشغيل إذا لزم
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ [unhandledRejection] — Promise رُفض دون catch:', reason);
+  // لا gracefulShutdown هنا — unhandledRejection قد يكون في طلب واحد
+  // ويجب ألا يُسقط الخادم بالكامل بسببه
 });
 
-// ✅ أي استثناء synchronous غير متوقع — يستوجب الإغلاق الآمن
+// uncaughtException أخطر — يعني الـ event loop تعطّل → إغلاق إجباري
 process.on('uncaughtException', (err) => {
   console.error('💥 [uncaughtException] — إغلاق إجباري:', err);
   gracefulShutdown('uncaughtException');
 });
 
-// ── إشارات الإغلاق (Render / Docker / Kubernetes / Ctrl+C) ───
-// ✅ BUG-01: نسجّل هنا فقط — db.js لا يسجّل هذه الإشارات
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM')); // إيقاف مُخطَّط من المنصة
-process.on('SIGINT',  () => gracefulShutdown('SIGINT'));  // Ctrl+C في dev
+// إشارات الإغلاق (Render / Docker / Ctrl+C)
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
 
-// ── تشغيل الخادم ───────────────────────────────────────────────
+// ── تشغيل الخادم ─────────────────────────────────────────────
 connectDB()
   .then(() => {
+    console.log('✅ MongoDB متصل');
+
     server.listen(PORT, () => {
       console.log(
-        `🚀 الخادم يعمل على المنفذ ${PORT} — البيئة: ${process.env.NODE_ENV || 'development'}`
+        `🚀 الخادم على المنفذ ${PORT} — البيئة: ${process.env.NODE_ENV || 'development'}`
       );
 
-      // ✅ تغليف initCronJobs بـ try/catch — فشله لا يوقف الخادم
+      // ✅ LOGIC-02: initCronJobs داخل listen callback
+      // (بعد DB + HTTP جاهزَين — ضمان أن الـ jobs تجد الـ models جاهزة)
       try {
         initCronJobs();
         console.log('⏰ Cron Jobs تعمل');
       } catch (cronErr) {
-        console.error('❌ فشل تشغيل Cron Jobs:', cronErr);
+        console.error('❌ فشل تشغيل Cron Jobs (الخادم يستمر):', cronErr);
       }
     });
   })
   .catch((err) => {
-    console.error('❌ فشل الاتصال بقاعدة البيانات:', err);
+    console.error('❌ فشل الاتصال بـ MongoDB:', err);
     process.exit(1);
   });

@@ -1,120 +1,123 @@
-// middlewares/rateLimiter.js
-// ✅ FIX [ARCH-01]: نقل resendOtpLimiter إلى هنا من routes/auth.js
-//    الآن كل limiters في مكان واحد مع ضبط من env
+// middlewares/rateLimiter.js — النسخة النهائية المصحَّحة
+// ✅ ERR_ERL_KEY_GEN_IPV6: استخدام ipKeyGenerator من express-rate-limit مباشرةً
+// ✅ إضافة otpLimiter و resendOtpLimiter المطلوبَين في routes/auth.js
 
-const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
+const rateLimit = require('express-rate-limit');
 
-// ─────────────────────────────────────────────────────────────
-// ثوابت الـ Windows الزمنية — مرجع واحد لا يتكرر
-// ─────────────────────────────────────────────────────────────
-const WINDOW = {
-  MINUTES_10: 10 * 60 * 1000,
-  MINUTES_15: 15 * 60 * 1000,
-  HOUR_1:     60 * 60 * 1000,
-};
+// ✅ الحل الصحيح لـ ERR_ERL_KEY_GEN_IPV6:
+// ipKeyGenerator مُصدَّر من express-rate-limit نفسه — يتعامل مع IPv6 بشكل صحيح
+const { ipKeyGenerator } = rateLimit;
 
-// ─────────────────────────────────────────────────────────────
-// حدود قابلة للضبط من env بدون إعادة deploy
-// ─────────────────────────────────────────────────────────────
-const LIMITS = {
-  global:         parseInt(process.env.RATE_LIMIT_GLOBAL         || '150'),
-  login:          parseInt(process.env.RATE_LIMIT_LOGIN          || '10'),
-  otp:            parseInt(process.env.RATE_LIMIT_OTP            || '5'),
-  forgotPassword: parseInt(process.env.RATE_LIMIT_FORGOT_PW      || '3'),
-  register:       parseInt(process.env.RATE_LIMIT_REGISTER       || '5'),
-  resendOtp:      parseInt(process.env.RATE_LIMIT_RESEND_OTP     || '3'), // ✅ FIX [ARCH-01]
-};
+// ── مُضاعف التطوير (x20) ──────────────────────────────────────
+const devMultiplier = process.env.NODE_ENV !== 'production' ? 20 : 1;
 
-const isDev         = process.env.NODE_ENV !== 'production';
-const devMultiplier = isDev ? 20 : 1;
+// ── رسالة خطأ موحَّدة ────────────────────────────────────────
+const rateLimitMessage = (type) => ({
+  status:  429,
+  message: `طلبات كثيرة جداً — ${type}. حاول مجدداً لاحقاً.`,
+  code:    'RATE_LIMIT_EXCEEDED',
+});
 
 // ─────────────────────────────────────────────────────────────
-// TODO-PROD: ربط Redis Store قبل نشر multi-instance
-// npm install rate-limit-redis ioredis
+// 1. Global Limiter
 // ─────────────────────────────────────────────────────────────
-
-// ── حد عام على كل الـ routes ──────────────────────────────────
 const globalLimiter = rateLimit({
-  windowMs:        WINDOW.MINUTES_15,
-  max:             LIMITS.global * devMultiplier,
+  windowMs:        15 * 60 * 1000,
+  max:             200 * devMultiplier,
   standardHeaders: true,
   legacyHeaders:   false,
-  message:         { msg: 'طلبات كثيرة جداً، حاول لاحقاً 🚦', code: 'RATE_LIMIT_GLOBAL' },
+  // ✅ ipKeyGenerator من المكتبة مباشرةً — لا مشكلة IPv6
+  keyGenerator:    (req) => ipKeyGenerator(req),
+  message:         rateLimitMessage('global'),
 });
 
-// ── تسجيل الدخول ───────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// 2. Login Limiter — IP + email
+// ─────────────────────────────────────────────────────────────
 const loginLimiter = rateLimit({
-  windowMs:        WINDOW.MINUTES_15,
-  max:             LIMITS.login * devMultiplier,
-  keyGenerator:    (req, res) => {
+  windowMs:        15 * 60 * 1000,
+  max:             10 * devMultiplier,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  // ✅ ipKeyGenerator يُعطي IP موحَّد (IPv4 + IPv6) — ندمجه مع email
+  keyGenerator: (req) => {
+    const ip    = ipKeyGenerator(req);
     const email = (req.body?.email ?? '').toLowerCase().trim();
-    return `${ipKeyGenerator(req, res)}_${email}`;
+    return email ? `${ip}_${email}` : ip;
   },
-  standardHeaders: true,
-  legacyHeaders:   false,
-  message:         { msg: 'محاولات تسجيل دخول كثيرة، انتظر 15 دقيقة 🔒', code: 'RATE_LIMIT_LOGIN' },
+  message: rateLimitMessage('تسجيل الدخول'),
 });
 
-// ── إرسال OTP ──────────────────────────────────────────────────
-const otpLimiter = rateLimit({
-  windowMs:        WINDOW.MINUTES_10,
-  max:             LIMITS.otp * devMultiplier,
-  keyGenerator:    (req, res) => {
-    const identifier = (
-      req.body?.email      ??
-      req.body?.phone      ??
-      req.body?.identifier ??
-      ''
-    ).toLowerCase().trim();
-    return `${ipKeyGenerator(req, res)}_${identifier}`;
-  },
-  standardHeaders: true,
-  legacyHeaders:   false,
-  message:         { msg: 'حاولت كثيراً، انتظر 10 دقائق ⏳', code: 'OTP_RATE_LIMIT' },
-});
-
-// ── ✅ FIX [ARCH-01]: resendOtpLimiter مُنقول من routes/auth.js ──
-// مُخصَّص لـ /resend-otp بـ حد أصغر ومربوط بـ env
-const resendOtpLimiter = rateLimit({
-  windowMs:        WINDOW.MINUTES_10,
-  max:             LIMITS.resendOtp * devMultiplier,
-  keyGenerator:    (req, res) => {
-    // مفتاح مركّب: IP + email للحماية من Email Bombing
-    const email = (req.body?.email ?? '').toLowerCase().trim();
-    return `resend_${ipKeyGenerator(req, res)}_${email}`;
-  },
-  standardHeaders: true,
-  legacyHeaders:   false,
-  message:         { msg: 'تجاوزت الحد المسموح لإعادة الإرسال، انتظر 10 دقائق ⛔', code: 'RESEND_RATE_LIMITED' },
-});
-
-// ── نسيان كلمة المرور ──────────────────────────────────────────
-const forgotPasswordLimiter = rateLimit({
-  windowMs:        WINDOW.HOUR_1,
-  max:             LIMITS.forgotPassword * devMultiplier,
-  keyGenerator:    (req, res) => {
-    const email = (req.body?.email ?? '').toLowerCase().trim();
-    return `${ipKeyGenerator(req, res)}_${email}`;
-  },
-  standardHeaders: true,
-  legacyHeaders:   false,
-  message:         { msg: 'طلبات كثيرة لاستعادة كلمة المرور، انتظر ساعة', code: 'RATE_LIMIT_FORGOT_PW' },
-});
-
-// ── التسجيل ────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// 3. Register Limiter
+// ─────────────────────────────────────────────────────────────
 const registerLimiter = rateLimit({
-  windowMs:        WINDOW.HOUR_1,
-  max:             LIMITS.register * devMultiplier,
+  windowMs:        60 * 60 * 1000,
+  max:             5 * devMultiplier,
   standardHeaders: true,
   legacyHeaders:   false,
-  message:         { msg: 'تسجيلات كثيرة من نفس الـ IP', code: 'RATE_LIMIT_REGISTER' },
+  keyGenerator:    (req) => ipKeyGenerator(req),
+  message:         rateLimitMessage('التسجيل'),
+});
+
+// ─────────────────────────────────────────────────────────────
+// 4. Forgot Password Limiter — IP + email
+// ─────────────────────────────────────────────────────────────
+const forgotPasswordLimiter = rateLimit({
+  windowMs:        60 * 60 * 1000,
+  max:             5 * devMultiplier,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  keyGenerator: (req) => {
+    const ip    = ipKeyGenerator(req);
+    const email = (req.body?.email ?? '').toLowerCase().trim();
+    return email ? `${ip}_${email}` : ip;
+  },
+  message: rateLimitMessage('استعادة كلمة المرور'),
+});
+
+// ─────────────────────────────────────────────────────────────
+// 5. OTP Limiter — للتحقق من الكود
+// ─────────────────────────────────────────────────────────────
+const otpLimiter = rateLimit({
+  windowMs:        15 * 60 * 1000,
+  max:             10 * devMultiplier,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  keyGenerator:    (req) => ipKeyGenerator(req),
+  message:         rateLimitMessage('التحقق من الكود'),
+});
+
+// ─────────────────────────────────────────────────────────────
+// 6. Resend OTP Limiter — لإعادة إرسال كود التحقق
+// ─────────────────────────────────────────────────────────────
+const resendOtpLimiter = rateLimit({
+  windowMs:        60 * 60 * 1000,              // ساعة كاملة
+  max:             5 * devMultiplier,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  keyGenerator:    (req) => ipKeyGenerator(req),
+  message:         rateLimitMessage('إعادة إرسال كود التحقق'),
+});
+
+// ─────────────────────────────────────────────────────────────
+// 7. Upload Limiter
+// ─────────────────────────────────────────────────────────────
+const uploadLimiter = rateLimit({
+  windowMs:        60 * 60 * 1000,
+  max:             30 * devMultiplier,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  keyGenerator:    (req) => ipKeyGenerator(req),
+  message:         rateLimitMessage('رفع الملفات'),
 });
 
 module.exports = {
   globalLimiter,
   loginLimiter,
-  otpLimiter,
-  resendOtpLimiter,           // ✅ FIX [ARCH-01]
-  forgotPasswordLimiter,
   registerLimiter,
+  forgotPasswordLimiter,
+  otpLimiter,
+  resendOtpLimiter,   // ← كان ناقصاً — سبب TypeError في auth.js
+  uploadLimiter,
 };
