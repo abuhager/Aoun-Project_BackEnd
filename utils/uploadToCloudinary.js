@@ -1,4 +1,5 @@
-﻿const cloudinary = require('../config/cloudinary');
+﻿// utils/uploadToCloudinary.js
+const cloudinary = require('../config/cloudinary');
 
 const uploadToCloudinary = (buffer, folder = 'aoun-items') =>
   new Promise((resolve, reject) => {
@@ -12,4 +13,8 @@ const uploadToCloudinary = (buffer, folder = 'aoun-items') =>
     stream.end(buffer);
   });
 
-module.exports = { uploadToCloudinary };
+// ✅ [CRIT-4] دالة حذف الصورة القديمة من Cloudinary عند تعديل الغرض
+const deleteFromCloudinary = (publicId) =>
+  cloudinary.uploader.destroy(publicId);
+
+module.exports = { uploadToCloudinary, deleteFromCloudinary };

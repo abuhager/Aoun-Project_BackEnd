@@ -107,11 +107,19 @@ exports.getItemByIdLogic = async (itemId, requesterId) => {
   const item = await itemRepository.findItemDetails(itemId);
   if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
 
-  const settings = await SystemSettings.getCached(); // ✅ من Admin
+  const settings = await SystemSettings.getCached();
   const obj = item.toObject ? item.toObject() : { ...item };
 
-  // ✅ أضف expiryHours من الـ Settings مباشرةً
   obj.expiryHours = settings.bookingExpiryHours ?? 72;
+
+  // ✅ [WARN-2 FIX] الـ waitlist يُكشف للمتبرع فقط — باقي الزوار يحصلون على العدد فقط
+  // كان: يُرسل waitlist كاملاً (بأسماء المنتظرين) لأي زائر
+  const isOwner =
+    requesterId &&
+    obj.donor?._id?.toString() === requesterId.toString();
+
+  obj.waitlistCount = obj.waitlist?.length ?? 0;
+  if (!isOwner) delete obj.waitlist;
 
   return obj;
 };
@@ -165,44 +173,43 @@ exports.createItemLogic = async (body, userId, file) => {
   });
 
   // ✅ [FEATURE] بعد إنشاء الغرض — إشعار أصحاب طلبات التبرع النشطة بنفس الفئة (غير محجوب للعملية الرئيسية)
-  setImmediate(async () => {
-    try {
-      const { getIO } = require('../socket');
-      
-      // جلب طلبات نشطة بنفس الفئة (حد أقصى 50 إشعار لتجنب ضغط الـ Event Loop)
-      const matchingRequests = await DonationRequest.find({
-        category:  item.category,
-        status:    'active',
-        expiresAt: { $gt: new Date() },
-        requester: { $ne: userId }, // لا تُشعر المتبرع نفسه لو كان لديه طلب بنفس الفئة
-      })
+    setImmediate(() => {
+    DonationRequest.find({
+      category:  item.category,
+      status:    'active',
+      expiresAt: { $gt: new Date() },
+      requester: { $ne: userId },
+    })
       .select('requester')
       .limit(50)
-      .lean();
+      .lean()
+      .then((matchingRequests) => {
+        const { getIO } = require('../socket');
+        const io = getIO();
 
-      const io = getIO();
-      for (const req of matchingRequests) {
-        // 1. إشعار فوري عبر السوكيت
-        io.to(`user_${req.requester}`).emit('notification', {
-          type:     'MATCHING_ITEM_AVAILABLE',
-          itemId:   item._id,
-          title:    item.title,
-          category: item.category,
-          message:  `غرض جديد يتطابق مع طلبك 🎁`,
-        });
-        
-        // 2. حفظ الإشعار في قاعدة البيانات
-        await notifyUser(req.requester, {
-          type:   'matching_item',
-          title:  'غرض متاح يناسبك! 🎁',
-          body:   `"${item.title}" — ${item.category}`,
-          itemId: item._id,
-        });
-      }
-    } catch (err) {
-      console.warn('[MatchNotify] فشل إشعار الطلبات المتطابقة:', err.message);
-    }
+        Promise.allSettled(
+          matchingRequests.map((req) => {
+            io.to(`user_${req.requester}`).emit('notification', {
+              type:     'MATCHING_ITEM_AVAILABLE',
+              itemId:   item._id,
+              title:    item.title,
+              category: item.category,
+              message:  'غرض جديد يتطابق مع طلبك 🎁',
+            });
+            return notifyUser(req.requester, {
+              type:   'matching_item',
+              title:  'غرض متاح يناسبك! 🎁',
+              body:   `"${item.title}" — ${item.category}`,
+              itemId: item._id,
+            });
+          })
+        );
+      })
+      .catch((err) =>
+        console.warn('[MatchNotify] فشل إشعار الطلبات المتطابقة:', err.message)
+      );
   });
+
 
   return { msg: 'تم إضافة الغرض بنجاح 🎉', item };
 };
@@ -429,13 +436,32 @@ exports.cancelBookingLogic = async (itemId, userId) => {
   }
 
   // في حالة عدم وجود waitlist أو فشل الجميع
-  await Item.findByIdAndUpdate(item._id, {
-    $set: { status: 'متاح', bookedBy: null, bookedAt: null },
-    ...(previousBooker && { $addToSet: { cancelledBy: previousBooker } }),
-  });
+  const fallbackSession = await mongoose.startSession();
+  fallbackSession.startTransaction();
+  try {
+    await Item.findByIdAndUpdate(
+      item._id,
+      {
+        $set: { status: 'متاح', bookedBy: null, bookedAt: null },
+        ...(previousBooker && { $addToSet: { cancelledBy: previousBooker } }),
+      },
+      { session: fallbackSession }
+    );
 
-  if (previousBooker && previousBooker.toString() !== item.donor.toString()) {
-    await User.findByIdAndUpdate(previousBooker, { $inc: { quota: 1 } });
+    if (previousBooker && previousBooker.toString() !== item.donor.toString()) {
+      await User.findByIdAndUpdate(
+        previousBooker,
+        { $inc: { quota: 1 } },
+        { session: fallbackSession }
+      );
+    }
+
+    await fallbackSession.commitTransaction();
+  } catch (err) {
+    if (fallbackSession.inTransaction()) await fallbackSession.abortTransaction();
+    throw err;
+  } finally {
+    try { fallbackSession.endSession(); } catch (_) {}
   }
 
   return { msg: 'تم إلغاء الحجز ✅' };
@@ -605,7 +631,44 @@ exports.completeDonorDeliveryLogic = async (itemId, userId) => {
     ,status: 'delivered'
   };
 };
+// 8. تعديل غرض
+// ─────────────────────────────────────────────────────────────────────────────────
+exports.updateItemLogic = async (itemId, userId, body, file) => {
+  const item = await Item.findById(itemId);
+  if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+  if (item.donor.toString() !== userId.toString())
+    throw new AppError('غير مصرح لك بتعديل هذا الغرض', 403, 'FORBIDDEN');
+  if (item.status === 'محجوز')
+    throw new AppError('لا يمكن تعديل غرض محجوز — يرجى إلغاء الحجز أولاً', 400, 'ITEM_IS_BOOKED');
 
+  const settings = await SystemSettings.getCached();
+
+  if (body.category && !settings.categories?.includes(body.category)) {
+    throw new AppError(`التصنيف "${body.category}" غير مدعوم`, 400, 'INVALID_CATEGORY');
+  }
+
+  if (file) {
+    validateImageFile(file);
+    // حذف الصورة القديمة من Cloudinary قبل رفع الجديدة
+    if (item.cloudinaryId) {
+      const { deleteFromCloudinary } = require('../utils/uploadToCloudinary');
+      await deleteFromCloudinary(item.cloudinaryId).catch((err) =>
+        console.warn('[Cloudinary] فشل حذف الصورة القديمة:', err.message)
+      );
+    }
+    const uploadResult = await uploadToCloudinary(file.buffer);
+    item.imageUrl     = uploadResult.secure_url;
+    item.cloudinaryId = uploadResult.public_id;
+  }
+
+  const allowedFields = ['title', 'description', 'category', 'location', 'condition', 'safeHub'];
+  allowedFields.forEach((key) => {
+    if (body[key] !== undefined) item[key] = typeof body[key] === 'string' ? body[key].trim() : body[key];
+  });
+
+  await item.save();
+  return { msg: 'تم تحديث الغرض بنجاح ✅', item };
+};
 // ─────────────────────────────────────────────────────────────────────────────────
 // 9. حذف غرض
 // ─────────────────────────────────────────────────────────────────────────────────

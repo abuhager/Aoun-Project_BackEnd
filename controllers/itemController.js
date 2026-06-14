@@ -1,7 +1,7 @@
 // controllers/itemController.js
-const itemService = require('../services/itemService');
+const itemService  = require('../services/itemService');
 const asyncHandler = require('../utils/asyncHandler');
-const { getIO } = require('../socket/socketHandler');
+const { getIO }    = require('../socket/socketHandler');
 
 exports.getItems = asyncHandler(async (req, res) => {
   const result = await itemService.getItemsLogic(req.query);
@@ -37,15 +37,25 @@ exports.cancelBooking = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
+// ✅ [WARN-1 FIX] دالة مستقلة لانسحاب Level1 من الـ Waitlist
+// كانت مدموجة داخل cancelBookingLogic وكانت requireLevel2 تمنعها
+exports.leaveWaitlist = asyncHandler(async (req, res) => {
+  const result = await itemService.leaveWaitlistLogic(
+    req.params.id,
+    req.user.id.toString()
+  );
+  res.json(result);
+});
+
 exports.completeDelivery = asyncHandler(async (req, res) => {
   const { confirmationType } = req.body;
 
-  // ✅ تحقق مبكر في الـ Controller — أوضح رسالة للـ Developer
+  // ✅ تحقق مبكر — أوضح رسالة للـ Developer
   if (!confirmationType) {
     return res.status(400).json({
       success: false,
-      code: 'MISSING_CONFIRMATION_TYPE',
-      msg: 'يجب إرسال confirmationType في الـ body',
+      code:    'MISSING_CONFIRMATION_TYPE',
+      msg:     'يجب إرسال confirmationType في الـ body',
     });
   }
 
@@ -55,7 +65,6 @@ exports.completeDelivery = asyncHandler(async (req, res) => {
     confirmationType
   );
 
-  // ✅ الإصلاح: اعتمد على result.status بدلاً من String matching
   if (result?.status === 'delivered') {
     try {
       getIO().to('leaderboard_subscribers').emit('leaderboard:update');

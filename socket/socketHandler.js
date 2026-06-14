@@ -29,27 +29,30 @@ const initSocket = (httpServer) => {
   });
 
   // ─── 1. برمجية التحقق من الهوية (Authentication Middleware) ───
-  io.use((socket, next) => {
+   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) return next(new Error('AUTH_REQUIRED'));
 
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      
-      // ✅ ربط البيانات الموثقة بكائن السوكيت مباشرة لمنع التزوير
-      socket.userId = decoded.user.id;
-      socket.userName = decoded.user.name;
-      socket.userRole = decoded.user.role || 'user';
-      
-      next();
-    } catch (err) {
-      if (err.name === 'TokenExpiredError') {
+
+      // ✅ [WARN-4 FIX] فحص exp صريح لتوضيح النية للفريق وإضافة طبقة دفاع
+      // jwt.verify يتحقق من exp تلقائياً لكن التحقق الصريح يمنع الـ clock skew edge cases
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (!decoded.exp || decoded.exp < nowSec) {
         return next(new Error('TOKEN_EXPIRED'));
       }
+
+      socket.userId   = decoded.user.id;
+      socket.userName = decoded.user.name;
+      socket.userRole = decoded.user.role || 'user';
+
+      next();
+    } catch (err) {
+      if (err.name === 'TokenExpiredError') return next(new Error('TOKEN_EXPIRED'));
       return next(new Error('INVALID_TOKEN'));
     }
   });
-
   // ─── 2. أحداث الاتصال وإدارة الغرف والمحادثات ───
   io.on('connection', (socket) => {
     
