@@ -1,27 +1,23 @@
 // services/settingsService.js
-// ✅ FIX [HUB-06]: حذف الـ cache المكرر من هنا — SystemSettings.js يملك getCached()
-// ✅ FIX [HUB-05]: في بيئة PM2 cluster — cache واحد في مستوى الـ Model أفضل من اثنين
-//    settingsService الآن delegate نظيف بدون cache مكرر
 
-const SystemSettings = require('../models/SystemSettings');
+const SystemSettings              = require('../models/SystemSettings');
+const { settingsEvents }          = require('../models/SystemSettings');
 
-const ALLOWED_FIELDS = [
-  'defaultQuota', 'level2Quota', 'maxBookingsPerUser',
-  'maxActiveRequestsPerMonth', 'requestExpiryDays',
-  'donorQuotaReward', 'trustScorePerDonation', 'trustScorePerRequest',
-  'bookingExpiryHours', 'categories', 'reportReasons',
-  'autoReportBanThreshold', 'universityEmailDomains',
-  'requireHubForBooking', 'maintenanceMode',
-  'platformName', 'contactEmail', 'quotaResetDayOfMonth',
-];
+// ─── DC-01 FIX: اشتقاق ALLOWED_FIELDS من الـ Schema تلقائياً ──────────────────
+// الطريقة القديمة كانت قائمة يدوية أفقدت maxActiveDonationsPerUser
+// و maxActiveDonationsLevel2Plus — الآن لا يمكن نسيان أي حقل جديد
+const EXCLUDED_FIELDS = ['_id', '__v', 'createdAt', 'updatedAt'];
+const ALLOWED_FIELDS  = Object.keys(SystemSettings.schema.paths)
+  .filter((field) => !EXCLUDED_FIELDS.includes(field));
 
-// ── جلب الإعدادات — يعتمد على getCached() الموجود في Model ──
-// ✅ FIX [HUB-06]: لا cache هنا — SystemSettings.getCached() يكفي
+
+// ── جلب الإعدادات الكاملة (Admin) ─────────────────────────────────────────────
 exports.getSettings = async () => {
   return SystemSettings.getCached();
 };
 
-// ── تحديث الإعدادات وإبطال الكاش فوراً ────────────────────
+
+// ── تحديث الإعدادات ────────────────────────────────────────────────────────────
 exports.updateSettings = async (updates) => {
   // تصفية الحقول لمنع حقن إعدادات غير مصرح بها
   const sanitized = Object.fromEntries(
@@ -29,7 +25,10 @@ exports.updateSettings = async (updates) => {
   );
 
   if (Object.keys(sanitized).length === 0) {
-    throw Object.assign(new Error('لا توجد حقول صالحة للتحديث'), { status: 400 });
+    throw Object.assign(
+      new Error('لا توجد حقول صالحة للتحديث'),
+      { status: 400 }
+    );
   }
 
   const updated = await SystemSettings.findByIdAndUpdate(
@@ -38,8 +37,11 @@ exports.updateSettings = async (updates) => {
     { returnDocument: 'after', upsert: true, runValidators: true }
   ).lean();
 
-  // ✅ إبطال الكاش المركزي في SystemSettings بعد كل تحديث
+  // إبطال الـ Cache المركزي فوراً بعد كل تحديث ناجح
+  // DC-04: invalidateCache تُطلق settingsEvents.emit('invalidated') داخلياً
   SystemSettings.invalidateCache();
 
   return updated;
 };
+
+

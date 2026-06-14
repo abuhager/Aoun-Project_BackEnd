@@ -182,3 +182,27 @@ exports.optionalAuth = async (req, res, next) => {
 
   next();
 };
+
+// 5. requireSuperAdmin — DC-05 FIX
+//    للعمليات الحرجة التي تؤثر على النظام بالكامل
+//    مثل: تعديل إعدادات النظام، تغيير حدود النظام
+// ─────────────────────────────────────────────────────────────
+exports.requireSuperAdmin = (req, res, next) => {
+  if (!req.user) {
+    return next(new AppError(
+      'غير مصرح — يجب تسجيل الدخول أولاً 🔒',
+      401,
+      'UNAUTHORIZED'
+    ));
+  }
+
+  if (req.user.role !== 'super_admin') {
+    return next(new AppError(
+      'هذه العملية تتطلب صلاحيات مشرف أعلى 🛡️',
+      403,
+      'FORBIDDEN_SUPER_ADMIN_ONLY'
+    ));
+  }
+
+  next();
+};
