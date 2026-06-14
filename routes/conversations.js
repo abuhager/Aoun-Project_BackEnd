@@ -1,8 +1,8 @@
 // routes/conversations.js ✅ FIXED — إضافة route القراءة
 const express = require('express');
 const router  = express.Router();
-const { requireAuth } = require('../middlewares/authMiddleware');
-const { validateObjectId } = require('../middlewares/validateObjectId');
+const { requireAuth } = require('../middlewares/auth');
+const validateObjectId = require('../middlewares/validateObjectId');
 const Conversation = require('../models/Conversation');
 const AppError = require('../utils/AppError');
 

@@ -5,7 +5,7 @@ const Item = require('../models/Item');
 const SystemSettings = require('../models/SystemSettings');
 const { fireSendEmail } = require('../utils/sendEmail');
 const { generateOtp } = require('../utils/otp');
-
+const DonationRequest  = require('../models/DonationRequest');
 // ══════════════════════════════════════════════════════════════
 // 🛡️ دالة عزل الأخطاء المركزية (Error Isolation Wrapper)
 // ══════════════════════════════════════════════════════════════
@@ -112,26 +112,26 @@ const initCronJobs = () => {
   // ─── 1. تصفير وتجديد الكوتا شهرياً (ديناميكي) ────────────────────
   cron.schedule('0 0 1 * *', () => {
     runSafe('reset-monthly-quotas', async () => {
-      const settings = await SystemSettings.getCached();
+     const settings = await SystemSettings.getCached();
 
-      const [r1, r2, r3] = await Promise.all([
-        User.updateMany(
-          { trustLevel: { $lte: 1 }, isBanned: false },
-          { $set: { quota: settings.defaultQuota } }
-        ),
-        User.updateMany(
-          { trustLevel: 2, isBanned: false },
-          { $set: { quota: settings.level2Quota } }
-        ),
-      ]);
+const [r1, r2] = await Promise.all([
+  User.updateMany(
+    { trustLevel: { $lte: 1 }, isBanned: false },
+    { $set: { quota: settings.defaultQuota } }
+  ),
+  User.updateMany(
+    { trustLevel: { $gte: 2 }, isBanned: false }, // ← Level 2 وما فوق
+    { $set: { quota: settings.level2Quota } }
+  ),
+]);
 
-      const totalUpdated = r1.modifiedCount + r2.modifiedCount + r3.modifiedCount;
-      console.log(
-        `[Cron] 📊 إحصائيات تجديد الكوتا شهرياً للـ Users: ${totalUpdated} مستخدم` +
-        ` (L1: ${r1.modifiedCount}, L2: ${r2.modifiedCount}, L3+: ${r3.modifiedCount})`
-      );
+const totalUpdated = r1.modifiedCount + r2.modifiedCount;
+console.log(
+  `[Cron] 📊 تجديد الكوتا: ${totalUpdated} مستخدم` +
+  ` (L0-L1: ${r1.modifiedCount}, L2+: ${r2.modifiedCount})`
+);
 
-      SystemSettings.invalidateCache();
+SystemSettings.invalidateCache();
     });
   }, { scheduled: true, timezone: 'Asia/Amman' });
 

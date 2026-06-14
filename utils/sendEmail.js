@@ -1,5 +1,9 @@
 // utils/sendEmail.js — ✅ FIXED: export موحّد + fire-and-forget
 const sendEmail = async (options) => {
+  if (!process.env.BREVO_API_KEY) {
+    console.warn('[sendEmail] BREVO_API_KEY غير مضبوط — تخطي إرسال الإيميل');
+    return;
+  }
   try {
     const response = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
