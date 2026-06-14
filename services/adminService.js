@@ -2,12 +2,14 @@
 const adminRepo = require('../repositories/adminRepository');
 const userRepository = require('../repositories/userRepository');
 const AdminLog = require('../models/AdminLog');
-const User = require('../models/User'); // ✅ تم استيراد موديل المستخدم هنا لعمل التحديث المباشر
+const User = require('../models/User'); 
 const notifyUser = require('../utils/notifyUser');
 const AppError = require('../utils/AppError');
+const sessionCache = require('../utils/sessionCache'); // ✅ استيراد كاش الجلسات هنا
 
 // ─── Stats ────────────────────────────────────────────────────
 exports.getStats = () => adminRepo.getDashboardStats();
+
 
 // ─── Users ────────────────────────────────────────────────────
 exports.listUsers = async ({ page = 1, search = '', banned = '' }) => {
@@ -26,6 +28,7 @@ exports.listUsers = async ({ page = 1, search = '', banned = '' }) => {
   };
 };
 
+
 exports.banUser = async (userId, adminId, reason, adminNote) => {
   const user = await adminRepo.banUser(userId, reason, adminId);
 
@@ -33,10 +36,13 @@ exports.banUser = async (userId, adminId, reason, adminNote) => {
     throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
   }
 
-  // ✅ 1. إبطال كل الـ refresh tokens للمستخدم عند الحظر اليدوي
+  // 1. إبطال كل الـ refresh tokens للمستخدم عند الحظر اليدوي
   await User.findByIdAndUpdate(userId, { 
     $inc: { refreshTokenVersion: 1 } 
   });
+
+  // ✅ تصفير الـ Cache فوراً عند حظر المستخدم يدوياً لطرده من النظام في نفس اللحظة
+  sessionCache.invalidate(userId); 
 
   await adminRepo.logAdminAction({
     adminId,
@@ -54,6 +60,7 @@ exports.banUser = async (userId, adminId, reason, adminNote) => {
 
   return user;
 };
+
 
 exports.unbanUser = async (userId, adminId, adminNote = null) => {
   const user = await adminRepo.unbanUser(userId);
@@ -79,6 +86,7 @@ exports.unbanUser = async (userId, adminId, adminNote = null) => {
   return user;
 };
 
+
 // ─── Items ────────────────────────────────────────────────────
 exports.listItems = async ({ page = 1 }) => {
   const normalizedPage = Math.max(1, +page || 1);
@@ -95,6 +103,7 @@ exports.listItems = async ({ page = 1 }) => {
     pages: Math.ceil(total / 20),
   };
 };
+
 
 exports.deleteItem = async (itemId, adminId, adminNote) => {
   const Item = require('../models/Item');
@@ -129,6 +138,7 @@ exports.deleteItem = async (itemId, adminId, adminNote) => {
   return item;
 };
 
+
 // ─── Reports ──────────────────────────────────────────────────
 exports.listReports = async ({ page = 1 }) => {
   const normalizedPage = Math.max(1, +page || 1);
@@ -145,6 +155,7 @@ exports.listReports = async ({ page = 1 }) => {
     pages: Math.ceil(total / 20),
   };
 };
+
 
 exports.resolveReport = async (reportId, adminId, action, _adminName, adminNote = null) => {
   const allowedActions = ['warn', 'ban', 'dismiss'];
@@ -205,10 +216,13 @@ exports.resolveReport = async (reportId, adminId, action, _adminName, adminNote 
   if (action === 'ban' && report.reportedUser) {
     await adminRepo.banUser(report.reportedUser, 'حظر من بلاغ مؤكد', adminId);
 
-    // ✅ 2. إبطال الـ refresh tokens للمستخدم أيضاً عند حظره تلقائياً من خلال البلاغات
+    // 2. إبطال الـ refresh tokens للمستخدم أيضاً عند حظره تلقائياً من خلال البلاغات
     await User.findByIdAndUpdate(report.reportedUser, { 
       $inc: { refreshTokenVersion: 1 } 
     });
+
+    // ✅ تصفير الـ Cache أيضاً في حالة الحظر التلقائي الناتج عن معالجة البلاغات
+    sessionCache.invalidate(report.reportedUser);
 
     await notifyUser(report.reportedUser, {
       type: 'admin_ban',
@@ -234,6 +248,7 @@ exports.resolveReport = async (reportId, adminId, action, _adminName, adminNote 
   return report;
 };
 
+
 // ─── Audit Logs ───────────────────────────────────────────────
 exports.listAuditLogs = async ({ page = 1 }) => {
   const normalizedPage = Math.max(1, +page || 1);
@@ -251,6 +266,7 @@ exports.listAuditLogs = async ({ page = 1 }) => {
   };
 };
 
+
 // ─── Promote / Demote ─────────────────────────────────────────
 exports.promoteToLevel2 = async (targetId, adminId, reason = null, adminNote = null) => {
   const user = await userRepository.findByIdForAdmin(targetId);
@@ -263,13 +279,11 @@ exports.promoteToLevel2 = async (targetId, adminId, reason = null, adminNote = n
     throw new AppError('لا يمكن ترقية مستخدم محظور', 403, 'USER_BANNED');
   }
 
-  // ✅ إصلاح: الترقية اليدوية من الأدمن تعمل فقط من 1 إلى 2
-  // المستويات 3 و4 تُكتسب تلقائياً (Phone/Student Verification)
   if (user.trustLevel !== 1) {
     throw new AppError(
       `لا يمكن الترقية اليدوية — مستوى المستخدم الحالي هو ${user.trustLevel}`,
       400,
-      'MANUAL_PROMOTE_RESTRICTED'
+      `MANUAL_PROMOTE_RESTRICTED`
     );
   }
 
@@ -286,7 +300,7 @@ exports.promoteToLevel2 = async (targetId, adminId, reason = null, adminNote = n
     meta: {
       targetName:  user.name,
       targetEmail: user.email ?? null,
-      fromLevel:   user.trustLevel, // ✅ أضف للـ audit log
+      fromLevel:   user.trustLevel, 
       toLevel:     2,
     },
   });
@@ -305,7 +319,6 @@ exports.demoteToLevel1 = async (targetId, adminId, reason = null, adminNote = nu
     throw new AppError('المستخدم في المستوى 1 بالفعل', 400, 'ALREADY_LEVEL1');
   }
 
-  // ✅ إصلاح: التخفيض اليدوي يُعيد دائماً إلى 1 بغض النظر عن المستوى الحالي
   const updated = await userRepository.setTrustLevel(targetId, 1);
 
   await adminRepo.logAdminAction({
@@ -319,7 +332,7 @@ exports.demoteToLevel1 = async (targetId, adminId, reason = null, adminNote = nu
     meta: {
       targetName:  user.name,
       targetEmail: user.email ?? null,
-      fromLevel:   user.trustLevel, // ✅ أضف للـ audit log
+      fromLevel:   user.trustLevel, 
       toLevel:     1,
     },
   });

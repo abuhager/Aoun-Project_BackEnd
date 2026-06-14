@@ -1,5 +1,6 @@
 // routes/auth.js
 // ✅ FIX [ARCH-01]: حذف resendLimiter الـ Inline — استخدام resendOtpLimiter من rateLimiter.js
+// ✅ FIX [SEC-AUTH-01]: resend-otp يستخدم schema 'resendOtp' المستقلة (لا تطلب otp)
 
 const express = require('express');
 const router  = express.Router();
@@ -10,17 +11,15 @@ const validateObjectId = require('../middlewares/validateObjectId');
 const validateBody     = require('../middlewares/validateBody');
 const { upload, verifyImageBuffer } = require('../middlewares/upload');
 
-// ✅ FIX [ARCH-01]: resendOtpLimiter قادم من المصدر الموحّد
 const {
   loginLimiter,
   globalLimiter,
   registerLimiter,
   forgotPasswordLimiter,
   otpLimiter,
-  resendOtpLimiter,      // ✅ FIX [ARCH-01]: لا يوجد inline rateLimit هنا بعد الآن
+  resendOtpLimiter,
 } = require('../middlewares/rateLimiter');
 
-// ✅ يمنع "Unexpected end of form" عند إرسال JSON بدون صورة
 const conditionalUpload = (req, res, next) => {
   const ct = req.headers['content-type'] ?? '';
   if (ct.includes('multipart/form-data')) {
@@ -35,7 +34,7 @@ const conditionalVerify = (req, res, next) => {
 };
 
 // ══════════════════════════════════════════════
-// Public Routes — لا تحتاج auth
+// Public Routes
 // ══════════════════════════════════════════════
 
 router.post('/register',
@@ -50,10 +49,11 @@ router.post('/verify-email',
   authController.verifyEmail
 );
 
-// ✅ FIX [ARCH-01]: resendOtpLimiter من rateLimiter.js — لا magic numbers هنا
+// ✅ FIX [SEC-AUTH-01]: كانت validateBody('verifyEmail') — تطلب otp وتكسر المسار
+// الآن: validateBody('resendOtp') — تقبل email فقط كما هو المتوقع
 router.post('/resend-otp',
   resendOtpLimiter,
-  validateBody('verifyEmail'),
+  validateBody('resendOtp'),
   authController.resendOtp
 );
 
@@ -86,7 +86,7 @@ router.get('/profile/:id',
 );
 
 // ══════════════════════════════════════════════
-// Protected Routes — تحتاج requireAuth
+// Protected Routes
 // ══════════════════════════════════════════════
 
 router.get('/me',

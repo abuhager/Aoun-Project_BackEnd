@@ -1,9 +1,11 @@
 // middlewares/auth.js
-// ✅ FIX [SEC-01]: حذف دالة validateSession الميتة — كانت مُعرَّفة ولا تُستخدم أبداً
+// ✅ FIX [PERF-AUTH-01]: sessionCache يُلغي DB query في كل طلب لجلب sessionIssuedAt فقط
+//    الآن: DB يُستدعى مرة واحدة كل 60 ثانية لكل مستخدم بدلاً من كل طلب
 
 const AppError              = require('../utils/AppError');
 const { verifyAccessToken } = require('../utils/tokenUtils');
 const banCache              = require('../utils/banCache');
+const sessionCache          = require('../utils/sessionCache'); // ✅ FIX [PERF-AUTH-01]
 const User                  = require('../models/User');
 
 // ─────────────────────────────────────────────────────────────
@@ -21,36 +23,46 @@ exports.requireAuth = async (req, res, next) => {
   try {
     const decoded = verifyAccessToken(token);
 
-    // ── 1) فحص الحظر السريع من الـ Cache أولاً (بدون DB) ────────────────
+    // ── 1) فحص الحظر السريع من الـ Cache (بدون DB) ──────────────────────
     const isBannedInCache = await banCache.isUserBanned(decoded.user.id);
     if (decoded.user.isBanned || isBannedInCache) {
       return next(new AppError('حسابك محظور 🚫', 403, 'USER_BANNED'));
     }
 
-    // ── 2) التحقق من تفعيل البريد ──────────────────────────────────────
+    // ── 2) التحقق من تفعيل البريد ────────────────────────────────────────
     if (!decoded.user.isVerified) {
       return next(new AppError('يجب تفعيل حسابك أولاً 📧', 403, 'EMAIL_NOT_VERIFIED'));
     }
 
-    // ── 3) فحص sessionIssuedAt و isBanned من DB ─────────────────────────
-    const user = await User.findById(decoded.user.id)
-      .select('sessionIssuedAt isBanned')
-      .lean();
+    // ── 3) ✅ FIX [PERF-AUTH-01]: sessionIssuedAt من الـ Cache أولاً ─────
+    let sessionIssuedAt = sessionCache.get(decoded.user.id);
 
-    if (!user) {
-      return next(new AppError('المستخدم غير موجود', 401, 'USER_NOT_FOUND'));
+    if (sessionIssuedAt === undefined) {
+      // cache miss — اذهب للـ DB مرة واحدة
+      const user = await User.findById(decoded.user.id)
+        .select('sessionIssuedAt isBanned')
+        .lean();
+
+      if (!user) {
+        return next(new AppError('المستخدم غير موجود', 401, 'USER_NOT_FOUND'));
+      }
+
+      // طبقة ثانية لفحص الحظر (الحظر اليدوي الجديد من الآدمن)
+      if (user.isBanned) {
+        sessionCache.invalidate(decoded.user.id); // تأكيد التصفير
+        return next(new AppError('حسابك محظور 🚫', 403, 'USER_BANNED'));
+      }
+
+      sessionIssuedAt = user.sessionIssuedAt ?? null;
+      sessionCache.set(decoded.user.id, sessionIssuedAt); // ✅ خزّن في الـ Cache
     }
 
-    // طبقة ثانية لفحص الحظر (الحظر اليدوي الجديد من الآدمن)
-    if (user.isBanned) {
-      return next(new AppError('حسابك محظور 🚫', 403, 'USER_BANNED'));
-    }
-
-    // فحص صلاحية الجلسة — نُطبَّق فقط إذا sessionIssuedAt موجود في DB
+    // ── 4) فحص صلاحية الجلسة ─────────────────────────────────────────────
     if (
-      user.sessionIssuedAt &&
-      decoded.iat < Math.floor(user.sessionIssuedAt.getTime() / 1000)
+      sessionIssuedAt &&
+      decoded.iat < Math.floor(new Date(sessionIssuedAt).getTime() / 1000)
     ) {
+      sessionCache.invalidate(decoded.user.id); // جلسة منتهية — صفّر الـ Cache
       return next(new AppError(
         'انتهت صلاحية الجلسة، أعد تسجيل الدخول 🔒',
         401,
@@ -130,19 +142,28 @@ exports.optionalAuth = async (req, res, next) => {
       return next();
     }
 
-    const user = await User.findById(decoded.user.id)
-      .select('sessionIssuedAt isBanned')
-      .lean();
+    // ✅ FIX [PERF-AUTH-01]: نفس الـ Cache في optionalAuth
+    let sessionIssuedAt = sessionCache.get(decoded.user.id);
 
-    if (!user || user.isBanned) {
-      req.user = null;
-      return next();
+    if (sessionIssuedAt === undefined) {
+      const user = await User.findById(decoded.user.id)
+        .select('sessionIssuedAt isBanned')
+        .lean();
+
+      if (!user || user.isBanned) {
+        req.user = null;
+        return next();
+      }
+
+      sessionIssuedAt = user.sessionIssuedAt ?? null;
+      sessionCache.set(decoded.user.id, sessionIssuedAt);
     }
 
     if (
-      user.sessionIssuedAt &&
-      decoded.iat < Math.floor(user.sessionIssuedAt.getTime() / 1000)
+      sessionIssuedAt &&
+      decoded.iat < Math.floor(new Date(sessionIssuedAt).getTime() / 1000)
     ) {
+      sessionCache.invalidate(decoded.user.id);
       req.user = null;
       return next();
     }

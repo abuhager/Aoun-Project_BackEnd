@@ -1,7 +1,7 @@
 // middlewares/validateBody.js
 // ✅ FIX [HUB-01]: createHub — تغيير location إلى address ليطابق SafeHub Schema
 // ✅ FIX [HUB-07]: updateSettings.defaultQuota.max رُفع من 10 إلى 20 ليطابق SystemSettings Schema
-// بقية الـ schemas كما هي بدون تغيير
+// ✅ FIX [SEC-AUTH-01]: إضافة schema مستقلة لـ resendOtp — لا تطلب otp
 
 const Joi = require('joi');
 
@@ -38,6 +38,12 @@ const schemas = {
   verifyEmail: Joi.object({
     email: Joi.string().email({ tlds: { allow: false } }).required().lowercase().trim(),
     otp:   Joi.string().length(6).pattern(OTP_REGEX).required(),
+  }).unknown(false),
+
+  // ✅ FIX [SEC-AUTH-01]: schema مستقلة لـ resendOtp — لا تطلب otp إطلاقاً
+  // كانت تستخدم 'verifyEmail' التي تُلزم بوجود otp، مما يكسر المسار كلياً
+  resendOtp: Joi.object({
+    email: Joi.string().email({ tlds: { allow: false } }).required().lowercase().trim(),
   }).unknown(false),
 
   forgotPassword: Joi.object({
@@ -154,10 +160,9 @@ const schemas = {
   }).unknown(false),
 
   // ──────────── hubs ─────────────────────────────────────────
-  // ✅ FIX [HUB-01]: تغيير "location" إلى "address" — يطابق SafeHub Schema و hubDto
   createHub: Joi.object({
     name:    Joi.string().min(3).max(100).required().trim(),
-    address: Joi.string().min(3).max(200).required().trim(), // ✅ كان: location
+    address: Joi.string().min(3).max(200).required().trim(),
     city:    Joi.string().min(2).max(60).required().trim(),
     workingHours: Joi.string().max(100).optional().trim(),
     coordinates: Joi.object({
@@ -166,10 +171,9 @@ const schemas = {
     }).optional(),
   }).unknown(false),
 
-  // ✅ FIX [HUB-01]: تغيير "location" إلى "address" هنا أيضاً
   updateHub: Joi.object({
     name:         Joi.string().min(3).max(100).optional().trim(),
-    address:      Joi.string().min(3).max(200).optional().trim(), // ✅ كان: location
+    address:      Joi.string().min(3).max(200).optional().trim(),
     city:         Joi.string().min(2).max(60).optional().trim(),
     isActive:     Joi.boolean().optional(),
     workingHours: Joi.string().max(100).optional().trim(),
@@ -180,11 +184,9 @@ const schemas = {
   }).min(1).unknown(false),
 
   // ──────────── settings ─────────────────────────────────────
-  // ✅ FIX [HUB-07]: defaultQuota.max رُفع من 10 → 20 (يطابق SystemSettings Schema)
-  // ✅ FIX [HUB-07]: level2Quota.max رُفع من 15 → 20 (يطابق SystemSettings Schema)
   updateSettings: Joi.object({
-    defaultQuota:               Joi.number().integer().min(1).max(20).optional(), // ✅ كان: max(10)
-    level2Quota:                Joi.number().integer().min(1).max(20).optional(), // ✅ كان: max(15)
+    defaultQuota:               Joi.number().integer().min(1).max(20).optional(),
+    level2Quota:                Joi.number().integer().min(1).max(20).optional(),
     maxBookingsPerUser:         Joi.number().integer().min(1).max(10).optional(),
     maxActiveRequestsPerMonth:  Joi.number().integer().min(1).max(5).optional(),
     requestExpiryDays:          Joi.number().integer().min(1).max(180).optional(),

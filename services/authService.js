@@ -30,45 +30,37 @@ const isUniversityEmail = async (email) => {
 
 const _upgradeStudentTrust = async (user) => {
   if (user.isVerifiedStudent) return;
-
   if (await isUniversityEmail(user.email)) {
     user.isVerifiedStudent = true;
-    
     try {
       const settings = await SystemSettings.getCached();
       const studentTrustLevel = settings?.studentDefaultTrustLevel ?? 2;
-      const studentQuota = settings?.studentQuota ?? 5; 
-
-      if ((user.trustLevel ?? 1) < studentTrustLevel) {
-        user.trustLevel = studentTrustLevel;
-      }
-
+      const studentQuota      = settings?.studentQuota ?? 5;
+      if ((user.trustLevel ?? 1) < studentTrustLevel) user.trustLevel = studentTrustLevel;
       const defaultQuota = settings?.defaultUserQuota ?? 2;
-      if ((user.quota ?? defaultQuota) <= defaultQuota) {
-        user.quota = studentQuota;
-      }
+      if ((user.quota ?? defaultQuota) <= defaultQuota) user.quota = studentQuota;
     } catch (error) {
-      console.error('[Upgrade Error] فشل تحديث معايير الطالب من الإعدادات:', error);
+      console.error('[Upgrade Error] فشل تحديث معايير الطالب:', error);
       if ((user.trustLevel ?? 1) < 2) user.trustLevel = 2;
-      if ((user.quota ?? 2) <= 2) user.quota = 5; 
+      if ((user.quota ?? 2) <= 2) user.quota = 5;
     }
   }
 };
 
 const buildSafeUser = (user) => ({
-  _id: user._id,
-  name: user.name,
-  email: user.email,
-  avatar: user.avatar,
-  role: user.role,
-  trustScore: user.trustScore,
-  trustLevel: user.trustLevel ?? 1,
-  quota: user.quota,
-  isVerified: user.isVerified,
+  _id:               user._id,
+  name:              user.name,
+  email:             user.email,
+  avatar:            user.avatar,
+  role:              user.role,
+  trustScore:        user.trustScore,
+  trustLevel:        user.trustLevel ?? 1,
+  quota:             user.quota,
+  isVerified:        user.isVerified,
   isVerifiedStudent: user.isVerifiedStudent,
-  badges: user.badges,
-  createdAt: user.createdAt,
-  gamification: buildGamificationProfile(user.trustScore, user.totalDonations),
+  badges:            user.badges,
+  createdAt:         user.createdAt,
+  gamification:      buildGamificationProfile(user.trustScore, user.totalDonations),
 });
 
 // ── getCurrentUserLogic ──────────────────────────────────────
@@ -206,50 +198,41 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
 };
 // ── verifyEmailLogic ──────────────────────────────────────────
 exports.verifyEmailLogic = async ({ email, otp }) => {
-  const User = require('../models/User'); 
-  
-  const user = await User.findOneAndUpdate(
-    {
-      email,
-      isVerified: false,
-      $or: [
-        { otpAttempts: { $lt: 5 } },
-        { otpAttempts: { $exists: false } }
-      ]
-    },
-    { $inc: { otpAttempts: 1 } },
-    { 
-      returnDocument: 'after', 
-      select: '+verificationOtp +verificationOtpExpiry +otpAttempts +trustLevel +role +quota' 
-    }
-  ).lean(); 
+
+  // الخطوة 1: قراءة ذرية + increment للـ otpAttempts — عبر Repository
+  const user = await userRepository.findAndIncrementOtpAttempts(email);
 
   if (!user) {
-    const checkUser = await User.findOne({ email }).select('isVerified otpAttempts').lean();
-    if (!checkUser) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
+    // الخطوة 2: تمييز سبب الفشل عبر Repository (لا require مباشر)
+    const checkUser = await userRepository.findEmailStatus(email);
+
+    if (!checkUser)          return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
     if (checkUser.isVerified) return { statusCode: 400, body: { msg: 'الإيميل محقق مسبقاً ✅' } };
-    
-    await User.updateOne({ email }, { 
-      $unset: { verificationOtp: 1, verificationOtpExpiry: 1 },
-      $set: { otpAttempts: 0 } 
-    });
-    
+
+    // تجاوز الـ 5 محاولات — تصفير لإتاحة طلب كود جديد عبر /resend-otp
+    await userRepository.resetOtpAttemptsAfterLock(email);
+
     return {
       statusCode: 429,
-      body: { msg: 'تجاوزت الحد المسموح من المحاولات، اطلب رمزاً جديداً 🔒', code: 'OTP_ATTEMPTS_EXCEEDED' },
+      body: {
+        msg:  'تجاوزت الحد المسموح من المحاولات، اطلب رمزاً جديداً 🔒',
+        code: 'OTP_ATTEMPTS_EXCEEDED',
+      },
     };
   }
 
   if (!user.verificationOtp || !user.verificationOtpExpiry) {
     return { statusCode: 400, body: { msg: 'لا يوجد رمز تحقق نشط، اطلب رمزاً جديداً' } };
   }
-  
+
   if (new Date(user.verificationOtpExpiry).getTime() < Date.now()) {
-    return { statusCode: 400, body: { msg: 'انتهت صلاحية رمز التحقق ⏰ — اطلب رمزاً جديداً', code: 'OTP_EXPIRED' } };
+    return {
+      statusCode: 400,
+      body: { msg: 'انتهت صلاحية رمز التحقق ⏰ — اطلب رمزاً جديداً', code: 'OTP_EXPIRED' },
+    };
   }
 
   const isValid = verifyOtp(otp, user.verificationOtp);
-
   if (!isValid) {
     const remaining = 5 - user.otpAttempts;
     return {
@@ -258,186 +241,187 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
     };
   }
 
-  // 1. تحديث بيانات كائن المستخدم في الذاكرة أولاً
-  user.isVerified = true;
-  user.verificationOtp = undefined;
-  user.verificationOtpExpiry = undefined;
-  user.otpAttempts = 0;
-  
-  // 2. تشغيل الترقية (لتحديث الـ trustLevel والـ quota في كائن user في الذاكرة قبل حفظه)
-  await _upgradeStudentTrust(user);
+  // الكود صحيح — تحضير بيانات التحقق لتشغيل _upgradeStudentTrust
+  const mutableUser = { ...user };
+  await _upgradeStudentTrust(mutableUser);
 
-  // 3. توليد الـ Tokens بناءً على البيانات المحدثة للمستخدم
-  const accessToken = generateAccessToken(user);
-  const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(user);
+  const accessToken = generateAccessToken(mutableUser);
+  const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(mutableUser);
 
-  // ✅ 4. الإصلاح الذري: دمج عمليتي الـ Update في عملية واحدة شاملة
-  await User.updateOne(
-    { _id: user._id },
-    {
-      $set: {
-        isVerified: true,
-        trustLevel: user.trustLevel,
-        quota: user.quota,
-        otpAttempts: 0,
-        refreshToken: hashedRefresh,      // ← دُمجت هنا بنجاح
-        sessionIssuedAt: new Date(),     // ← دُمجت هنا بنجاح
-      },
-      $unset: {
-        verificationOtp: 1,
-        verificationOtpExpiry: 1
-      }
-    }
-  );
-
-  return {
-    statusCode: 200,
-    refreshToken,
-    body: {
-      msg: 'تم التحقق من إيميلك بنجاح ✅',
-      user: buildSafeUser(user),
-      accessToken,
+  // الخطوة 3: إتمام التحقق الذري عبر Repository — لا require مباشر
+  await userRepository.completeEmailVerification(user._id, {
+    $set: {
+      isVerified:      true,
+      trustLevel:      mutableUser.trustLevel,
+      quota:           mutableUser.quota,
+      otpAttempts:     0,
+      refreshToken:    hashedRefresh,
+      sessionIssuedAt: new Date(),
     },
-  };
-};
-
-// ── loginLogic ────────────────────────────────────────────────
-exports.loginLogic = async ({ email, password }) => {
-  const user = await userRepository.findByEmailWithPassword(email);
-
-  if (!user) return { statusCode: 401, body: { msg: 'بيانات الدخول غير صحيحة' } };
-  if (user.isBanned) return { statusCode: 403, body: { msg: 'هذا الحساب محظور 🚫', code: 'ACCOUNT_BANNED' } };
-
-  const isMatch = await bcrypt.compare(password, user.password);
-  if (!isMatch) return { statusCode: 401, body: { msg: 'بيانات الدخول غير صحيحة' } };
-
-  if (!user.isVerified) {
-    const settings = await SystemSettings.getCached();
-    const otpExpiryMinutes = settings?.otpExpiryMinutes ?? 10;
-
-    // ✅ إصلاح #2: فحص Cooldown هنا أيضاً لمنع OTP flooding عبر /login
-    const COOLDOWN_MS    = 60 * 1000;
-    const totalExpiryMs  = otpExpiryMinutes * 60 * 1000;
-    const hasActiveOtp   = user.verificationOtpExpiry &&
-      user.verificationOtpExpiry.getTime() - Date.now() > (totalExpiryMs - COOLDOWN_MS);
-
-    if (hasActiveOtp) {
-      return {
-        statusCode: 403,
-        body: {
-          msg: 'حسابك غير مفعّل — تحقق من بريدك، الرمز المُرسل لا يزال صالحاً ⏳',
-          code: 'EMAIL_NOT_VERIFIED',
-          email: user.email,
-        },
-      };
-    }
-
-    // لا يوجد رمز نشط أو انتهت صلاحيته → أصدر رمزاً جديداً
-    const rawOtp  = generateOtp();
-    const otpHash = hashOtp(rawOtp);
-    const otpExpiry = new Date(Date.now() + totalExpiryMs);
-
-    await userRepository.updateUser(user._id, {
-      verificationOtp:       otpHash,
-      verificationOtpExpiry: otpExpiry,
-      otpAttempts:           0,
-    });
-
-    await emailService.sendVerificationEmail(
-      email,
-      rawOtp,
-      user.name,
-      await isUniversityEmail(email)
-    );
-
-    return {
-      statusCode: 403,
-      body: {
-        msg: 'حسابك غير مفعّل — تم إرسال رمز تحقق جديد إلى إيميلك 📧',
-        code: 'EMAIL_NOT_VERIFIED',
-        email: user.email,
-      },
-    };
-  }
-
-  // ... بقية loginLogic كما هي بدون تغيير
-  const beforeLevel = user.trustLevel ?? 1;
-  const beforeQuota = user.quota ?? 2;
-  await _upgradeStudentTrust(user);
-
-  if (user.trustLevel !== beforeLevel || user.quota !== beforeQuota || user.isVerifiedStudent) {
-    await userRepository.updateUser(user._id, {
-      isVerifiedStudent: user.isVerifiedStudent,
-      trustLevel:        user.trustLevel,
-      quota:             user.quota,
-    });
-  }
-
-  const accessToken = generateAccessToken(user);
-  const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(user);
-
-  await userRepository.updateUser(user._id, {
-    refreshToken:    hashedRefresh,
-    sessionIssuedAt: new Date(),
+    $unset: {
+      verificationOtp:       1,
+      verificationOtpExpiry: 1,
+    },
   });
 
   return {
     statusCode: 200,
     refreshToken,
     body: {
-      msg:  'مرحباً بعودتك 👋',
-      user: buildSafeUser(user),
+      msg:  'تم التحقق من إيميلك بنجاح ✅',
+      user: buildSafeUser(mutableUser),
       accessToken,
     },
   };
 };
 
+// ── loginLogic ────────────────────────────────────────────────
+exports.logoutLogic = async (userId) => {
+  const sessionCache = require('../utils/sessionCache'); // أو import في الأعلى
+  sessionCache.invalidate(userId); // ✅ صفّر الـ Cache فوراً عند logout
+
+  await userRepository.updateUser(userId, {
+    refreshToken:    undefined,
+    sessionIssuedAt: undefined,
+  });
+
+  return { statusCode: 200, clearCookie: true, body: { msg: 'تم تسجيل الخروج بنجاح 👋' } };
+};
+
+
 // ── refreshLogic ──────────────────────────────────────────────
-exports.refreshLogic = async (refreshToken) => {
-  if (!refreshToken) {
-    return { statusCode: 401, clearCookie: true, body: { msg: 'لا يوجد Refresh Token', code: 'NO_REFRESH' } };
-  }
+exports.refreshLogic = async (rawRefreshToken) => {
 
-  try {
-    const decoded = verifyRefreshToken(refreshToken);
-    const hashedIncoming = hashToken(refreshToken);
-
-    const { token: newRefreshToken, hashed: newHash } = generateRefreshToken(decoded.user);
-
-    const rotated = await userRepository.rotateRefreshToken(
-      decoded.user.id,
-      hashedIncoming,
-      newHash,
-      new Date()
-    );
-
-    if (!rotated) {
-      await userRepository.invalidateUserSession(decoded.user.id);
-
-      return {
-        statusCode: 401,
-        clearCookie: true,
-        body: { msg: 'تم اكتشاف نشاط مشبوه 🚨 — أعد تسجيل الدخول', code: 'REFRESH_REUSE' },
-      };
-    }
-
-    const newAccessToken = generateAccessToken({
-      id:         rotated._id,
-      role:       rotated.role,
-      trustLevel: rotated.trustLevel ?? 1,
-      isVerified: rotated.isVerified,
-      isBanned:   rotated.isBanned,
-    });
-
-    return { statusCode: 200, newRefreshToken, body: { accessToken: newAccessToken } };
-
-  } catch (error) {
+  // ── الخطوة 1: التحقق من وجود التوكن ──────────────────────────
+  if (!rawRefreshToken) {
     return {
       statusCode: 401,
       clearCookie: true,
-      body: { msg: 'Refresh Token غير صالح', code: 'INVALID_REFRESH' },
+      body: { msg: 'لا يوجد Refresh Token 🔒', code: 'NO_REFRESH_TOKEN' },
     };
   }
+
+  // ── الخطوة 2: التحقق من التوقيع ─────────────────────────────
+  let decoded;
+  try {
+    decoded = verifyRefreshToken(rawRefreshToken);
+  } catch (err) {
+    // توكن منتهي الصلاحية أو مُزوَّر — امسح الكوكي فقط
+    return {
+      statusCode: 401,
+      clearCookie: true,
+      body: {
+        msg:  err.name === 'TokenExpiredError'
+                ? 'انتهت صلاحية الجلسة، أعد تسجيل الدخول ⏰'
+                : 'Refresh Token غير صالح ⚠️',
+        code: err.name === 'TokenExpiredError' ? 'REFRESH_TOKEN_EXPIRED' : 'INVALID_REFRESH_TOKEN',
+      },
+    };
+  }
+
+  const userId = decoded?.user?.id;
+  if (!userId) {
+    return {
+      statusCode: 401,
+      clearCookie: true,
+      body: { msg: 'Refresh Token تالف', code: 'MALFORMED_TOKEN' },
+    };
+  }
+
+  // ── الخطوة 3: حساب الهاش المتوقَّع ──────────────────────────
+  const hashedIncoming = hashToken(rawRefreshToken);
+
+  // ── الخطوة 4: جلب المستخدم مع الـ refreshToken المخزَّن ──────
+  const user = await userRepository.findByIdWithRefreshToken(userId);
+
+  if (!user) {
+    return {
+      statusCode: 401,
+      clearCookie: true,
+      body: { msg: 'المستخدم غير موجود', code: 'USER_NOT_FOUND' },
+    };
+  }
+
+  if (user.isBanned) {
+    sessionCache.invalidate(userId);
+    return {
+      statusCode: 403,
+      clearCookie: true,
+      body: { msg: 'حسابك محظور 🚫', code: 'ACCOUNT_BANNED' },
+    };
+  }
+
+  // ── الخطوة 5: ✅ FIX [SEC-AUTH-02-A + SEC-AUTH-02-B] ─────────
+  // هاش التوكن الوارد لا يطابق ما في DB
+  // هذا يعني إما:
+  //   أ) التوكن سُرق واستُخدم من قِبَل مهاجم (الاستخدام الأصلي أدى إلى تدوير الهاش)
+  //   ب) المستخدم أرسل توكناً قديماً بعد التدوير
+  // في كلتا الحالتين → إبطال كامل فوري + إخطار المستخدم
+  if (!user.refreshToken || user.refreshToken !== hashedIncoming) {
+
+    // ✅ FIX [SEC-AUTH-02-A]: إبطال الجلسة كلياً بدل رد 401 صامت
+    // يمنع المهاجم من الاستمرار حتى لو كان يملك التوكن الصحيح
+    await userRepository.invalidateUserSession(userId);
+    sessionCache.invalidate(userId); // ✅ FIX [SEC-AUTH-02-C]: صفّر الـ Cache فوراً
+
+    // ⚠️ هنا يمكن لاحقاً إضافة: emailService.sendSecurityAlert(user.email, ...)
+      console.warn(
+    `[SEC-AUTH-02] Refresh Token Reuse Detected — userId: ${userId} — IP: ${clientIp}`
+  );
+
+    return {
+      statusCode: 401,
+      clearCookie: true,
+      body: {
+        msg:  'اكتُشف نشاط مشبوه — تم تسجيل خروجك من جميع الأجهزة لحمايتك 🛡️',
+        code: 'TOKEN_REUSE_DETECTED',
+      },
+    };
+  }
+
+  // ── الخطوة 6: توليد توكن جديد + تدوير ذري ───────────────────
+  const { token: newRefreshToken, hashed: newHashedRefresh } = generateRefreshToken(user);
+  const newIssuedAt = new Date();
+
+  // rotateRefreshToken: يُحدِّث فقط إذا تطابق الهاش الحالي (atomic CAS)
+  const updatedUser = await userRepository.rotateRefreshToken(
+    userId,
+    hashedIncoming,
+    newHashedRefresh,
+    newIssuedAt
+  );
+
+  // ── الخطوة 7: ✅ FIX [SEC-AUTH-02-B] ────────────────────────
+  // rotateRefreshToken أعاد null → عملية rotation فشلت (race condition أو تزامن طلبين)
+  // الخطوة 5 أمسكت حالة Reuse الواضحة، لكن هنا نُعالج الـ race condition:
+  // مستخدمان يُرسلان نفس التوكن في آن واحد — الثاني يجد الهاش تغيَّر
+  if (!updatedUser) {
+    // لا نُبطل الجلسة هنا (قد يكون طلباً متزامناً شرعياً من نفس المستخدم)
+    // لكن نُرفض ونطلب إعادة المحاولة بالتوكن الجديد الذي أعطاه الطلب الأول
+    return {
+      statusCode: 409,
+      clearCookie: false,
+      body: {
+        msg:  'تعارض في التحديث، أعد المحاولة مرة واحدة 🔄',
+        code: 'ROTATION_CONFLICT',
+      },
+    };
+  }
+
+  // ── الخطوة 8: تحديث sessionCache بالوقت الجديد ──────────────
+  sessionCache.set(userId, newIssuedAt); // ✅ يحافظ على الـ Cache نشطاً بعد التدوير
+
+  const newAccessToken = generateAccessToken(updatedUser);
+
+  return {
+    statusCode:      200,
+    newRefreshToken,
+    body: {
+      msg:         'تم تجديد الجلسة ✅',
+      accessToken: newAccessToken,
+      user:        buildSafeUser(updatedUser),
+    },
+  };
 };
 
 // ── logoutLogic ───────────────────────────────────────────────
@@ -603,33 +587,106 @@ exports.forgotPasswordLogic = async ({ email }) => {
   const user = await userRepository.findByEmail(email);
   const GENERIC_MSG = { msg: 'إذا كان هذا الإيميل مسجلاً، ستصلك رسالة استعادة قريباً 📧' };
 
-  if (!user) {
-    return { statusCode: 200, body: GENERIC_MSG };
-  }
+  if (!user) return { statusCode: 200, body: GENERIC_MSG };
 
-  const settings = await SystemSettings.getCached();
+  const settings           = await SystemSettings.getCached();
   const resetExpiryMinutes = settings?.resetPasswordExpiryMinutes ?? 15;
 
-  const resetToken = crypto.randomBytes(32).toString('hex');
-  user.resetPasswordToken = hashToken(resetToken);
-  user.resetPasswordExpire = Date.now() + resetExpiryMinutes * 60 * 1000; 
-  await userRepository.saveUser(user);
+  const resetToken        = crypto.randomBytes(32).toString('hex');
+  const hashedResetToken  = hashToken(resetToken);
+  const resetExpire       = Date.now() + resetExpiryMinutes * 60 * 1000;
 
-  const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
-  const resetUrl = `${clientUrl}/reset-password/${resetToken}`;
+  // ✅ FIX [ARCH-AUTH-01]: updateUser بدلاً من saveUser
+  // يُحدِّث الحقلين المستهدفين فقط — لا يُعرِّض بقية الـ document للكتابة الزائدة
+  await userRepository.updateUser(user._id, {
+    resetPasswordToken:  hashedResetToken,
+    resetPasswordExpire: resetExpire,
+  });
+
+  const clientUrl  = process.env.CLIENT_URL || 'http://localhost:3000';
+  const resetUrl   = `${clientUrl}/reset-password/${resetToken}`;
 
   try {
     await emailService.sendResetPasswordEmail(user.email, resetToken, user.name, resetUrl);
     return { statusCode: 200, body: GENERIC_MSG };
   } catch (err) {
     console.error('[forgotPassword] Email sending failed:', err.message);
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpire = undefined;
-    await userRepository.saveUser(user);
-    return { statusCode: 200, body: GENERIC_MSG }; 
+    // ✅ FIX [ARCH-AUTH-01]: تصفير عبر updateUser أيضاً
+    await userRepository.updateUser(user._id, {
+      $unset: { resetPasswordToken: 1, resetPasswordExpire: 1 },
+    });
+    return { statusCode: 200, body: GENERIC_MSG };
   }
 };
 
+// ── ✅ FIX [LOGIC-AUTH-03]: updateMeLogic ────────────────────
+// فحص تكرار رقم الهاتف قبل user.save() لتجنب MongoServerError 11000 الخام
+exports.updateMeLogic = async (userId, updates, fileBuffer, mimetype) => {
+  const user = await userRepository.findById(userId);
+  if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
+
+  if (updates.name) user.name = updates.name.trim();
+
+  if (updates.phone) {
+    // ✅ FIX [LOGIC-AUTH-03]: فحص التكرار قبل الحفظ — رسالة واضحة للمستخدم
+    const phoneExists = await userRepository.findByPhoneExcluding(updates.phone, userId);
+    if (phoneExists) {
+      return {
+        statusCode: 409,
+        body: {
+          msg:  'رقم الهاتف مستخدم من قِبَل حساب آخر ❌',
+          code: 'PHONE_ALREADY_EXISTS',
+        },
+      };
+    }
+    user.phone = updates.phone;
+  }
+
+  if (fileBuffer) {
+    if (!ALLOWED_IMAGE_TYPES.includes(mimetype)) {
+      return {
+        statusCode: 400,
+        body: { msg: 'نوع الصورة غير مدعوم، يُسمح بـ JPEG أو PNG أو WebP فقط 🖼️' },
+      };
+    }
+
+    const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
+    if (fileBuffer.length > MAX_FILE_SIZE_BYTES) {
+      return {
+        statusCode: 400,
+        body: { msg: 'حجم الصورة يتجاوز الحد المسموح (5 ميغابايت) 🖼️' },
+      };
+    }
+
+    try {
+      const result = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: 'hajah/avatars',
+            resource_type: 'image',
+            transformation: [{ width: 400, height: 400, crop: 'fill', gravity: 'face' }],
+          },
+          (err, res) => (err ? reject(err) : resolve(res))
+        );
+        Readable.from(fileBuffer).pipe(stream);
+      });
+      user.avatar = result.secure_url;
+    } catch (uploadErr) {
+      console.error('Cloudinary upload error:', uploadErr.message);
+      return { statusCode: 500, body: { msg: 'فشل رفع الصورة الشخصية' } };
+    }
+  }
+
+  await user.save();
+
+  return {
+    statusCode: 200,
+    body: {
+      msg:  'تم تحديث الملف الشخصي بنجاح ✅',
+      user: buildSafeUser(user),
+    },
+  };
+};
 // ── resetPasswordLogic ────────────────────────────────────────
 exports.resetPasswordLogic = async (token, newPassword) => {
   const hashedToken = hashToken(token);
@@ -725,6 +782,9 @@ exports.updatePasswordLogic = async (userId, { currentPassword, newPassword }) =
   user.refreshToken = undefined;
   user.sessionIssuedAt = undefined;
   await user.save();
+
+  // ✅ تصفير الـ Cache بعد تغيير كلمة المرور لمنع استخدام الجلسات القديمة
+  sessionCache.invalidate(userId); 
 
   return { statusCode: 200, body: { msg: 'تم تغيير كلمة المرور بنجاح ✅' } };
 };

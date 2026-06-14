@@ -102,7 +102,12 @@ exports.resetPassword = asyncHandler(async (req, res) => {
 
 // ─── 9. تجديد الـ Token ────────────────────────────────────────
 exports.refreshToken = asyncHandler(async (req, res) => {
-  const result = await authService.refreshLogic(req.cookies?.refreshToken);
+  const clientIp = req.ip ?? req.socket?.remoteAddress ?? 'unknown';
+
+  const result = await authService.refreshLogic(
+    req.cookies?.refreshToken,
+    clientIp  // ✅ FIX [SEC-AUTH-02]: تمرير IP للتسجيل عند اكتشاف الاختراق
+  );
 
   if (result.clearCookie) {
     res.clearCookie('refreshToken',   CLEAR_REFRESH_COOKIE_OPTIONS);
