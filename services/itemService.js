@@ -457,121 +457,155 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
 
 // ─── دالة تأكيد الاستلام الخاصة بالمستلم (Recipient Logic) ───
 exports.confirmReceiptLogic = async (itemId, userId) => {
-  const item = await Item.findById(itemId);
-
-  if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
-  if (item.status !== 'محجوز') throw new AppError('الغرض غير محجوز حالياً', 400, 'ITEM_NOT_BOOKED');
-if (item.bookedBy?.toString() !== userId.toString()) throw new AppError('أنت لستَ الحاجز لهذا الغرض', 403, 'NOT_BOOKER');
-  if (item.recipientConfirmed) throw new AppError('لقد أكّدت الاستلام مسبقاً ⏳', 400, 'RECIPIENT_ALREADY_CONFIRMED');
-
+  // ✅ عملية ذرية واحدة — لا pre-read، كل الـ guards في الـ filter
   const updatedItem = await Item.findOneAndUpdate(
     {
-      _id: itemId,
-      status: 'محجوز',
-      bookedBy: userId,
-      recipientConfirmed: { $ne: true },
+      _id:                itemId,
+      status:             'محجوز',
+      bookedBy:           new mongoose.Types.ObjectId(userId),
+      recipientConfirmed: { $ne: true },        // ← يمنع التأكيد المزدوج ذرياً
     },
     {
       $set: {
-        recipientConfirmed: true,
-        recipientConfirmedAt: new Date(),
+        recipientConfirmed:    true,
+        recipientConfirmedAt:  new Date(),
       },
     },
     { returnDocument: 'after' }
-  ).lean();
+  ).populate('donor', '_id').lean();
 
   if (!updatedItem) {
+    // ✅ نتحقق من السبب لإعطاء رسالة دقيقة
+    const existing = await Item.findById(itemId).select('status bookedBy recipientConfirmed').lean();
+    if (!existing)                                              throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+    if (existing.recipientConfirmed)                           throw new AppError('لقد أكّدت الاستلام مسبقاً ⏳', 400, 'RECIPIENT_ALREADY_CONFIRMED');
+    if (existing.status !== 'محجوز')                          throw new AppError('الغرض غير محجوز حالياً', 400, 'ITEM_NOT_BOOKED');
+    if (existing.bookedBy?.toString() !== userId.toString())   throw new AppError('أنت لستَ الحاجز لهذا الغرض', 403, 'NOT_BOOKER');
     throw new AppError('تعذّر تسجيل تأكيد الاستلام — حاول مرة أخرى', 409, 'RECIPIENT_CONFIRM_CONFLICT');
   }
 
   try {
-    const { getIO } = require('../socket');
-    getIO().to(getUserRoom(item.donor.toString())).emit('delivery:recipient_confirmed', {
-      itemId:   item._id,
-      title:    item.title,
+    getIO().to(getUserRoom(updatedItem.donor._id.toString())).emit('delivery:recipient_confirmed', {
+      itemId:   updatedItem._id,
+      title:    updatedItem.title,
       bookedBy: userId,
     });
   } catch (socketErr) {
     console.warn('[Socket] فشل إرسال delivery:recipient_confirmed:', socketErr.message);
   }
 
-  notifyUser(item.donor, {
+  notifyUser(updatedItem.donor._id, {
     type:   'recipient_confirmed',
     title:  'المستلم أكّد الاستلام ✅',
-    body:   `يرجى تأكيد تسليم "${item.title}" من جهتك`,
-    itemId: item._id,
-  }).catch((err) => console.warn('[Notify] فشل إشعار تأكيد الاستلام:', err.message));
+    body:   `يرجى تأكيد تسليم "${updatedItem.title}" من جهتك`,
+    itemId: updatedItem._id,
+  }).catch((err) => console.warn('[Notify]', err.message));
 
-  return { msg: 'تم تأكيد استلامك ✅ — بانتظار تأكيد المتبرع' ,
-    status: 'waiting_donor'
-  };
+  return { msg: 'تم تأكيد استلامك ✅ — بانتظار تأكيد المتبرع', status: 'waiting_donor' };
 };
 
-// ─── دالة التأكيد النهائي الخاصة بالمتبرع (Donor Logic) ───
+
 exports.completeDonorDeliveryLogic = async (itemId, userId) => {
-  const item = await Item.findOne({
-    _id:    itemId,
-    donor:  userId,
-    status: 'محجوز',
-    recipientConfirmed: true,
-  }).populate('bookedBy', 'name email');
-
-  if (!item) {
-    throw new AppError('الغرض غير موجود أو لم يؤكد المستلم بعد أو أنك لست المتبرع الرسمي', 404, 'ITEM_NOT_FOUND');
-  }
-
+  // 1. جلب الإعدادات والوقت الحالي قبل بدء الـ Transaction
   const settings = await SystemSettings.getCached();
   const now = new Date();
 
-  await Item.findByIdAndUpdate(itemId, {
-  $set: {
-    status:           'تم التسليم',
-    donorConfirmed:   true,       // ← هذا السطر مفقود
-    donorConfirmedAt: now,
-    deliveredAt:      now,
-  },
-});
+  // 2. بدء الجلسة والـ Transaction لحماية العمليات المالية والأرصدة (Trust Score & Quota)
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  await User.findByIdAndUpdate(userId, {
-    $inc: {
-      trustScore: settings.trustScorePerDonation ?? 10,
-      quota:      settings.donorQuotaReward       ?? 1,
-    },
-  });
+  let item;
+  try {
+    const [updatedItem] = await Promise.all([
+      Item.findOneAndUpdate(
+        {
+          _id: itemId,
+          donor: userId,
+          status: 'محجوز',
+          recipientConfirmed: true,
+        },
+        {
+          $set: {
+            status: 'تم التسليم',
+            donorConfirmed: true,
+            donorConfirmedAt: now,
+            deliveredAt: now,
+          },
+        },
+        { 
+          session, 
+          returnDocument: 'after', 
+          populate: { path: 'bookedBy', select: 'name email _id' } 
+        }
+      ),
+      User.findByIdAndUpdate(
+        userId,
+        {
+          $inc: {
+            trustScore: settings.trustScorePerDonation ?? 10,
+            quota:      settings.donorQuotaReward       ?? 1,
+          },
+        },
+        { session }
+      ),
+    ]);
 
-  // ✅ [LOGIC-5 FIX] تحديث حالة طلب التبرع (DonationRequest) إلى 'fulfilled' إذا كان موجوداً
+    // إذا لم يجد الغرض أو كانت الشروط غير متطابقة، نلغي العملية فوراً
+    if (!updatedItem) {
+      await session.abortTransaction();
+      session.endSession();
+      throw new AppError('الغرض غير موجود أو لم يؤكد المستلم بعد أو أنك لست المتبرع الرسمي', 404, 'ITEM_NOT_FOUND');
+    }
+
+    // اعتماد وتثبيت التعديلات في قاعدة البيانات
+    await session.commitTransaction();
+    session.endSession();
+    
+    // إسناد الغرض المحدث للمتغير الخارجي لاستخدامه في الإشعارات والـ Sockets والطلبات المرتبطة
+    item = updatedItem;
+
+  } catch (err) {
+    if (session.inTransaction()) await session.abortTransaction();
+    try { session.endSession(); } catch (_) {}
+    throw err;
+  }
+
+  // ─── العمليات اللاحقة (خارج الـ Transaction لضمان سرعة الاستجابة وعدم حجز الـ DB) ───
+
+  // ✅ تحديث حالة طلب التبرع (DonationRequest) إلى 'fulfilled' إذا كان موجوداً
   if (item.linkedRequestId) {
-  // الحالة الذكية: الـ Item منشأ من استجابة طلب محدد
-  await DonationRequest.findOneAndUpdate(
-    {
-      _id:       item.linkedRequestId,
-      requester: item.bookedBy._id,
-      status:    'active',
-    },
-    {
-      $set: {
-        status:         'fulfilled',
-        fulfilledByItem: item._id,
+    // الحالة الذكية: الـ Item منشأ من استجابة طلب محدد
+    await DonationRequest.findOneAndUpdate(
+      {
+        _id:       item.linkedRequestId,
+        requester: item.bookedBy._id,
+        status:    'active',
       },
-    }
-  ).catch((err) => console.warn('[DonationRequest] فشل تحديث الطلب المرتبط:', err.message));
-} else {
-  // الحالة القديمة fallback: بحث بالـ category (يُبقى للتوافقية)
-  await DonationRequest.findOneAndUpdate(
-    {
-      requester: item.bookedBy._id,
-      category:  item.category,
-      status:    'active',
-    },
-    {
-      $set: { status: 'fulfilled' },
-    }
-  ).catch((err) => console.warn('[DonationRequest] fallback فشل:', err.message));
-}
+      {
+        $set: {
+          status:          'fulfilled',
+          fulfilledByItem: item._id,
+        },
+      }
+    ).catch((err) => console.warn('[DonationRequest] فشل تحديث الطلب المرتبط:', err.message));
+  } else {
+    // الحالة القديمة fallback: بحث بالـ category (يُبقى للتوافقية)
+    await DonationRequest.findOneAndUpdate(
+      {
+        requester: item.bookedBy._id,
+        category:  item.category,
+        status:    'active',
+      },
+      {
+        $set: { status: 'fulfilled' },
+      }
+    ).catch((err) => console.warn('[DonationRequest] fallback فشل:', err.message));
+  }
 
-  // ✅ [LOGIC-1 FIX] إطلاق حدث السوكيت الحاسم لإعلام المستلم فوراً باكتمال العملية وتحديث واجهته
+  // ✅ إطلاق حدث السوكيت الحاسم لإعلام المستلم فوراً باكتمال العملية وتحديث واجهته
   try {
     const { getIO } = require('../socket');
+    const { getUserRoom } = require('../utils/getUserRoom'); // تأكد من مسار الدالة المساعدة في مشروعك
     getIO()
       .to(getUserRoom(item.bookedBy._id.toString()))
       .emit('delivery:completed', {
@@ -582,6 +616,7 @@ exports.completeDonorDeliveryLogic = async (itemId, userId) => {
     console.warn('[Socket] فشل إرسال delivery:completed:', socketErr.message);
   }
 
+  // إرسال إشعار داخلي للمستلم
   notifyUser(item.bookedBy._id, {
     type:   'delivery_completed',
     title:  'تم إتمام التسليم 🎉',
@@ -589,6 +624,7 @@ exports.completeDonorDeliveryLogic = async (itemId, userId) => {
     itemId: item._id,
   }).catch((err) => console.warn('[Notify] فشل إشعار إتمام التسليم:', err.message));
 
+  // إرسال البريد الإلكتروني للمستلم
   fireSendEmail({
     email:   item.bookedBy.email,
     subject: 'تم إتمام التسليم 🎉',
@@ -600,8 +636,9 @@ exports.completeDonorDeliveryLogic = async (itemId, userId) => {
     `,
   }).catch((err) => console.error('[Email] فشل إرسال تأكيد التسليم:', err.message));
 
-  return { msg: 'تم إتمام التسليم بنجاح 🎉' 
-    ,status: 'delivered'
+  return { 
+    msg: 'تم إتمام التسليم بنجاح 🎉',
+    status: 'delivered'
   };
 };
 // 8. تعديل غرض

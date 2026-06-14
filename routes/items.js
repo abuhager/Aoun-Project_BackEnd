@@ -16,6 +16,7 @@ const {
   bookItem,
   cancelBooking,
   completeDelivery,
+   leaveWaitlist,
   updateItem,
   deleteItem,
 } = require('../controllers/itemController');
