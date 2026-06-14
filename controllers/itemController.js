@@ -40,7 +40,7 @@ exports.cancelBooking = asyncHandler(async (req, res) => {
 // ✅ [WARN-1 FIX] دالة مستقلة لانسحاب Level1 من الـ Waitlist
 // كانت مدموجة داخل cancelBookingLogic وكانت requireLevel2 تمنعها
 exports.leaveWaitlist = asyncHandler(async (req, res) => {
-  const result = await itemService.leaveWaitlistLogic(
+  const result = await itemService.cancelBookingLogic( // ← cancelBookingLogic تعالج inWait داخلياً
     req.params.id,
     req.user.id.toString()
   );
@@ -85,10 +85,11 @@ exports.updateItem = asyncHandler(async (req, res) => {
 });
 
 exports.deleteItem = asyncHandler(async (req, res) => {
+  const isAdmin = ['admin', 'super_admin'].includes(req.user.role); // ← boolean صريح
   const result = await itemService.deleteItemLogic(
     req.params.id,
     req.user.id,
-    req.user.role
+    isAdmin
   );
   res.json(result);
 });

@@ -61,7 +61,12 @@ router.put(
   validateObjectId('id'),
   bookItem
 );
-
+router.put(
+  '/leave-waitlist/:id',
+  requireAuth,
+  validateObjectId('id'),
+  leaveWaitlist   // ← import من controller
+);
 // ── Cancel Booking ─────────────────────────────────────────────
 // ✅ [FIX] حُذف requireLevel2 من هنا
 // السبب: cancelBookingLogic يتحقق داخلياً (isBooker || isDonor || inWait)

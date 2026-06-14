@@ -146,9 +146,9 @@ exports.createItemLogic = async (body, userId, file) => {
   }
 
   const maxItems =
-    user.trustLevel >= 2
-      ? (settings.level2Quota ?? settings.maxActiveItems ?? 4)
-      : (settings.defaultQuota ?? settings.maxActiveItems ?? 2);
+  user.trustLevel >= 2
+    ? (settings.maxActiveDonationsLevel2Plus ?? 4)
+    : (settings.maxActiveDonationsPerUser    ?? 2);
 
   if (activeCount >= maxItems) {
     throw new AppError(
@@ -236,40 +236,34 @@ exports.bookItemLogic = async (itemId, userId) => {
       throw new AppError('عذراً، لا تملك حصة (Quota) كافية للحجز حالياً 🚫', 403, 'NO_AVAILABLE_QUOTA');
     }
 
-    // مسار الحجز المباشر
     if (item.status === 'متاح') {
-      const booked = await Item.findOneAndUpdate(
-        { _id: itemId, status: 'متاح' },
-        {
-          $set: {
-            status:   'محجوز',
-            bookedBy: userId,
-            bookedAt: new Date(),
-          },
-        },
-        { returnDocument: 'after', session }
-      ).populate('safeHub', 'name address city workingHours');
+  const booked = await Item.findOneAndUpdate(
+    { _id: itemId, status: 'متاح' },
+    { $set: { status: 'محجوز', bookedBy: userId, bookedAt: new Date() } },
+    { returnDocument: 'after', session }
+  ).populate('safeHub', 'name address city workingHours');
 
-      if (booked) {
-        // ✅ [FIX-C1] حسم الحصة بشكل ذري ومحمي بفلتر أمان داخل الجلسة
-        const updatedUser = await User.findOneAndUpdate(
-          { _id: userId, quota: { $gt: 0 } },
-          { $inc: { quota: -1 } },
-          { session, returnDocument: 'after' }
-        );
+  if (booked) {
+    // ✅ جلب email + quota في عملية واحدة — القيد الوحيد الموثوق
+    const updatedUser = await User.findOneAndUpdate(
+      { _id: userId, quota: { $gt: 0 } },
+      { $inc: { quota: -1 } },
+      { session, returnDocument: 'after', select: '+email' } // ← email مطلوب للإيميل
+    );
 
-        if (!updatedUser) {
-          await session.abortTransaction();
-          try { session.endSession(); } catch (_) {}
-          throw new AppError('لا تملك حصة كافية 🚫', 403, 'NO_AVAILABLE_QUOTA');
-        }
+    if (!updatedUser) {
+      await session.abortTransaction();
+      try { session.endSession(); } catch (_) {}
+      throw new AppError('لا تملك حصة كافية 🚫', 403, 'NO_AVAILABLE_QUOTA');
+    }
 
-        await session.commitTransaction();
-        try { session.endSession(); } catch (_) {}
+    await session.commitTransaction();
+    try { session.endSession(); } catch (_) {}
 
-        await triggerBookingNotifications(booked, updatedUser);
-        return { status: 'booked', msg: 'تم الحجز بنجاح 🎉' };
-      }
+    triggerBookingNotifications(booked, updatedUser).catch(console.warn);
+    return { status: 'booked', msg: 'تم الحجز بنجاح 🎉' };
+  }
+
 
       await session.abortTransaction();
       try { session.endSession(); } catch (_) {}
