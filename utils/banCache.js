@@ -1,39 +1,57 @@
-// utils/banCache.js
-// ✅ النسخة المصحّحة والمقاومة للـ Restart والـ Cluster Mode
+// utils/banCache.js — النسخة المصحّحة (Flow-1 Audit)
+// ✅ إصلاح BUG-02: lazy require داخل isUserBanned لحل Circular Dependency مع User model
+// ✅ إصلاح PERF-01: TTL تلقائي كل 5 دقائق لإجبار refresh من DB في بيئة multi-instance
 
-const User = require('../models/User'); // استيراد موديل المستخدم للفحص عند غياب الكاش
 const bannedIds = new Set();
 
+// ─────────────────────────────────────────────────────────────
+// ✅ PERF-01: TTL — كل 5 دقائق يُفرَّغ الكاش المحلي ليُعاد بناؤه من DB
+// هذا حل مؤقت آمن يضمن أن الحظر ينعكس على جميع instances خلال ≤5 دقائق
+// الحل الدائم: استبدل هذا الـ Set بـ Redis عند الانتقال إلى multi-instance
+// ⚠️ TODO-PROD: npm install ioredis ثم نقل المنطق إلى config/redis.js
+// ─────────────────────────────────────────────────────────────
+const BAN_CACHE_TTL_MS = parseInt(process.env.BAN_CACHE_TTL_MS || String(5 * 60 * 1000));
+setInterval(() => {
+  bannedIds.clear();
+}, BAN_CACHE_TTL_MS).unref(); // .unref() يمنع الـ interval من إبقاء العملية حيّة
+
 module.exports = {
-  // ── CRUD ──────────────────────────────────────────
+  // ── CRUD ──────────────────────────────────────────────────
   add:    (userId) => bannedIds.add(String(userId)),
   delete: (userId) => bannedIds.delete(String(userId)),
   clear:  ()       => bannedIds.clear(),
 
-  // ── فحص الحظر — async جاهزة لـ Redis لاحقاً ──────
-  // ✅ الاسم الذي يستدعيه الـ middleware (auth.js)
+  // ── فحص سريع متزامن (O(1)) — للاستخدام الداخلي فقط ──────
+  has: (userId) => bannedIds.has(String(userId)),
+
+  // ─────────────────────────────────────────────────────────
+  // isUserBanned: الدالة الرئيسية التي يستدعيها auth middleware
+  // ✅ BUG-02: lazy require — يحل مشكلة Circular Dependency
+  //    banCache ← auth.js ← routes ← models/User
+  //    لو استوردنا User في أعلى الملف، قد يُحمَّل قبل اكتمال تهيئة Mongoose
+  // ─────────────────────────────────────────────────────────
   isUserBanned: async (userId) => {
     const idStr = String(userId);
 
-    // 1) فحص الكاش المحلي أولاً (استجابة فورية فائقة السرعة O(1))
+    // 1) فحص الكاش المحلي أولاً — استجابة فورية O(1) بدون DB
     if (bannedIds.has(idStr)) return true;
 
-    // 2) إذا لم يكن في الكاش (بسبب Restart أو توزيع الحمل بين الـ Clusters)، راجع الـ DB
+    // 2) إذا غاب من الكاش (بعد TTL أو Restart أو instance جديد) → راجع DB
     try {
+      // ✅ BUG-02: lazy require بدل top-level import
+      const User = require('../models/User');
       const user = await User.findById(idStr).select('isBanned').lean();
-      
+
       if (user?.isBanned) {
-        bannedIds.add(idStr); // إعادة إضافته للكاش المحلي لتسريع الطلبات القادمة للمستخدم
+        bannedIds.add(idStr); // أعد إضافته للكاش لتسريع الطلبات القادمة لهذا المستخدم
         return true;
       }
     } catch (error) {
-      // تسجيل الخطأ لضمان استمرارية التطبيق في حال حدوث مشكلة مؤقتة في قاعدة البيانات
-      console.error(`[BanCache Error] خطأ أثناء فحص حالة حظر المستخدم ${idStr}:`, error);
+      // لا نوقف التطبيق — نسجّل ونتجاهل (fail-open: المستخدم يمر في حالة خطأ DB)
+      // هذا مقبول لأن الحظر من DB سيُطبَّق في أول طلب ناجح
+      console.error(`[BanCache] خطأ أثناء فحص حظر المستخدم ${idStr}:`, error.message);
     }
 
     return false;
   },
-
-  // ✅ اسم مختصر للاستخدام الداخلي السريع (يفحص الكاش المحلي فقط بشكل متزامن)
-  has: (userId) => bannedIds.has(String(userId)),
 };

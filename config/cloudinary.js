@@ -1,4 +1,6 @@
-﻿const cloudinary = require('cloudinary').v2;
+// config/cloudinary.js — بدون تغيير وظيفي (الملف صحيح)
+// ✅ فقط تنظيف BOM character الموجود في بداية الملف الأصلي (U+FEFF)
+const cloudinary = require('cloudinary').v2;
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
