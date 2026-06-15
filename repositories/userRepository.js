@@ -80,13 +80,13 @@ exports.findByIdWithPassword = (id) =>
 // وتُبقي كل استعلامات DB في طبقة الـ Repository
 
 // الخطوة 1: قراءة ذرية مع increment للـ otpAttempts في عملية واحدة
-exports.findAndIncrementOtpAttempts = (email) =>
+exports.findAndIncrementOtpAttempts = (email, maxAttempts = 5) =>
   User.findOneAndUpdate(
     {
       email,
       isVerified: false,
       $or: [
-        { otpAttempts: { $lt: 5 } },
+        { otpAttempts: { $lt: maxAttempts } }, // ← أصبح ديناميكياً
         { otpAttempts: { $exists: false } },
       ],
     },
@@ -128,3 +128,8 @@ exports.invalidateUserSession = (userId) =>
   User.findByIdAndUpdate(userId, {
     $unset: { refreshToken: 1, sessionIssuedAt: 1 },
   });
+
+  exports.findPublicProfile = (id) =>
+  User.findById(id)
+    .select('name avatar role trustScore trustLevel totalDonations isVerifiedStudent isBanned createdAt')
+    .lean();

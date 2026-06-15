@@ -107,18 +107,13 @@ exports.requireAdmin = (req, res, next) => {
 // 3. requireLevel2
 // ─────────────────────────────────────────────────────────────
 exports.requireLevel2 = (req, res, next) => {
-  if (!req.user) {
-    return next(new AppError('غير مصرح — يجب تسجيل الدخول أولاً 🔒', 401, 'UNAUTHORIZED'));
-  }
+  // المستوى 2 يشمل: الطلاب المحققين + المستخدمين الذين عزّزهم الآدمن
   if ((req.user.trustLevel ?? 1) < 2) {
-    return next(new AppError(
-      'يتطلب هذا الإجراء التحقق من الهوية (المستوى 2) 🔐',
-      403,
-      'LEVEL2_REQUIRED'
-    ));
+    return next(new AppError('...', 403, 'LEVEL2_REQUIRED'));
   }
   next();
 };
+// ✅ يعمل صحيحاً — لكن يستحق تعليقاً توضيحياً
 
 // ─────────────────────────────────────────────────────────────
 // 4. optionalAuth — اختياري

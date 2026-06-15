@@ -1,6 +1,8 @@
 // routes/auth.js
 // ✅ FIX [ARCH-01]: حذف resendLimiter الـ Inline — استخدام resendOtpLimiter من rateLimiter.js
 // ✅ FIX [SEC-AUTH-01]: resend-otp يستخدم schema 'resendOtp' المستقلة (لا تطلب otp)
+// ✅ FIX [SEC-04]: إضافة :token إلى مسار إعادة تعيين كلمة المرور
+// ✅ FIX [SEC-05]: إضافة meLimiter لحماية مسارات /me
 
 const express = require('express');
 const router  = express.Router();
@@ -18,6 +20,7 @@ const {
   forgotPasswordLimiter,
   otpLimiter,
   resendOtpLimiter,
+  meLimiter, // ✅ استيراد meLimiter
 } = require('../middlewares/rateLimiter');
 
 const conditionalUpload = (req, res, next) => {
@@ -69,7 +72,8 @@ router.post('/forgot-password',
   authController.forgotPassword
 );
 
-router.post('/reset-password',
+// ✅ FIX [SEC-04]: إضافة Parameter التوكن في الرابط لتجنب تسريبه في الـ Body
+router.post('/reset-password/:token',
   forgotPasswordLimiter,
   validateBody('resetPassword'),
   authController.resetPassword
@@ -89,13 +93,17 @@ router.get('/profile/:id',
 // Protected Routes
 // ══════════════════════════════════════════════
 
+// ✅ FIX [SEC-05]: تطبيق meLimiter لحماية المسار من الـ Flooding
 router.get('/me',
   requireAuth,
+  meLimiter, 
   authController.getMe
 );
 
+// من الأفضل والأكثر أماناً تطبيق نفس الـ Rate Limit هنا أيضاً
 router.get('/me/profile',
   requireAuth,
+  meLimiter, 
   authController.getUserProfile
 );
 

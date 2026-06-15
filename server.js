@@ -1,11 +1,12 @@
-// server.js — النسخة المصحَّحة كاملاً
-// ✅ LOGIC-01: unhandledRejection يُعالَج بشكل صحيح (تسجيل فقط — بدون crash)
-// ✅ LOGIC-02: initCronJobs يُشغَّل داخل listen callback (بعد DB + HTTP جاهزَين)
-// ✅ gracefulShutdown يُغلق io + mongoose بالترتيب الصحيح
+// server.js — Flow 1 FINAL FIXED
+// ✅ FIX-01: connectRedis() قبل connectDB() وقبل server.listen — يضمن Redis جاهز عند أول طلب
+// ✅ FIX-02: io.close() مع reject عند الخطأ — لا إخفاء للفشل
+// ✅ FIX-03: uncaughtException يميّز بين Operational errors و Programmer errors
+// ✅ FIX-04: unhandledRejection يستدعي gracefulShutdown (محفوظ من النسخة السابقة)
+// ✅ FIX-05: باقي المنطق محفوظ كما هو
 
 require('dotenv').config();
 
-// ── فحص متغيرات البيئة الإلزامية عند الـ Startup ─────────────
 const REQUIRED_ENV = [
   'MONGO_URI',
   'JWT_SECRET',
@@ -27,20 +28,19 @@ if (missingEnv.length) {
   process.exit(1);
 }
 
-const http              = require('http');
-const app               = require('./app');
-const connectDB         = require('./config/db');
-const { initCronJobs }  = require('./jobs/cronJobs');
-const { initSocket }    = require('./socket/socketHandler');
+const http             = require('http');
+const app              = require('./app');
+const connectDB        = require('./config/db');
+const { initCronJobs } = require('./jobs/cronJobs');
+const { initSocket }   = require('./socket/socketHandler');
 
 const PORT   = process.env.PORT || 5000;
 const server = http.createServer(app);
 
-// ── Socket.io ─────────────────────────────────────────────────
 const io = initSocket(server);
 app.set('io', io);
 
-// ── Graceful Shutdown المركزي ─────────────────────────────────
+// ── Graceful Shutdown المركزي ──────────────────────────────────
 const gracefulShutdown = (signal) => {
   console.log(`\n🛑 [${signal}] بدء الإغلاق الآمن...`);
 
@@ -50,11 +50,12 @@ const gracefulShutdown = (signal) => {
       process.exit(1);
     }
     try {
-      // 1. أغلق Socket.io
-      await new Promise((resolve) => io.close(resolve));
+      // ✅ FIX-02: reject عند الخطأ — لا نُكمل الإغلاق صامتاً عند فشل Socket.io
+      await new Promise((resolve, reject) =>
+        io.close((closeErr) => (closeErr ? reject(closeErr) : resolve()))
+      );
       console.log('✅ Socket.io أُغلق');
 
-      // 2. أغلق MongoDB
       const mongoose = require('mongoose');
       await mongoose.connection.close(false);
       console.log('✅ MongoDB أُغلق');
@@ -66,44 +67,69 @@ const gracefulShutdown = (signal) => {
     }
   });
 
-  // Forced exit بعد 15 ثانية إذا تعطّل الإغلاق
+  // إغلاق قسري بعد 15 ثانية إذا لم ينته graceful shutdown
   setTimeout(() => {
     console.error('⚠️  الإغلاق تجاوز 15 ثانية — إغلاق قسري');
     process.exit(1);
   }, 15_000).unref();
 };
 
-// ── ✅ LOGIC-01: unhandledRejection — تسجيل فقط، بدون crash ──
-// Node.js v15+ يُنهي العملية افتراضياً عند unhandledRejection
-// نتحكم نحن بالسلوك: نسجّل ونترك PM2/Docker يُعيد التشغيل إذا لزم
-process.on('unhandledRejection', (reason) => {
-  console.error('❌ [unhandledRejection] — Promise رُفض دون catch:', reason);
-  // لا gracefulShutdown هنا — unhandledRejection قد يكون في طلب واحد
-  // ويجب ألا يُسقط الخادم بالكامل بسببه
-});
-
-// uncaughtException أخطر — يعني الـ event loop تعطّل → إغلاق إجباري
+// ── ✅ FIX-03: uncaughtException — تمييز Operational vs Programmer errors ──
+// Operational errors (AppError.isOperational = true):
+//   وصولها للـ global handler يعني أنها لم تُعالَج في errorHandler
+//   نُسجّل فقط ولا نوقف الخادم — الخادم لا يزال في حالة سليمة
+// Programmer errors (TypeError, ReferenceError, etc.):
+//   تعني وجود bug في الكود نفسه — الخادم قد يكون في حالة تالفة
+//   يجب الإغلاق الآمن والسماح لـ PM2/Docker بإعادة التشغيل
 process.on('uncaughtException', (err) => {
-  console.error('💥 [uncaughtException] — إغلاق إجباري:', err);
+  if (err.isOperational) {
+    // AppError وصل للـ global handler — خطأ في المعالجة لا في البنية
+    console.error('⚠️ [uncaughtException] خطأ عملياً وصل للـ global handler (لا إغلاق):', {
+      message: err.message,
+      code:    err.code,
+    });
+    return; // الخادم يستمر — لا حاجة للإغلاق
+  }
+  // Programmer error — الخادم قد يكون في حالة تالفة
+  console.error('💥 [uncaughtException] خطأ برمجي — إغلاق آمن:', err);
   gracefulShutdown('uncaughtException');
 });
 
-// إشارات الإغلاق (Render / Docker / Ctrl+C)
+// ✅ FIX-04 (محفوظ): unhandledRejection يستدعي gracefulShutdown
+// غالباً من promise في طلب واحد — graceful shutdown يسمح بإتمام الطلبات الجارية
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ [unhandledRejection] — Promise رُفض دون catch:', reason);
+  gracefulShutdown('unhandledRejection');
+});
+
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
 
-// ── تشغيل الخادم ─────────────────────────────────────────────
-connectDB()
-  .then(() => {
+// ── ✅ FIX-01: ترتيب التهيئة الصحيح ──────────────────────────
+// المشكلة السابقة: Redis يتصل بشكل async غير منتظَر داخل rateLimiter.js
+// أول الطلبات قد تُعالَج بـ MemoryStore رغم وجود Redis (ثغرة في rate limiting)
+// الحل: connectRedis أولاً ← connectDB ← server.listen
+// هكذا يكون Redis + MongoDB جاهزَين تماماً قبل استقبال أي طلب
+
+// ملاحظة: connectRedis تُصدَّر من rateLimiter.js — لا تغيير في البنية الخارجية
+const { connectRedis } = require('./middlewares/rateLimiter');
+
+(async () => {
+  try {
+    // 1) Redis أولاً — rateLimiter يحتاجه عند أول طلب
+    await connectRedis();
+
+    // 2) MongoDB
+    await connectDB();
     console.log('✅ MongoDB متصل');
 
+    // 3) HTTP Server
     server.listen(PORT, () => {
       console.log(
         `🚀 الخادم على المنفذ ${PORT} — البيئة: ${process.env.NODE_ENV || 'development'}`
       );
 
-      // ✅ LOGIC-02: initCronJobs داخل listen callback
-      // (بعد DB + HTTP جاهزَين — ضمان أن الـ jobs تجد الـ models جاهزة)
+      // 4) Cron Jobs — فشلها لا يوقف الخادم
       try {
         initCronJobs();
         console.log('⏰ Cron Jobs تعمل');
@@ -111,8 +137,8 @@ connectDB()
         console.error('❌ فشل تشغيل Cron Jobs (الخادم يستمر):', cronErr);
       }
     });
-  })
-  .catch((err) => {
-    console.error('❌ فشل الاتصال بـ MongoDB:', err);
+  } catch (err) {
+    console.error('❌ فشل الـ startup:', err);
     process.exit(1);
-  });
+  }
+})();

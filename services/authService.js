@@ -1,9 +1,12 @@
 // services/authService.js — النسخة النهائية الكاملة
-// ✅ FIX [BUG-01]: إضافة require sessionCache في أعلى الملف (حلّ ReferenceError)
-// ✅ FIX [BUG-02]: استعادة loginLogic المحذوفة (حلّ "loginLogic is not a function")
-// ✅ FIX [BUG-03]: حذف تعريف logoutLogic المكرر — إبقاء النسخة الصحيحة فقط
-// ✅ FIX [BUG-04]: حذف تعريف updateMeLogic المكرر — إبقاء النسخة ذات phone-check
+// ✅ FIX [BUG-01]: إضافة require sessionCache في أعلى الملف
+// ✅ FIX [BUG-02]: استعادة loginLogic المحذوفة
+// ✅ FIX [BUG-03]: حذف تعريف logoutLogic المكرر
+// ✅ FIX [BUG-04]: حذف تعريف updateMeLogic المكرر
 // ✅ FIX [SEC-AUTH-02]: Refresh Token Reuse Detection كامل
+// ✅ FIX [PERF-01]: التحديث الذري لمنع الـ Race Condition في التحقق من الإيميل
+// ✅ FIX [HC-02]: حجم الصورة (maxAvatarMB) ديناميكي من SystemSettings
+// ✅ FIX [HC-03]: أبعاد الصورة (avatarWidth / avatarHeight) ديناميكية من SystemSettings
 
 const bcrypt    = require('bcryptjs');
 const crypto    = require('crypto');
@@ -16,7 +19,7 @@ const SystemSettings = require('../models/SystemSettings');
 
 const userRepository = require('../repositories/userRepository');
 const emailService   = require('./emailService');
-const sessionCache   = require('../utils/sessionCache'); // ✅ FIX [BUG-01]
+const sessionCache   = require('../utils/sessionCache');
 
 const { buildGamificationProfile } = require('../utils/gamification');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/tokenUtils');
@@ -121,7 +124,7 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
   const exists = await userRepository.findByEmail(email);
 
   if (exists) {
-    await bcrypt.hash(password, BCRYPT_ROUNDS); // dummy hash — timing attack prevention
+    await bcrypt.hash(password, BCRYPT_ROUNDS); 
     const isStudent = await isUniversityEmail(email);
     return { statusCode: 201, body: { msg: 'تم إنشاء الحساب! تحقق من إيميلك 📬', email, isVerifiedStudent: isStudent } };
   }
@@ -157,7 +160,10 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
 
 // ── verifyEmailLogic ──────────────────────────────────────────
 exports.verifyEmailLogic = async ({ email, otp }) => {
-  const user = await userRepository.findAndIncrementOtpAttempts(email);
+  const settings    = await SystemSettings.getCached();
+  const maxAttempts = settings?.maxOtpAttempts ?? 5;
+
+  const user = await userRepository.findAndIncrementOtpAttempts(email, maxAttempts);
 
   if (!user) {
     const checkUser = await userRepository.findEmailStatus(email);
@@ -177,7 +183,7 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
 
   const isValid = verifyOtp(otp, user.verificationOtp);
   if (!isValid) {
-    const remaining = 5 - user.otpAttempts;
+    const remaining = maxAttempts - user.otpAttempts;
     return { statusCode: 400, body: { msg: `رمز التحقق غير صحيح ❌ (${Math.max(0, remaining)} محاولة متبقية)` } };
   }
 
@@ -187,7 +193,7 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
   const accessToken                            = generateAccessToken(mutableUser);
   const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(mutableUser);
 
-  await userRepository.completeEmailVerification(user._id, {
+  const updatedUser = await userRepository.atomicVerifyAndComplete(user._id, user.verificationOtp, {
     $set: {
       isVerified:      true,
       trustLevel:      mutableUser.trustLevel,
@@ -199,14 +205,18 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
     $unset: { verificationOtp: 1, verificationOtpExpiry: 1 },
   });
 
+  if (!updatedUser) {
+    return { statusCode: 409, body: { msg: 'تم التحقق مسبقاً أو الرمز غير صالح 🔄' } };
+  }
+
   return {
     statusCode: 200,
     refreshToken,
-    body: { msg: 'تم التحقق من إيميلك بنجاح ✅', user: buildSafeUser(mutableUser), accessToken },
+    body: { msg: 'تم التحقق من إيميلك بنجاح ✅', user: buildSafeUser(updatedUser), accessToken },
   };
 };
 
-// ── ✅ FIX [BUG-02]: loginLogic — كانت محذوفة بالكامل ────────
+// ── loginLogic ────────────────────────────────────────────────
 exports.loginLogic = async ({ email, password }) => {
   const user = await userRepository.findByEmailWithPassword(email);
 
@@ -227,7 +237,6 @@ exports.loginLogic = async ({ email, password }) => {
       user.verificationOtpExpiry.getTime() - Date.now() > (totalExpiryMs - COOLDOWN_MS);
 
     if (hasActiveOtp) {
-      // ✅ FIX [LOGIC-AUTH-02]: فحص الـ attempts قبل إخبار المستخدم
       if ((user.otpAttempts ?? 0) >= maxOtpAttempts) {
         return {
           statusCode: 429,
@@ -285,7 +294,7 @@ exports.loginLogic = async ({ email, password }) => {
   };
 };
 
-// ── refreshLogic — ✅ FIX [SEC-AUTH-02] + FIX [BUG-01] ───────
+// ── refreshLogic ──────────────────────────────────────────────
 exports.refreshLogic = async (rawRefreshToken, clientIp = 'unknown') => {
   if (!rawRefreshToken) {
     return { statusCode: 401, clearCookie: true, body: { msg: 'لا يوجد Refresh Token 🔒', code: 'NO_REFRESH_TOKEN' } };
@@ -318,14 +327,13 @@ exports.refreshLogic = async (rawRefreshToken, clientIp = 'unknown') => {
   }
 
   if (user.isBanned) {
-    sessionCache.invalidate(userId); // ✅ BUG-01 مُصلَح — sessionCache معرَّف أعلى الملف
+    sessionCache.invalidate(userId);
     return { statusCode: 403, clearCookie: true, body: { msg: 'حسابك محظور 🚫', code: 'ACCOUNT_BANNED' } };
   }
 
   if (!user.refreshToken || user.refreshToken !== hashedIncoming) {
-    // ✅ SEC-AUTH-02: Reuse Detection — إبطال كامل فوري
     await userRepository.invalidateUserSession(userId);
-    sessionCache.invalidate(userId); // ✅ BUG-01 مُصلَح
+    sessionCache.invalidate(userId);
     console.warn(`[SEC-AUTH-02] Token Reuse — userId: ${userId} — IP: ${clientIp}`);
     return {
       statusCode: 401,
@@ -343,7 +351,7 @@ exports.refreshLogic = async (rawRefreshToken, clientIp = 'unknown') => {
     return { statusCode: 409, clearCookie: false, body: { msg: 'تعارض في التحديث، أعد المحاولة 🔄', code: 'ROTATION_CONFLICT' } };
   }
 
-  sessionCache.set(userId, newIssuedAt); // ✅ BUG-01 مُصلَح
+  sessionCache.set(userId, newIssuedAt);
   const newAccessToken = generateAccessToken(updatedUser);
 
   return {
@@ -353,9 +361,9 @@ exports.refreshLogic = async (rawRefreshToken, clientIp = 'unknown') => {
   };
 };
 
-// ── ✅ FIX [BUG-03]: logoutLogic — حذف النسخة المكررة ────────
+// ── logoutLogic ───────────────────────────────────────────────
 exports.logoutLogic = async (userId) => {
-  sessionCache.invalidate(userId); // ✅ BUG-01 مُصلَح — sessionCache معرَّف أعلى الملف
+  sessionCache.invalidate(userId);
   await userRepository.updateUser(userId, {
     refreshToken:    undefined,
     sessionIssuedAt: undefined,
@@ -381,7 +389,7 @@ exports.getMeLogic = async (userId, page = 1) => {
     Rating.countDocuments({ ratee: userId }),
     Item.countDocuments({ donor: userId }),
     Item.countDocuments({ bookedBy: userId, status: 'تم التسليم' }),
-    Item.countDocuments({ donor: userId, status: 'تم التسليم' }), // ✅ LOGIC-02
+    Item.countDocuments({ donor: userId, status: 'تم التسليم' }),
   ]);
 
   const donationsTotalPages = Math.ceil(totalDonationsCount / pageSize);
@@ -405,16 +413,14 @@ exports.getMeLogic = async (userId, page = 1) => {
 
 // ── getPublicProfileLogic ─────────────────────────────────────
 exports.getPublicProfileLogic = async (userId, page = 1) => {
-  const User = require('../models/User');
-
-  const userCheck = await User.findById(userId)
+  const userCheck = await userRepository.findPublicProfile(userId)
     .select('name avatar role trustScore trustLevel totalDonations isVerifiedStudent isBanned createdAt')
     .lean();
 
   if (!userCheck) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
   if (userCheck.isBanned) return { statusCode: 403, body: { msg: 'هذا الحساب محظور' } };
 
-  const settings = await SystemSettings.getCached();
+  const settings  = await SystemSettings.getCached();
   const pageSize  = settings?.profilePageSize ?? 10;
   const skip      = (page - 1) * pageSize;
 
@@ -473,10 +479,18 @@ exports.forgotPasswordLogic = async ({ email }) => {
   try {
     await emailService.sendResetPasswordEmail(user.email, resetToken, user.name, resetUrl);
     return { statusCode: 200, body: GENERIC_MSG };
+    
   } catch (err) {
-    console.error('[forgotPassword] Email failed:', err.message);
-    await userRepository.updateUser(user._id, { $unset: { resetPasswordToken: 1, resetPasswordExpire: 1 } });
-    return { statusCode: 200, body: GENERIC_MSG };
+    console.error('[forgotPassword] CRITICAL: Email failed for user:', user._id, err.message);
+    
+    await userRepository.updateUser(user._id, { 
+      $unset: { resetPasswordToken: 1, resetPasswordExpire: 1 } 
+    });
+    
+    return { 
+      statusCode: 500, 
+      body: { msg: 'حدث خطأ أثناء إرسال البريد الإلكتروني، حاول مجدداً لاحقاً ⚠️' } 
+    };
   }
 };
 
@@ -497,16 +511,24 @@ exports.resetPasswordLogic = async (token, newPassword) => {
   user.sessionIssuedAt     = undefined;
   await userRepository.saveUser(user);
 
-  sessionCache.invalidate(user._id.toString()); // ✅ BUG-01 مُصلَح
+  sessionCache.invalidate(user._id.toString());
 
   return { statusCode: 200, body: { msg: 'تم تغيير كلمة المرور بنجاح! ✅' } };
 };
 
-// ── ✅ FIX [BUG-04]: updateMeLogic — حذف النسخة المكررة ──────
-// إبقاء النسخة ذات فحص phone تكرار فقط
+// ── updateMeLogic ─────────────────────────────────────────────
 exports.updateMeLogic = async (userId, updates, fileBuffer, mimetype) => {
   const user = await userRepository.findById(userId);
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
+
+  const settings       = await SystemSettings.getCached();
+  // ✅ FIX [HC-02]: الحد الأقصى لحجم الصورة ديناميكي (MB) 
+  const maxAvatarMB    = settings?.maxAvatarSizeMb ?? 5;
+  const maxAvatarBytes = maxAvatarMB * 1024 * 1024;
+  
+  // ✅ FIX [HC-03]: أبعاد الصورة ديناميكية
+  const avatarWidth    = settings?.avatarWidth  ?? 400;
+  const avatarHeight   = settings?.avatarHeight ?? 400;
 
   if (updates.name) user.name = updates.name.trim();
 
@@ -522,13 +544,19 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, mimetype) => {
     if (!ALLOWED_IMAGE_TYPES.includes(mimetype)) {
       return { statusCode: 400, body: { msg: 'نوع الصورة غير مدعوم، يُسمح بـ JPEG أو PNG أو WebP فقط 🖼️' } };
     }
-    if (fileBuffer.length > 5 * 1024 * 1024) {
-      return { statusCode: 400, body: { msg: 'حجم الصورة يتجاوز الحد المسموح (5 ميغابايت) 🖼️' } };
+    // استخدام الحد الديناميكي الجديد
+    if (fileBuffer.length > maxAvatarBytes) {
+      return { statusCode: 400, body: { msg: `حجم الصورة يتجاوز الحد المسموح (${maxAvatarMB} ميغابايت) 🖼️` } };
     }
     try {
       const result = await new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
-          { folder: 'hajah/avatars', resource_type: 'image', transformation: [{ width: 400, height: 400, crop: 'fill', gravity: 'face' }] },
+          { 
+            folder: 'hajah/avatars', 
+            resource_type: 'image', 
+            // استخدام الأبعاد الديناميكية
+            transformation: [{ width: avatarWidth, height: avatarHeight, crop: 'fill', gravity: 'face' }] 
+          },
           (err, res) => (err ? reject(err) : resolve(res))
         );
         Readable.from(fileBuffer).pipe(stream);
@@ -540,8 +568,14 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, mimetype) => {
     }
   }
 
-  await user.save();
-  return { statusCode: 200, body: { msg: 'تم تحديث الملف الشخصي بنجاح ✅', user: buildSafeUser(user) } };
+  // ✅ تصحيح استدعاء التحديث وتمرير الـ ID والبيانات
+  const updatedUser = await userRepository.updateUser(userId, { 
+    name: user.name, 
+    phone: user.phone, 
+    avatar: user.avatar 
+  });
+  
+  return { statusCode: 200, body: { msg: 'تم تحديث الملف الشخصي بنجاح ✅', user: buildSafeUser(updatedUser) } };
 };
 
 // ── updatePasswordLogic ───────────────────────────────────────
@@ -555,12 +589,16 @@ exports.updatePasswordLogic = async (userId, { currentPassword, newPassword }) =
   const isSame = await bcrypt.compare(newPassword, user.password);
   if (isSame) return { statusCode: 400, body: { msg: 'كلمة المرور الجديدة يجب أن تختلف عن الحالية' } };
 
-  user.password        = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-  user.refreshToken    = undefined;
-  user.sessionIssuedAt = undefined;
-  await user.save();
+  const newHashedPassword = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+  
+  // ✅ تصحيح استدعاء التحديث ليأخذ الـ ID
+  await userRepository.updateUser(userId, {
+    password:        newHashedPassword,
+    refreshToken:    undefined,
+    sessionIssuedAt: undefined
+  });
 
-  sessionCache.invalidate(userId); // ✅ BUG-01 مُصلَح
+  sessionCache.invalidate(userId);
 
   return { statusCode: 200, body: { msg: 'تم تغيير كلمة المرور بنجاح ✅' } };
 };

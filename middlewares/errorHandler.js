@@ -1,130 +1,105 @@
-// middlewares/errorHandler.js — النسخة المصحّحة (Flow-1 Audit)
-// ✅ إصلاح LOGIC-01: حماية من double res.send عبر res.headersSent
-// ✅ إصلاح LOGIC-01: تغيير next → _next لإخبار ESLint أنه intentional unused param
+// middlewares/errorHandler.js — Flow 1 FINAL FIXED
+// ✅ FIX-01: CastError، Duplicate Key، ValidationError تُحوَّل إلى AppError قبل الإرسال
+// ✅ FIX-02: CORS error (err.code === 'CORS_*' أو err.status === 403) تُعالَج بشكل صريح
+// ✅ FIX-03: stack trace يُرسَل في dev فقط — في production يُسجَّل فقط دون إرساله
+// ✅ FIX-04: رسالة prod عامة للأخطاء غير العملياتية (لا تكشف تفاصيل الـ programmer error)
+// ✅ FIX-05: headers المُرسَلة مسبقاً — لا إرسال مكرر يتسبب في crash
 
-const Joi      = require('joi');
 const AppError = require('../utils/AppError');
 
-const isProduction = process.env.NODE_ENV === 'production';
-
-// ─────────────────────────────────────────────────────────────
-// normalizeError: يحوّل أي خطأ إلى AppError موحّد
-// يُغطي: AppError | Joi | Mongoose Validation | CastError | Duplicate Key | JWT
-// ─────────────────────────────────────────────────────────────
-function normalizeError(err) {
-  if (!err) {
-    return new AppError('خطأ غير معروف في الخادم', 500, 'UNKNOWN_ERROR');
-  }
-
-  if (err instanceof AppError) return err;
-
-  // Joi Validation
-  if (err.isJoi || err instanceof Joi.ValidationError) {
-    return new AppError(
-      'بيانات غير صالحة',
-      422,
-      'VALIDATION_ERROR',
-      err.details?.map((d) => d.message) || null
-    );
-  }
-
-  // Mongoose Schema Validation
-  if (err.name === 'ValidationError') {
-    return new AppError(
-      'فشل التحقق من البيانات',
-      422,
-      'MONGOOSE_VALIDATION_ERROR',
-      Object.values(err.errors || {}).map((e) => e.message)
-    );
-  }
-
-  // Mongoose CastError (ObjectId غير صالح)
+// ── حوِّل أخطاء Mongoose المعروفة إلى AppError ────────────────
+const normalizeMongo = (err) => {
+  // CastError — معرِّف MongoDB غير صالح
   if (err.name === 'CastError') {
-    return new AppError('معرّف أو قيمة غير صالحة', 400, 'INVALID_IDENTIFIER');
+    return new AppError(
+      `قيمة غير صالحة للحقل "${err.path}": ${err.value}`,
+      400,
+      'INVALID_ID'
+    );
   }
 
-  // MongoDB Duplicate Key
+  // Duplicate Key — قيمة فريدة موجودة مسبقاً
   if (err.code === 11000) {
-    const fields = Object.keys(err.keyValue || {});
+    const field  = Object.keys(err.keyValue ?? {})[0] ?? 'حقل';
+    const value  = err.keyValue?.[field];
+    const safeVal = typeof value === 'string' && value.length < 60 ? ` "${value}"` : '';
     return new AppError(
-      `القيمة موجودة مسبقاً${fields.length ? `: ${fields.join(', ')}` : ''}`,
+      `${field}${safeVal} مستخدم مسبقاً`,
       409,
       'DUPLICATE_KEY'
     );
   }
 
-  // JWT Errors
-  if (err.name === 'JsonWebTokenError') {
-    return new AppError('رمز الدخول غير صالح', 401, 'INVALID_TOKEN');
-  }
-  if (err.name === 'TokenExpiredError') {
-    return new AppError('انتهت صلاحية رمز الدخول', 401, 'TOKEN_EXPIRED');
+  // ValidationError — فشل validate() في Mongoose
+  if (err.name === 'ValidationError') {
+    const messages = Object.values(err.errors).map((e) => e.message).join(' | ');
+    return new AppError(messages, 422, 'VALIDATION_ERROR');
   }
 
-  // Fallback عام
-  return new AppError(
-    err.message || 'حدث خطأ داخلي في الخادم',
-    err.statusCode || err.status || 500,
-    err.code || 'SERVER_ERROR'
-  );
-}
+  return err; // لا تغيير
+};
 
-// ─────────────────────────────────────────────────────────────
-// errorHandler: يجب أن يكون آخر middleware في app.js دائماً
-// Express يتعرف عليه كـ error handler بسبب الـ 4 parameters (err, req, res, next)
-// ─────────────────────────────────────────────────────────────
-function errorHandler(err, req, res, _next) {
-  // ✅ LOGIC-01: guard ضد إرسال response مزدوج (يحدث عند connection timeout أو stream errors)
+// ── ✅ FIX-02: أخطاء CORS ─────────────────────────────────────
+const normalizeCors = (err) => {
+  if (err.code === 'CORS_ORIGIN_DENIED' || err.code === 'CORS_MISCONFIGURED') {
+    return new AppError(err.message, err.status || 403, err.code);
+  }
+  return err;
+};
+
+// ── الـ Error Handler الرئيسي ─────────────────────────────────
+// eslint-disable-next-line no-unused-vars
+const errorHandler = (err, req, res, next) => {
+  // ✅ FIX-05: إذا أُرسلت الـ headers مسبقاً (stream أو نصف استجابة) — لا نُرسل مجدداً
   if (res.headersSent) {
-    console.warn('[errorHandler] تحذير: الـ headers أُرسلت مسبقاً، تم تجاهل الخطأ:', err?.message);
+    console.error('[errorHandler] Headers أُرسلت مسبقاً — تجاهل الخطأ:', err.message);
     return;
   }
 
-  const normalized = normalizeError(err);
+  // ✅ تطبيق normalizers بالترتيب
+  let error = normalizeMongo(err);
+  error     = normalizeCors(error);
 
-  // ── Logging ───────────────────────────────────────────────
-  if (!isProduction) {
-    // Development: تفاصيل كاملة في الـ console لتسريع الـ debugging
-    console.error('❌ [Error]:', {
-      message:    normalized.message,
-      code:       normalized.code,
-      statusCode: normalized.statusCode,
-      stack:      err?.stack,
-      path:       req.originalUrl,
-      method:     req.method,
-    });
+  // تحديد ما إذا كان AppError رسمياً
+  const isAppError = error instanceof AppError;
+  const statusCode = isAppError ? error.statusCode : (error.status ?? 500);
+  const isOperational = isAppError ? error.isOperational : false;
+
+  // ✅ FIX-03: Stack trace — dev فقط
+  if (process.env.NODE_ENV !== 'production') {
+    console.error('🐛 [Error]:', error);
   } else {
-    // Production: سجّل الـ 5xx فقط — الـ 4xx توقّعية ولا تحتاج إلى تنبيه
-    if (normalized.statusCode >= 500) {
-      console.error(JSON.stringify({
-        level:     'error',
-        timestamp: new Date().toISOString(),
-        message:   err?.message,
-        code:      normalized.code,
-        path:      req.originalUrl,
+    // ✅ FIX-04: في production نُسجِّل Programmer errors مع stack للـ debugging الخارجي
+    if (!isOperational) {
+      console.error('💥 [Programmer Error]:', {
+        message:   error.message,
+        stack:     error.stack,
+        url:       req.originalUrl,
         method:    req.method,
-        // Stack للـ monitoring الداخلي — لا يظهر في response
-        stack:     err?.stack,
-      }));
+        userId:    req.user?.id,
+        requestId: req.headers['x-request-id'],
+      });
     }
   }
 
-  // ── Response ──────────────────────────────────────────────
-  const response = {
-    msg:  normalized.message,
-    code: normalized.code,
+  // ── بناء جسم الاستجابة ─────────────────────────────────────
+  const body = {
+    status:  statusCode >= 500 ? 'error' : 'fail',
+    message: isOperational
+      ? error.message
+      // ✅ FIX-04: رسالة عامة للـ Programmer errors في production — لا كشف للتفاصيل
+      : (process.env.NODE_ENV === 'production'
+          ? 'حدث خطأ داخلي في الخادم. يرجى المحاولة لاحقاً.'
+          : error.message),
+    code:    isAppError ? error.code : undefined,
   };
 
-  if (normalized.details) {
-    response.errors = normalized.details;
+  // ✅ FIX-03: stack في dev فقط
+  if (process.env.NODE_ENV !== 'production' && error.stack) {
+    body.stack = error.stack;
   }
 
-  // ✅ Stack trace في dev فقط — أبداً في production لمنع كشف البنية الداخلية
-  if (!isProduction) {
-    response.stack = err?.stack;
-  }
-
-  res.status(normalized.statusCode).json(response);
-}
+  res.status(statusCode).json(body);
+};
 
 module.exports = errorHandler;

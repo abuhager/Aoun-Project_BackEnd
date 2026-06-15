@@ -1,7 +1,7 @@
 // middlewares/upload.js ✅ مصحّح — فحص Magic Bytes
 const multer = require('multer');
 
-const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_SIZE = parseInt(process.env.UPLOAD_MAX_SIZE_BYTES || String(5 * 1024 * 1024));
 
 // Magic bytes للصور المسموحة فقط
 // المصدر: https://en.wikipedia.org/wiki/List_of_file_signatures
