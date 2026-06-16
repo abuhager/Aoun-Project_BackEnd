@@ -1,21 +1,34 @@
-// repositories/itemRepository.js
+// repositories/itemRepository.js — ✅ PATCHED [ARCH-02]
 
 const Item   = require('../models/Item');
 const Report = require('../models/Report');
 
-// ─── جلب غرض للقراءة العامة ───────────────────────────────────
+// ✅ ARCH-02: projection واحدة مُعرَّفة هنا فقط
+const ITEM_DETAILS_PROJECTION = '-__v';
+
+// ─── جلب غرض للقراءة العامة (تحديث ARCH-02) ───────────────────
 exports.findItemDetails = (itemId) =>
   Item.findById(itemId)
-    .populate('donor',    'name avatar trustScore isVerifiedStudent trustLevel')
-    .populate('bookedBy', 'name avatar')
-    .populate('safeHub',  'name address city workingHours')
-    .select('-__v');
+    .populate('donor',      'name avatar trustScore isVerifiedStudent trustLevel')
+    .populate('safeHub',    'name address city workingHours coordinates') // تم إضافة coordinates
+    .populate('bookedBy',   'name avatar')
+    .populate('waitlist.user', 'name avatar trustLevel') // تم إضافة waitlist
+    .select(ITEM_DETAILS_PROJECTION);
+
+// ─── دوال إضافية من [ARCH-02] ───────────────────────────────
+exports.findByIdLean = (itemId) =>
+  Item.findById(itemId).lean();
+
+exports.countActiveByDonor = (donorId) =>
+  Item.countDocuments({ donor: donorId, status: { $in: ['متاح', 'محجوز'] } });
+
+exports.countActiveBookingsByUser = (userId) =>
+  Item.countDocuments({ bookedBy: userId, status: 'محجوز' });
 
 // ─── جلب غرض للعمليات (حجز/إلغاء/تسليم) ─────────────────────
 exports.findItemForAction = (itemId) =>
   Item.findById(itemId)
     .populate('safeHub', 'name address city workingHours');
-    
 
 // ─── جلب غرض للتعديل ─────────────────────────────────────────
 exports.findItemForUpdate = (itemId, userId) =>
@@ -26,13 +39,12 @@ exports.findItemForUpdate = (itemId, userId) =>
 exports.deleteItemById = (item) => item.deleteOne();
 
 // ─── helper: يربط reportId بكل item ──────────────────────────
-// reportedUserId → اختياري، يُضيّق البحث للمستلم فقط
 async function attachReportIds(items, reportedUserId) {
   if (!items.length) return items;
 
   const itemIds = items.map(i => i._id);
 
-  // ✅ نبحث بـ relatedItem فقط — نتجاهل البلاغات بدون غرض
+  // نبحث بـ relatedItem فقط — نتجاهل البلاغات بدون غرض
   const query = {
     relatedItem: { $in: itemIds },
     status:      'pending',
@@ -47,7 +59,7 @@ async function attachReportIds(items, reportedUserId) {
   const reportMap = {};
   reports.forEach(r => {
     const key = r.relatedItem.toString();
-    // ✅ نحتفظ بأول بلاغ فقط (مرتّب بـ MongoDB default = insert order)
+    // نحتفظ بأول بلاغ فقط (مرتّب بـ MongoDB default = insert order)
     if (!reportMap[key]) reportMap[key] = r._id.toString();
   });
 
@@ -65,7 +77,7 @@ exports.findDonationsByUser = async (userId) => {
     .sort({ createdAt: -1 })
     .lean();
 
-  // ✅ بدون reportedUserId — البلاغ على الغرض بغض النظر عن المُبلَّغ عنه
+  // بدون reportedUserId — البلاغ على الغرض بغض النظر عن المُبلَّغ عنه
   return attachReportIds(items, null);
 };
 
@@ -77,6 +89,6 @@ exports.findReceivedByUser = async (userId) => {
     .sort({ createdAt: -1 })
     .lean();
 
-  // ✅ userId كـ filter — البلاغ على المستلم تحديداً
+  // userId كـ filter — البلاغ على المستلم تحديداً
   return attachReportIds(items, userId);
 };
