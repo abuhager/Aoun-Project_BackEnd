@@ -195,12 +195,24 @@ const meLimiter = rateLimit({
   message:         rateLimitMessage('جلب بيانات المستخدم (/me)'),
 });
 
+// 9. Public Limiter (لحماية البيانات العامة مثل الـ Hubs من الإغراق)
+const publicLimiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_PUBLIC_WINDOW_MS || String(15 * 60 * 1000)), // 15 دقيقة
+  max:      parseInt(process.env.RATE_LIMIT_PUBLIC_MAX      || '100') * devMultiplier, // 100 طلب في الإنتاج
+  standardHeaders: true,
+  legacyHeaders:   false,
+  keyGenerator:    (req) => ipKeyGenerator(req),
+  store:           buildStore('rl:public:'),
+  message:         rateLimitMessage('تصفح البيانات العامة'),
+});
+
 module.exports = {
   connectRedis,       // ← يُستدعى من server.js قبل listen
   globalLimiter,
   loginLimiter,
   registerLimiter,
   forgotPasswordLimiter,
+  publicLimiter,
   otpLimiter,
   resendOtpLimiter,
   uploadLimiter,

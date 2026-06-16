@@ -1,9 +1,9 @@
-// server.js — Flow 1 FINAL FIXED
+// server.js — Flow 1 FINAL FIXED WITH ADVANCED GRACEFUL SHUTDOWN
 // ✅ FIX-01: connectRedis() قبل connectDB() وقبل server.listen — يضمن Redis جاهز عند أول طلب
-// ✅ FIX-02: io.close() مع reject عند الخطأ — لا إخفاء للفشل
+// ✅ FIX-02: io.close() يتم استدعاؤه فقط إذا كان السيرفر يعمل فعلياً لحماية العملية من ERR_SERVER_NOT_RUNNING
 // ✅ FIX-03: uncaughtException يميّز بين Operational errors و Programmer errors
-// ✅ FIX-04: unhandledRejection يستدعي gracefulShutdown (محفوظ من النسخة السابقة)
-// ✅ FIX-05: باقي المنطق محفوظ كما هو
+// ✅ FIX-04: unhandledRejection يستدعي gracefulShutdown 
+// ✅ FIX-05: دالة cleanupResources ذكية ومحمية بـ try/catch داخلي لكل مورد
 
 require('dotenv').config();
 
@@ -40,105 +40,116 @@ const server = http.createServer(app);
 const io = initSocket(server);
 app.set('io', io);
 
+// ── دالة مساعدة لتنظيف الموارد التابعة (Sockets & DB) ──────────
+const cleanupResources = async (isHttpListening) => {
+  try {
+    // 1. إغلاق الـ Socket.io بأمان فقط إذا كان سيرفر الـ HTTP يعمل
+    if (io && isHttpListening) {
+      try {
+        await new Promise((resolve, reject) =>
+          io.close((closeErr) => (closeErr ? reject(closeErr) : resolve()))
+        );
+        console.log('✅ Socket.io أُغلق بالكامل');
+      } catch (socketErr) {
+        console.warn('⚠️ تنبيه أثناء إغلاق Socket.io (تم التجاوز):', socketErr.message);
+      }
+    } else if (io) {
+      // إذا انهار السيرفر قبل الـ listen، نقوم فقط بفصل جِلسات المشتركين دون قفل المفسر الشبكي داخلياً
+      io.disconnectSockets(true);
+      console.log('✅ تم فصل جلسات Socket.io النشطة لتأمين الخروج الحفاظي');
+    }
+
+    // 2. إغلاق الـ MongoDB بأمان
+    const mongoose = require('mongoose');
+    if (mongoose && mongoose.connection.readyState !== 0) {
+      await mongoose.connection.close(false);
+      console.log('✅ MongoDB أُغلق بأمان');
+    }
+
+    process.exit(0);
+  } catch (shutdownErr) {
+    console.error('❌ خطأ فادح أثناء تنظيف الموارد وعملية الـ Cleanup:', shutdownErr);
+    process.exit(1);
+  }
+};
+
 // ── Graceful Shutdown المركزي ──────────────────────────────────
 const gracefulShutdown = (signal) => {
-  console.log(`\n🛑 [${signal}] بدء الإغلاق الآمن...`);
+  console.log(`\n🛑 [${signal}] بدء الإغلاق الآمن للمنظومة...`);
 
-  server.close(async (err) => {
-    if (err) {
-      console.error('❌ خطأ أثناء إغلاق HTTP server:', err);
-      process.exit(1);
-    }
-    try {
-      // ✅ FIX-02: reject عند الخطأ — لا نُكمل الإغلاق صامتاً عند فشل Socket.io
-      await new Promise((resolve, reject) =>
-        io.close((closeErr) => (closeErr ? reject(closeErr) : resolve()))
-      );
-      console.log('✅ Socket.io أُغلق');
+  const isListening = !!(server && server.listening);
 
-      const mongoose = require('mongoose');
-      await mongoose.connection.close(false);
-      console.log('✅ MongoDB أُغلق');
+  if (isListening) {
+    server.close(async (err) => {
+      if (err) {
+        console.error('❌ خطأ أثناء إغلاق HTTP server:', err);
+      } else {
+        console.log('🛑 تم إغلاق خادم HTTP بنجاح.');
+      }
+      await cleanupResources(true);
+    });
+  } else {
+    console.log('ℹ️ خادم HTTP لم يكن في حالة تشغيل نشطة (تم تخطي أمر Close الحمائي).');
+    cleanupResources(false);
+  }
 
-      process.exit(0);
-    } catch (shutdownErr) {
-      console.error('❌ خطأ أثناء الإغلاق:', shutdownErr);
-      process.exit(1);
-    }
-  });
-
-  // إغلاق قسري بعد 15 ثانية إذا لم ينته graceful shutdown
+  // إغلاق قسري بعد 15 ثانية إذا لم ينتهِ الـ graceful shutdown
   setTimeout(() => {
-    console.error('⚠️  الإغلاق تجاوز 15 ثانية — إغلاق قسري');
+    console.error('⚠️ الإغلاق تجاوز المهلة المحددة (15 ثانية) — إغلاق قسري فوراً');
     process.exit(1);
   }, 15_000).unref();
 };
 
-// ── ✅ FIX-03: uncaughtException — تمييز Operational vs Programmer errors ──
-// Operational errors (AppError.isOperational = true):
-//   وصولها للـ global handler يعني أنها لم تُعالَج في errorHandler
-//   نُسجّل فقط ولا نوقف الخادم — الخادم لا يزال في حالة سليمة
-// Programmer errors (TypeError, ReferenceError, etc.):
-//   تعني وجود bug في الكود نفسه — الخادم قد يكون في حالة تالفة
-//   يجب الإغلاق الآمن والسماح لـ PM2/Docker بإعادة التشغيل
+// ── uncaughtException — تمييز Operational vs Programmer errors ──
 process.on('uncaughtException', (err) => {
   if (err.isOperational) {
-    // AppError وصل للـ global handler — خطأ في المعالجة لا في البنية
-    console.error('⚠️ [uncaughtException] خطأ عملياً وصل للـ global handler (لا إغلاق):', {
+    console.error('⚠️ [uncaughtException] خطأ عملي تشغيلي وصل للـ global handler (لا إغلاق):', {
       message: err.message,
       code:    err.code,
     });
-    return; // الخادم يستمر — لا حاجة للإغلاق
+    return; 
   }
-  // Programmer error — الخادم قد يكون في حالة تالفة
-  console.error('💥 [uncaughtException] خطأ برمجي — إغلاق آمن:', err);
+  console.error('💥 [uncaughtException] خطأ برمجي بنيوي — إغلاق آمن فوري:', err);
   gracefulShutdown('uncaughtException');
 });
 
-// ✅ FIX-04 (محفوظ): unhandledRejection يستدعي gracefulShutdown
-// غالباً من promise في طلب واحد — graceful shutdown يسمح بإتمام الطلبات الجارية
+// unhandledRejection يستدعي gracefulShutdown
 process.on('unhandledRejection', (reason) => {
-  console.error('❌ [unhandledRejection] — Promise رُفض دون catch:', reason);
+  console.error('❌ [unhandledRejection] — Promise رُفض دون catch مخصص:', reason);
   gracefulShutdown('unhandledRejection');
 });
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
 
-// ── ✅ FIX-01: ترتيب التهيئة الصحيح ──────────────────────────
-// المشكلة السابقة: Redis يتصل بشكل async غير منتظَر داخل rateLimiter.js
-// أول الطلبات قد تُعالَج بـ MemoryStore رغم وجود Redis (ثغرة في rate limiting)
-// الحل: connectRedis أولاً ← connectDB ← server.listen
-// هكذا يكون Redis + MongoDB جاهزَين تماماً قبل استقبال أي طلب
-
-// ملاحظة: connectRedis تُصدَّر من rateLimiter.js — لا تغيير في البنية الخارجية
+// ── ترتيب التهيئة الصحيح والمحمي ──────────────────────────────
 const { connectRedis } = require('./middlewares/rateLimiter');
 
 (async () => {
   try {
-    // 1) Redis أولاً — rateLimiter يحتاجه عند أول طلب
+    // 1) Redis أولاً — rateLimiter يحتاجه عند أول طلب لمنع ثغرات الـ Memory Fallback المفاجئة
     await connectRedis();
 
     // 2) MongoDB
     await connectDB();
-    console.log('✅ MongoDB متصل');
+    console.log('✅ MongoDB متصل بنجاح');
 
     // 3) HTTP Server
     server.listen(PORT, () => {
       console.log(
-        `🚀 الخادم على المنفذ ${PORT} — البيئة: ${process.env.NODE_ENV || 'development'}`
+        `🚀 الخادم على المنفذ ${PORT} — البيئة التشغيلية: ${process.env.NODE_ENV || 'development'}`
       );
 
-      // 4) Cron Jobs — فشلها لا يوقف الخادم
+      // 4) Cron Jobs — فشلها لا يوقف الخادم الأساسي
       try {
         initCronJobs();
-        console.log('⏰ Cron Jobs تعمل');
+        console.log('⏰ Cron Jobs تعمل بنجاح');
       } catch (cronErr) {
-        console.error('❌ فشل تشغيل Cron Jobs (الخادم يستمر):', cronErr);
+        console.error('❌ فشل تشغيل الـ Cron Jobs التلقائية (الخادم مستمر بوضعه الطبيعي):', cronErr);
       }
     });
   } catch (err) {
-    console.error('❌ فشل الـ startup:', err);
-    process.exit(1);
+    console.error('❌ فشل حرج أثناء مرحلة الـ Startup البنيوية:', err);
+    gracefulShutdown('STARTUP_FAILURE');
   }
 })();

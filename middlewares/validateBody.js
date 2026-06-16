@@ -162,8 +162,7 @@ const schemas = {
     description: Joi.string().max(500).optional().allow('').trim(),
   }).unknown(false),
 
-  // ──────────── hubs ─────────────────────────────────────────────────────────
-  // ✅ FIX [HUB-01]: address بدل location ليطابق SafeHub Schema
+    // ──────────── hubs ─────────────────────────────────────────────────────────
   createHub: Joi.object({
     name:         Joi.string().min(3).max(100).required().trim(),
     address:      Joi.string().min(3).max(200).required().trim(),
@@ -175,6 +174,7 @@ const schemas = {
     }).optional(),
   }).unknown(false),
 
+  // ✅ FIX [BUG-03]: كان مفقوداً → كل PATCH /:id كان يُعيد 500
   updateHub: Joi.object({
     name:         Joi.string().min(3).max(100).optional().trim(),
     address:      Joi.string().min(3).max(200).optional().trim(),
@@ -185,7 +185,7 @@ const schemas = {
       lat: Joi.number().min(-90).max(90).required(),
       lng: Joi.number().min(-180).max(180).required(),
     }).optional(),
-  }).min(1).unknown(false),
+  }).min(1).unknown(false), // على الأقل حقل واحد مطلوب
 
   // ──────────── settings ─────────────────────────────────────────────────────
   // ✅ FIX [DC-01]: أضفنا maxActiveDonationsPerUser و maxActiveDonationsLevel2Plus

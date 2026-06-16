@@ -1,26 +1,28 @@
-// services/hubService.js — PATCHED ✅
-// التغييرات: إضافة getAllHubsAdmin + validateObjectId + reactivateHub
+// services/hubService.js — ✅ PATCHED [LOGIC-01]
+// التغيير الوحيد: تعديل دالة deactivateHub + إضافة import
 
-const hubRepository = require('../repositories/hubRepository');
-const hubDto        = require('../dtos/hubDto');
-const mongoose      = require('mongoose');
+const hubRepository  = require('../repositories/hubRepository');
+const hubDto         = require('../dtos/hubDto');
+const mongoose       = require('mongoose');
+// ✅ LOGIC-01: نحتاج Item للتحقق من الحجوزات النشطة
+const Item           = require('../models/Item');
 
-// ── helper ──────────────────────────────────────────────────
+// ── helper ──────────────────────────────────────────────────────────────────
 const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
 
-// ── Public: المراكز النشطة فقط ──────────────────────────────
+// ── Public: المراكز النشطة فقط ──────────────────────────────────────────────
 exports.getAllHubs = async () => {
   const hubs = await hubRepository.findAllActive();
   return { statusCode: 200, body: hubs.map(hubDto.toPublicHub) };
 };
 
-// ── Admin: كل المراكز (نشطة + معطّلة) ─────────────────────
+// ── Admin: كل المراكز (نشطة + معطّلة) ──────────────────────────────────────
 exports.getAllHubsAdmin = async () => {
-  const hubs = await hubRepository.findAll(); // ✅ جديد — كل الحالات
+  const hubs = await hubRepository.findAll();
   return { statusCode: 200, body: hubs.map(hubDto.toAdminHub) };
 };
 
-// ── إنشاء مركز جديد ─────────────────────────────────────────
+// ── إنشاء مركز جديد ──────────────────────────────────────────────────────────
 exports.createHub = async (body, adminId) => {
   const errors = hubDto.validateCreateHub(body);
   if (errors.length)
@@ -30,7 +32,7 @@ exports.createHub = async (body, adminId) => {
   return { statusCode: 201, body: hubDto.toAdminHub(hub) };
 };
 
-// ── تحديث مركز ──────────────────────────────────────────────
+// ── تحديث مركز ───────────────────────────────────────────────────────────────
 exports.updateHub = async (hubId, rawBody) => {
   if (!isValidId(hubId))
     return { statusCode: 400, body: { msg: 'معرّف المركز غير صحيح' } };
@@ -38,7 +40,6 @@ exports.updateHub = async (hubId, rawBody) => {
   const hub = await hubRepository.updateById(hubId, rawBody);
 
   if (hub === null) {
-    // تحقق: هل السبب عدم وجود Hub أم عدم وجود حقول؟
     const exists = await hubRepository.findById(hubId);
     if (!exists)
       return { statusCode: 404, body: { msg: 'المركز غير موجود' } };
@@ -48,10 +49,27 @@ exports.updateHub = async (hubId, rawBody) => {
   return { statusCode: 200, body: hubDto.toAdminHub(hub) };
 };
 
-// ── تعطيل مركز ──────────────────────────────────────────────
+// ── تعطيل مركز ───────────────────────────────────────────────────────────────
+// ✅ FIX [LOGIC-01]: التحقق من الحجوزات النشطة قبل التعطيل
 exports.deactivateHub = async (hubId) => {
   if (!isValidId(hubId))
     return { statusCode: 400, body: { msg: 'معرّف المركز غير صحيح' } };
+
+  // ── تحقق: هل يوجد عناصر محجوزة أو متاحة مرتبطة بهذا المركز؟ ──────────────
+  const activeCount = await Item.countDocuments({
+    safeHub: hubId,
+    status:  { $in: ['متاح', 'محجوز'] },
+  });
+
+  if (activeCount > 0) {
+    return {
+      statusCode: 409,
+      body: {
+        msg:  `لا يمكن تعطيل المركز — يوجد ${activeCount} عنصر نشط مرتبط به. أعد تعيين هذه العناصر أولاً.`,
+        code: 'HUB_HAS_ACTIVE_ITEMS',
+      },
+    };
+  }
 
   const hub = await hubRepository.deactivateById(hubId);
   if (!hub)
@@ -60,7 +78,7 @@ exports.deactivateHub = async (hubId) => {
   return { statusCode: 200, body: { msg: 'تم تعطيل المركز ✅', hub: hubDto.toAdminHub(hub) } };
 };
 
-// ── تفعيل مركز (reactivate) — مفقود في الكود الأصلي ─────────
+// ── تفعيل مركز (reactivate) ──────────────────────────────────────────────────
 exports.reactivateHub = async (hubId) => {
   if (!isValidId(hubId))
     return { statusCode: 400, body: { msg: 'معرّف المركز غير صحيح' } };
