@@ -1,15 +1,14 @@
-// services/authService.js — النسخة النهائية الكاملة
-// ✅ FIX [BUG-01]: إضافة require sessionCache في أعلى الملف
-// ✅ FIX [BUG-02]: استعادة loginLogic المحذوفة
-// ✅ FIX [BUG-03]: حذف تعريف logoutLogic المكرر
-// ✅ FIX [BUG-04]: حذف تعريف updateMeLogic المكرر
-// ✅ FIX [SEC-AUTH-02]: Refresh Token Reuse Detection كامل
-// ✅ FIX [PERF-01]: التحديث الذري لمنع الـ Race Condition في التحقق من الإيميل
-// ✅ FIX [HC-02]: حجم الصورة (maxAvatarMB) ديناميكي من SystemSettings
-// ✅ FIX [HC-03]: أبعاد الصورة (avatarWidth / avatarHeight) ديناميكية من SystemSettings
+// services/authService.js — النسخة النهائية المُصلَحة (Flow 3)
+// ✅ FIX [BUG-01..04]      : إصلاحات Flow 2 المحفوظة
+// ✅ FIX [SEC-AUTH-02]     : Refresh Token Reuse Detection
+// ✅ FIX [HC-02/03]        : أبعاد/حجم الصورة ديناميكية
+// ✅ FIX [DUP-PROF-01]     : _getProfilePageParams مشتركة — حذف تكرار pagination
+// ✅ FIX [DUP-PROF-02]     : phone + phoneVerified في buildSafeUser
+// ✅ FIX [PERF-PROF-02]    : حذف .select().lean() المكرر فوق findPublicProfile
+// ✅ FIX [SEC-PROF-03]     : توحيد صيغة الهاتف +962 قبل الحفظ في updateMeLogic
 
-const bcrypt    = require('bcryptjs');
-const crypto    = require('crypto');
+const bcrypt       = require('bcryptjs');
+const crypto       = require('crypto');
 const { Readable } = require('stream');
 const cloudinary   = require('../config/cloudinary');
 
@@ -29,7 +28,8 @@ const { hashToken } = require('../utils/cryptoUtils');
 const BCRYPT_ROUNDS       = parseInt(process.env.BCRYPT_ROUNDS, 10) || 12;
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
-// ── مساعدات ──────────────────────────────────────────────────
+// ─── مساعدات ────────────────────────────────────────────────
+
 const isUniversityEmail = async (email) => {
   const settings = await SystemSettings.getCached();
   const domains  = settings?.universityEmailDomains ?? [];
@@ -38,27 +38,25 @@ const isUniversityEmail = async (email) => {
 
 const _upgradeStudentTrust = async (user) => {
   if (user.isVerifiedStudent) return;
-  if (await isUniversityEmail(user.email)) {
-    user.isVerifiedStudent = true;
-    try {
-      const settings          = await SystemSettings.getCached();
-      const studentTrustLevel = settings?.studentDefaultTrustLevel ?? 2;
-      const studentQuota      = settings?.studentQuota ?? 5;
-      const defaultQuota      = settings?.defaultUserQuota ?? 2;
-      if ((user.trustLevel ?? 1) < studentTrustLevel) user.trustLevel = studentTrustLevel;
-      if ((user.quota ?? defaultQuota) <= defaultQuota) user.quota    = studentQuota;
-    } catch (err) {
-      console.error('[Upgrade Error]', err);
-      if ((user.trustLevel ?? 1) < 2) user.trustLevel = 2;
-      if ((user.quota ?? 2) <= 2)     user.quota      = 5;
-    }
-  }
+  if (!(await isUniversityEmail(user.email))) return;
+
+  user.isVerifiedStudent = true;
+  const settings          = await SystemSettings.getCached();
+  const studentTrustLevel = settings?.studentDefaultTrustLevel ?? 2;
+  const studentQuota      = settings?.studentQuota             ?? 5;
+  const defaultQuota      = settings?.defaultUserQuota         ?? 2;
+
+  if ((user.trustLevel ?? 1) < studentTrustLevel) user.trustLevel = studentTrustLevel;
+  if ((user.quota ?? defaultQuota) <= defaultQuota) user.quota    = studentQuota;
 };
 
+// ✅ FIX [DUP-PROF-02]: phone + phoneVerified مُضافان
 const buildSafeUser = (user) => ({
   _id:               user._id,
   name:              user.name,
   email:             user.email,
+  phone:             user.phone        ?? null,   // ✅ جديد
+  phoneVerified:     user.phoneVerified ?? false, // ✅ جديد
   avatar:            user.avatar,
   role:              user.role,
   trustScore:        user.trustScore,
@@ -71,19 +69,26 @@ const buildSafeUser = (user) => ({
   gamification:      buildGamificationProfile(user.trustScore, user.totalDonations),
 });
 
-// ── getCurrentUserLogic ──────────────────────────────────────
+// ✅ FIX [DUP-PROF-01]: دالة مشتركة لـ pagination — تحذف التكرار في getMeLogic و getPublicProfileLogic
+const _getProfilePageParams = async (page) => {
+  const settings = await SystemSettings.getCached();
+  const pageSize = settings?.profilePageSize ?? 10;
+  return { pageSize, skip: (page - 1) * pageSize, settings };
+};
+
+// ─── getCurrentUserLogic ─────────────────────────────────────
 exports.getCurrentUserLogic = async (userId) => {
   const user = await userRepository.findById(userId);
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود', code: 'USER_NOT_FOUND' } };
   return { statusCode: 200, body: buildSafeUser(user) };
 };
 
-// ── resendOtpLogic ────────────────────────────────────────────
+// ─── resendOtpLogic ──────────────────────────────────────────
 exports.resendOtpLogic = async ({ email }) => {
   if (!email) return { statusCode: 400, body: { msg: 'البريد الإلكتروني مطلوب' } };
 
-  const user        = await userRepository.findByEmail(email, { selectOtp: true });
-  const GENERIC_OK  = { statusCode: 200, body: { msg: 'إذا كان الحساب موجوداً وغير مفعّل، ستصلك رسالة قريباً 📧' } };
+  const user       = await userRepository.findByEmail(email, { selectOtp: true });
+  const GENERIC_OK = { statusCode: 200, body: { msg: 'إذا كان الحساب موجوداً وغير مفعّل، ستصلك رسالة قريباً 📧' } };
 
   if (!user || user.isVerified || user.isBanned) return GENERIC_OK;
 
@@ -99,8 +104,8 @@ exports.resendOtpLogic = async ({ email }) => {
     return { statusCode: 429, body: { msg: 'انتظر دقيقة واحدة قبل طلب رمز جديد ⏳', code: 'RESEND_TOO_FAST' } };
   }
 
-  const rawOtp    = generateOtp();
-  const otpHash   = hashOtp(rawOtp);
+  const rawOtp     = generateOtp();
+  const otpHash    = hashOtp(rawOtp);
   const expiryTime = new Date(Date.now() + totalExpiryMs);
 
   await userRepository.updateUser(user._id, {
@@ -119,19 +124,19 @@ exports.resendOtpLogic = async ({ email }) => {
   return GENERIC_OK;
 };
 
-// ── registerLogic ─────────────────────────────────────────────
+// ─── registerLogic ───────────────────────────────────────────
 exports.registerLogic = async ({ name, email, password, phone }) => {
   const exists = await userRepository.findByEmail(email);
 
   if (exists) {
-    await bcrypt.hash(password, BCRYPT_ROUNDS); 
+    await bcrypt.hash(password, BCRYPT_ROUNDS);
     const isStudent = await isUniversityEmail(email);
     return { statusCode: 201, body: { msg: 'تم إنشاء الحساب! تحقق من إيميلك 📬', email, isVerifiedStudent: isStudent } };
   }
 
   const settings          = await SystemSettings.getCached();
-  const otpExpiryMinutes  = settings?.otpExpiryMinutes ?? 10;
-  const defaultQuota      = settings?.defaultUserQuota ?? 2;
+  const otpExpiryMinutes  = settings?.otpExpiryMinutes         ?? 10;
+  const defaultQuota      = settings?.defaultUserQuota         ?? 2;
   const studentTrustLevel = settings?.studentDefaultTrustLevel ?? 2;
 
   const hashed    = await bcrypt.hash(password, BCRYPT_ROUNDS);
@@ -154,11 +159,10 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
   });
 
   await emailService.sendVerificationEmail(email, rawOtp, name, isStudent);
-
   return { statusCode: 201, body: { msg: 'تم إنشاء الحساب! تحقق من إيميلك 📬', email, isVerifiedStudent: isStudent } };
 };
 
-// ── verifyEmailLogic ──────────────────────────────────────────
+// ─── verifyEmailLogic ────────────────────────────────────────
 exports.verifyEmailLogic = async ({ email, otp }) => {
   const settings    = await SystemSettings.getCached();
   const maxAttempts = settings?.maxOtpAttempts ?? 5;
@@ -190,8 +194,8 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
   const mutableUser = { ...user };
   await _upgradeStudentTrust(mutableUser);
 
-  const accessToken                            = generateAccessToken(mutableUser);
-  const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(mutableUser);
+  const accessToken                                     = generateAccessToken(mutableUser);
+  const { token: refreshToken, hashed: hashedRefresh }  = generateRefreshToken(mutableUser);
 
   const updatedUser = await userRepository.atomicVerifyAndComplete(user._id, user.verificationOtp, {
     $set: {
@@ -216,7 +220,7 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
   };
 };
 
-// ── loginLogic ────────────────────────────────────────────────
+// ─── loginLogic ──────────────────────────────────────────────
 exports.loginLogic = async ({ email, password }) => {
   const user = await userRepository.findByEmailWithPassword(email);
 
@@ -229,7 +233,7 @@ exports.loginLogic = async ({ email, password }) => {
   if (!user.isVerified) {
     const settings         = await SystemSettings.getCached();
     const otpExpiryMinutes = settings?.otpExpiryMinutes ?? 10;
-    const maxOtpAttempts   = settings?.maxOtpAttempts ?? 5;
+    const maxOtpAttempts   = settings?.maxOtpAttempts   ?? 5;
     const COOLDOWN_MS      = 60 * 1000;
     const totalExpiryMs    = otpExpiryMinutes * 60 * 1000;
 
@@ -251,7 +255,7 @@ exports.loginLogic = async ({ email, password }) => {
 
     const rawOtp    = generateOtp();
     const otpHash   = hashOtp(rawOtp);
-    const otpExpiry = new Date(Date.now() + totalExpiryMs);
+    const otpExpiry = new Date(Date.now() + otpExpiryMinutes * 60 * 1000);
 
     await userRepository.updateUser(user._id, {
       verificationOtp:       otpHash,
@@ -268,7 +272,7 @@ exports.loginLogic = async ({ email, password }) => {
   }
 
   const beforeLevel = user.trustLevel ?? 1;
-  const beforeQuota = user.quota ?? 2;
+  const beforeQuota = user.quota      ?? 2;
   await _upgradeStudentTrust(user);
 
   if (user.trustLevel !== beforeLevel || user.quota !== beforeQuota || user.isVerifiedStudent) {
@@ -279,7 +283,7 @@ exports.loginLogic = async ({ email, password }) => {
     });
   }
 
-  const accessToken                            = generateAccessToken(user);
+  const accessToken                                    = generateAccessToken(user);
   const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(user);
 
   await userRepository.updateUser(user._id, {
@@ -294,7 +298,7 @@ exports.loginLogic = async ({ email, password }) => {
   };
 };
 
-// ── refreshLogic ──────────────────────────────────────────────
+// ─── refreshLogic ─────────────────────────────────────────────
 exports.refreshLogic = async (rawRefreshToken, clientIp = 'unknown') => {
   if (!rawRefreshToken) {
     return { statusCode: 401, clearCookie: true, body: { msg: 'لا يوجد Refresh Token 🔒', code: 'NO_REFRESH_TOKEN' } };
@@ -361,7 +365,7 @@ exports.refreshLogic = async (rawRefreshToken, clientIp = 'unknown') => {
   };
 };
 
-// ── logoutLogic ───────────────────────────────────────────────
+// ─── logoutLogic ──────────────────────────────────────────────
 exports.logoutLogic = async (userId) => {
   sessionCache.invalidate(userId);
   await userRepository.updateUser(userId, {
@@ -371,14 +375,13 @@ exports.logoutLogic = async (userId) => {
   return { statusCode: 200, clearCookie: true, body: { msg: 'تم تسجيل الخروج بنجاح 👋' } };
 };
 
-// ── getMeLogic ────────────────────────────────────────────────
+// ─── getMeLogic ───────────────────────────────────────────────
 exports.getMeLogic = async (userId, page = 1) => {
   const user = await userRepository.findById(userId);
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
 
-  const settings = await SystemSettings.getCached();
-  const pageSize  = settings?.profilePageSize ?? 10;
-  const skip      = (page - 1) * pageSize;
+  // ✅ FIX [DUP-PROF-01]: استخدام الدالة المشتركة
+  const { pageSize, skip } = await _getProfilePageParams(page);
 
   const [
     donations, received, totalRatings,
@@ -389,7 +392,7 @@ exports.getMeLogic = async (userId, page = 1) => {
     Rating.countDocuments({ ratee: userId }),
     Item.countDocuments({ donor: userId }),
     Item.countDocuments({ bookedBy: userId, status: 'تم التسليم' }),
-    Item.countDocuments({ donor: userId, status: 'تم التسليم' }),
+    Item.countDocuments({ donor: userId,  status: 'تم التسليم' }),
   ]);
 
   const donationsTotalPages = Math.ceil(totalDonationsCount / pageSize);
@@ -400,7 +403,7 @@ exports.getMeLogic = async (userId, page = 1) => {
     body: {
       user: buildSafeUser(user),
       stats: { donationsCount: totalDonationsCount, completedDonations: completedDonationsCount, receivedCount: totalReceivedCount, totalRatings },
-      allDonations: donations,
+      allDonations:      donations,
       completedRequests: received,
       pagination: {
         currentPage: page, limit: pageSize,
@@ -411,18 +414,16 @@ exports.getMeLogic = async (userId, page = 1) => {
   };
 };
 
-// ── getPublicProfileLogic ─────────────────────────────────────
+// ─── getPublicProfileLogic ────────────────────────────────────
 exports.getPublicProfileLogic = async (userId, page = 1) => {
-  const userCheck = await userRepository.findPublicProfile(userId)
-    .select('name avatar role trustScore trustLevel totalDonations isVerifiedStudent isBanned createdAt')
-    .lean();
+  // ✅ FIX [PERF-PROF-02]: حذف .select().lean() المكرر — findPublicProfile يُعيد lean() أصلاً
+  const userCheck = await userRepository.findPublicProfile(userId);
 
   if (!userCheck) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
   if (userCheck.isBanned) return { statusCode: 403, body: { msg: 'هذا الحساب محظور' } };
 
-  const settings  = await SystemSettings.getCached();
-  const pageSize  = settings?.profilePageSize ?? 10;
-  const skip      = (page - 1) * pageSize;
+  // ✅ FIX [DUP-PROF-01]: استخدام الدالة المشتركة
+  const { pageSize, skip } = await _getProfilePageParams(page);
 
   const [donations, received, totalRatings, totalDonationsCount, totalReceivedCount] = await Promise.all([
     Item.find({ donor: userId, status: { $ne: 'مخفي' } }).select('title imageUrl status createdAt').sort({ createdAt: -1 }).skip(skip).limit(pageSize).lean(),
@@ -436,14 +437,15 @@ exports.getPublicProfileLogic = async (userId, page = 1) => {
     statusCode: 200,
     body: {
       user: {
-        name: userCheck.name, avatar: userCheck.avatar,
-        trustLevel: userCheck.trustLevel ?? 1,
+        name:              userCheck.name,
+        avatar:            userCheck.avatar,
+        trustLevel:        userCheck.trustLevel ?? 1,
         isVerifiedStudent: userCheck.isVerifiedStudent,
-        createdAt: userCheck.createdAt,
-        gamification: buildGamificationProfile(userCheck.trustScore, userCheck.totalDonations),
+        createdAt:         userCheck.createdAt,
+        gamification:      buildGamificationProfile(userCheck.trustScore, userCheck.totalDonations),
       },
       stats: { donationsCount: totalDonationsCount, receivedCount: totalReceivedCount, totalRatings },
-      allDonations: donations,
+      allDonations:      donations,
       completedRequests: received,
       pagination: {
         currentPage: page, limit: pageSize,
@@ -454,7 +456,7 @@ exports.getPublicProfileLogic = async (userId, page = 1) => {
   };
 };
 
-// ── forgotPasswordLogic ───────────────────────────────────────
+// ─── forgotPasswordLogic ──────────────────────────────────────
 exports.forgotPasswordLogic = async ({ email }) => {
   const user        = await userRepository.findByEmail(email);
   const GENERIC_MSG = { msg: 'إذا كان هذا الإيميل مسجلاً، ستصلك رسالة استعادة قريباً 📧' };
@@ -479,22 +481,16 @@ exports.forgotPasswordLogic = async ({ email }) => {
   try {
     await emailService.sendResetPasswordEmail(user.email, resetToken, user.name, resetUrl);
     return { statusCode: 200, body: GENERIC_MSG };
-    
   } catch (err) {
     console.error('[forgotPassword] CRITICAL: Email failed for user:', user._id, err.message);
-    
-    await userRepository.updateUser(user._id, { 
-      $unset: { resetPasswordToken: 1, resetPasswordExpire: 1 } 
+    await userRepository.updateUser(user._id, {
+      $unset: { resetPasswordToken: 1, resetPasswordExpire: 1 },
     });
-    
-    return { 
-      statusCode: 500, 
-      body: { msg: 'حدث خطأ أثناء إرسال البريد الإلكتروني، حاول مجدداً لاحقاً ⚠️' } 
-    };
+    return { statusCode: 500, body: { msg: 'حدث خطأ أثناء إرسال البريد الإلكتروني، حاول مجدداً لاحقاً ⚠️' } };
   }
 };
 
-// ── resetPasswordLogic ────────────────────────────────────────
+// ─── resetPasswordLogic ───────────────────────────────────────
 exports.resetPasswordLogic = async (token, newPassword) => {
   const hashedToken = hashToken(token);
   const user        = await userRepository.findByResetToken(hashedToken);
@@ -512,50 +508,49 @@ exports.resetPasswordLogic = async (token, newPassword) => {
   await userRepository.saveUser(user);
 
   sessionCache.invalidate(user._id.toString());
-
   return { statusCode: 200, body: { msg: 'تم تغيير كلمة المرور بنجاح! ✅' } };
 };
 
-// ── updateMeLogic ─────────────────────────────────────────────
+// ─── updateMeLogic ────────────────────────────────────────────
 exports.updateMeLogic = async (userId, updates, fileBuffer, mimetype) => {
   const user = await userRepository.findById(userId);
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
 
   const settings       = await SystemSettings.getCached();
-  // ✅ FIX [HC-02]: الحد الأقصى لحجم الصورة ديناميكي (MB) 
   const maxAvatarMB    = settings?.maxAvatarSizeMb ?? 5;
   const maxAvatarBytes = maxAvatarMB * 1024 * 1024;
-  
-  // ✅ FIX [HC-03]: أبعاد الصورة ديناميكية
   const avatarWidth    = settings?.avatarWidth  ?? 400;
   const avatarHeight   = settings?.avatarHeight ?? 400;
 
   if (updates.name) user.name = updates.name.trim();
 
   if (updates.phone) {
-    const phoneExists = await userRepository.findByPhoneExcluding(updates.phone, userId);
+    // ✅ FIX [SEC-PROF-03]: توحيد صيغة الهاتف +962 قبل الحفظ
+    let phone = updates.phone.replace(/[\s\-]/g, '');
+    phone     = phone.replace(/^(00962|\+962|0)/, '');
+    const normalizedPhone = `+962${phone}`;
+
+    const phoneExists = await userRepository.findByPhoneExcluding(normalizedPhone, userId);
     if (phoneExists) {
       return { statusCode: 409, body: { msg: 'رقم الهاتف مستخدم من قِبَل حساب آخر ❌', code: 'PHONE_ALREADY_EXISTS' } };
     }
-    user.phone = updates.phone;
+    user.phone = normalizedPhone;
   }
 
   if (fileBuffer) {
     if (!ALLOWED_IMAGE_TYPES.includes(mimetype)) {
       return { statusCode: 400, body: { msg: 'نوع الصورة غير مدعوم، يُسمح بـ JPEG أو PNG أو WebP فقط 🖼️' } };
     }
-    // استخدام الحد الديناميكي الجديد
     if (fileBuffer.length > maxAvatarBytes) {
       return { statusCode: 400, body: { msg: `حجم الصورة يتجاوز الحد المسموح (${maxAvatarMB} ميغابايت) 🖼️` } };
     }
     try {
       const result = await new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
-          { 
-            folder: 'hajah/avatars', 
-            resource_type: 'image', 
-            // استخدام الأبعاد الديناميكية
-            transformation: [{ width: avatarWidth, height: avatarHeight, crop: 'fill', gravity: 'face' }] 
+          {
+            folder:        'hajah/avatars',
+            resource_type: 'image',
+            transformation: [{ width: avatarWidth, height: avatarHeight, crop: 'fill', gravity: 'face' }],
           },
           (err, res) => (err ? reject(err) : resolve(res))
         );
@@ -568,17 +563,16 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, mimetype) => {
     }
   }
 
-  // ✅ تصحيح استدعاء التحديث وتمرير الـ ID والبيانات
-  const updatedUser = await userRepository.updateUser(userId, { 
-    name: user.name, 
-    phone: user.phone, 
-    avatar: user.avatar 
+  const updatedUser = await userRepository.updateUser(userId, {
+    name:   user.name,
+    phone:  user.phone,
+    avatar: user.avatar,
   });
-  
+
   return { statusCode: 200, body: { msg: 'تم تحديث الملف الشخصي بنجاح ✅', user: buildSafeUser(updatedUser) } };
 };
 
-// ── updatePasswordLogic ───────────────────────────────────────
+// ─── updatePasswordLogic ──────────────────────────────────────
 exports.updatePasswordLogic = async (userId, { currentPassword, newPassword }) => {
   const user = await userRepository.findByIdWithPassword(userId);
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
@@ -590,15 +584,13 @@ exports.updatePasswordLogic = async (userId, { currentPassword, newPassword }) =
   if (isSame) return { statusCode: 400, body: { msg: 'كلمة المرور الجديدة يجب أن تختلف عن الحالية' } };
 
   const newHashedPassword = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-  
-  // ✅ تصحيح استدعاء التحديث ليأخذ الـ ID
+
   await userRepository.updateUser(userId, {
     password:        newHashedPassword,
     refreshToken:    undefined,
-    sessionIssuedAt: undefined
+    sessionIssuedAt: undefined,
   });
 
   sessionCache.invalidate(userId);
-
   return { statusCode: 200, body: { msg: 'تم تغيير كلمة المرور بنجاح ✅' } };
 };

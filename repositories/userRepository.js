@@ -1,11 +1,10 @@
 // repositories/userRepository.js
-// ✅ FIX [LOGIC-AUTH-01]: إضافة دوال مخصصة لـ verifyEmailLogic تستبدل require('../models/User') المباشر
-// ✅ FIX [LOGIC-AUTH-02]: findByEmailWithPassword يجلب +verificationOtpExpiry +otpAttempts للـ loginLogic
-// ✅ FIX [LOGIC-AUTH-03]: إضافة findByPhoneExcluding لفحص تكرار رقم الهاتف في updateMeLogic
+// ✅ FIX [DUP-PROF-02]: إضافة phone + phoneVerified في findById
+// ✅ FIX [PERF-PROF-02]: findPublicProfile تُعيد lean() مباشرة — لا تكرار في الـ Service
 
 const User = require('../models/User');
 
-// ── قراءة ─────────────────────────────────────────────────────
+// ─── قراءة ───────────────────────────────────────────────────
 
 exports.findByEmail = (email, options = {}) => {
   let query = User.findOne({ email });
@@ -15,8 +14,6 @@ exports.findByEmail = (email, options = {}) => {
   return query;
 };
 
-// ✅ FIX [LOGIC-AUTH-02]: أضيف +verificationOtpExpiry +otpAttempts
-// loginLogic يحتاجهما لفحص Cooldown وحد المحاولات قبل إصدار OTP جديد
 exports.findByEmailWithPassword = (email) =>
   User.findOne({ email }).select('+password +verificationOtpExpiry +otpAttempts');
 
@@ -24,9 +21,10 @@ exports.createUser = (data) => User.create(data);
 
 exports.saveUser = (user) => user.save();
 
+// ✅ FIX [DUP-PROF-02]: أضيف phone + phoneVerified
 exports.findById = (id) =>
   User.findById(id).select(
-    'name email avatar role trustScore trustLevel ' +
+    'name email phone phoneVerified avatar role trustScore trustLevel ' +
     'quota isVerified isVerifiedStudent isBanned ' +
     'totalDonations badges createdAt'
   );
@@ -45,16 +43,8 @@ exports.updateUser = (id, update) =>
 
 exports.rotateRefreshToken = (userId, oldHash, newHash, newIssuedAt) =>
   User.findOneAndUpdate(
-    {
-      _id:          userId,
-      refreshToken: oldHash,
-    },
-    {
-      $set: {
-        refreshToken:    newHash,
-        sessionIssuedAt: newIssuedAt,
-      },
-    },
+    { _id: userId, refreshToken: oldHash },
+    { $set: { refreshToken: newHash, sessionIssuedAt: newIssuedAt } },
     { returnDocument: 'after' }
   ).select('_id name email role trustLevel isBanned quota trustScore');
 
@@ -68,25 +58,31 @@ exports.findByIdForAdmin = (id) =>
     'totalDonations badges reportedBy createdAt'
   );
 
+// ✅ FIX [ARCH-PROF-02]: setTrustLevel مُحدَّثة لتقبل quota معاً
+exports.setTrustLevelAndQuota = (id, level, quota) =>
+  User.findByIdAndUpdate(
+    id,
+    { trustLevel: level, quota, promotedByAdmin: true },
+    { returnDocument: 'after' }
+  ).select('name email trustLevel quota isVerifiedStudent phoneVerified isBanned');
+
+// نُبقي على الدالة القديمة للتوافق مع أماكن أخرى لا تحتاج quota
 exports.setTrustLevel = (id, level) =>
   User.findByIdAndUpdate(id, { trustLevel: level }, { returnDocument: 'after' })
-      .select('name email trustLevel isVerifiedStudent phoneVerified isBanned');
+    .select('name email trustLevel isVerifiedStudent phoneVerified isBanned');
 
 exports.findByIdWithPassword = (id) =>
   User.findById(id).select('+password');
 
-// ── FIX [LOGIC-AUTH-01]: دوال مخصصة لـ verifyEmailLogic ──────────────────
-// تستبدل require('../models/User') المباشر في authService.js
-// وتُبقي كل استعلامات DB في طبقة الـ Repository
+// ─── دوال verifyEmailLogic ────────────────────────────────────
 
-// الخطوة 1: قراءة ذرية مع increment للـ otpAttempts في عملية واحدة
 exports.findAndIncrementOtpAttempts = (email, maxAttempts = 5) =>
   User.findOneAndUpdate(
     {
       email,
       isVerified: false,
       $or: [
-        { otpAttempts: { $lt: maxAttempts } }, // ← أصبح ديناميكياً
+        { otpAttempts: { $lt: maxAttempts } },
         { otpAttempts: { $exists: false } },
       ],
     },
@@ -97,15 +93,16 @@ exports.findAndIncrementOtpAttempts = (email, maxAttempts = 5) =>
     }
   ).lean();
 
-// الخطوة 2: قراءة حالة المستخدم فقط (للتمييز بين 429 و 404 و 400)
 exports.findEmailStatus = (email) =>
   User.findOne({ email }).select('isVerified otpAttempts').lean();
 
-// الخطوة 3: إتمام التحقق وتصفير الـ OTP بشكل ذري
-exports.completeEmailVerification = (userId, updateData) =>
-  User.updateOne({ _id: userId }, updateData);
+exports.atomicVerifyAndComplete = (userId, currentOtpHash, updateData) =>
+  User.findOneAndUpdate(
+    { _id: userId, verificationOtp: currentOtpHash },
+    updateData,
+    { returnDocument: 'after' }
+  );
 
-// الخطوة 4: تصفير محاولات OTP بعد تجاوز الحد (إعادة ضبط لطلب رمز جديد)
 exports.resetOtpAttemptsAfterLock = (email) =>
   User.updateOne(
     { email },
@@ -115,21 +112,18 @@ exports.resetOtpAttemptsAfterLock = (email) =>
     }
   );
 
-// ── FIX [LOGIC-AUTH-03]: فحص تكرار رقم الهاتف قبل الحفظ ─────────────────
-// يُستخدم في updateMeLogic قبل user.save() لتجنب MongoServerError 11000
+// ─── فحص تكرار رقم الهاتف ────────────────────────────────────
 exports.findByPhoneExcluding = (phone, excludeUserId) =>
-  User.findOne({
-    phone,
-    _id: { $ne: excludeUserId },
-  }).select('_id').lean();
+  User.findOne({ phone, _id: { $ne: excludeUserId } }).select('_id').lean();
 
-// ── إلغاء صلاحية الجلسة (مستخدَمة في rotateRefreshToken عند اكتشاف إعادة الاستخدام) ──
+// ─── إلغاء صلاحية الجلسة ─────────────────────────────────────
 exports.invalidateUserSession = (userId) =>
   User.findByIdAndUpdate(userId, {
     $unset: { refreshToken: 1, sessionIssuedAt: 1 },
   });
 
-  exports.findPublicProfile = (id) =>
+// ✅ FIX [PERF-PROF-02]: تُعيد lean() مباشرة — لا يجوز استدعاء .select().lean() فوقها
+exports.findPublicProfile = (id) =>
   User.findById(id)
     .select('name avatar role trustScore trustLevel totalDonations isVerifiedStudent isBanned createdAt')
     .lean();

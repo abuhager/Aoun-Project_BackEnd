@@ -1,298 +1,202 @@
-// repositories/adminRepository.js
-const User     = require('../models/User');
-const Item     = require('../models/Item');
-const Report   = require('../models/Report');
-const AdminLog = require('../models/AdminLog');
+// services/adminService.js
+// ✅ FIX [ARCH-PROF-02]: promoteToLevel2 + demoteToLevel1 يُحدّثان quota مع trustLevel
 
-// ── مساعد: تهريب أحرف RegExp وتحديد الطول لمنع ReDoS ────────
-const getSafeSearchRegex = (search) => {
-  if (!search) return null;
-  const truncated = String(search).slice(0, 100);
-  const escaped   = truncated.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(escaped, 'i');
-};
+const adminRepo      = require('../repositories/adminRepository');
+const userRepository = require('../repositories/userRepository');
+const AdminLog       = require('../models/AdminLog');
+const User           = require('../models/User');
+const SystemSettings = require('../models/SystemSettings');
+const notifyUser     = require('../utils/notifyUser');
+const AppError       = require('../utils/AppError');
+const sessionCache   = require('../utils/sessionCache');
 
-// ─── helper داخلي لبناء filter المستخدمين ────────────────────
-const buildUserFilter = ({ search, banned = '' } = {}) => {
-  const filter = {};
+// ─── Stats ────────────────────────────────────────────────────
+exports.getStats = () => adminRepo.getDashboardStats();
 
-  const searchRegex = getSafeSearchRegex(search);
-  if (searchRegex) {
-    filter.$or = [
-      { name:  searchRegex },
-      { email: searchRegex },
-    ];
-  }
-
-  if (banned === 'true')       filter.isBanned = true;
-  else if (banned === 'false') filter.isBanned = false;
-
-  return filter;
-};
-
-// ── المستخدمون ────────────────────────────────────────────────
-exports.findAllUsers = ({ page = 1, limit = 20, search, banned = '' } = {}) => {
-  const filter = buildUserFilter({ search, banned });
-
-  return User.find(filter)
-    .select('-password -refreshToken -verificationOtp -resetPasswordToken')
-    .sort({ createdAt: -1 })
-    .skip((page - 1) * limit)
-    .limit(limit)
-    .lean();
-};
-
-exports.countUsers = ({ search, banned = '' } = {}) => {
-  const filter = buildUserFilter({ search, banned });
-  return User.countDocuments(filter);
-};
-
-exports.banUser = (userId, reason, bannedBy) =>
-  User.findByIdAndUpdate(
-    userId,
-    { $set: { isBanned: true, banReason: reason, bannedBy } },
-    { returnDocument: 'after' }
-  );
-
-exports.unbanUser = (userId) =>
-  User.findByIdAndUpdate(
-    userId,
-    { $set: { isBanned: false }, $unset: { banReason: '', bannedBy: '' } },
-    { returnDocument: 'after' }
-  );
-
-exports.adjustTrustScore = (userId, delta) =>
-  User.findByIdAndUpdate(
-    userId,
-    { $inc: { trustScore: delta } },
-    { returnDocument: 'after' }
-  );
-
-// ── الأغراض ───────────────────────────────────────────────────
-exports.findAllItems = ({ page = 1, limit = 20 } = {}) =>
-  Item.find()
-    .populate('donor', 'name email')
-    .sort({ createdAt: -1 })
-    .skip((page - 1) * limit)
-    .limit(limit)
-    .lean();
-
-exports.countItems = () => Item.countDocuments();
-
-// ── البلاغات ──────────────────────────────────────────────────
-const buildPendingFilter = () => ({
-  status: 'pending',
-  $or: [
-    { appealDeadline: { $lte: new Date() } },
-    { appealText:     { $exists: true, $ne: null } },
-    { appealDeadline: { $exists: false } },
-  ],
-});
-
-exports.findPendingReports = async ({ page = 1, limit = 20 } = {}) => {
-  const filter = buildPendingFilter();
-
-  const reports = await Report.find(filter)
-    .populate('reporter',     'name email phone')
-    .populate('reportedUser', 'name email phone isBanned')
-    .populate('relatedItem',  'title')
-    .sort({ createdAt: -1 })
-    .skip((page - 1) * limit)
-    .limit(limit)
-    .lean();
-
-  const reportedIds = reports
-    .map(r => r.reportedUser?._id)
-    .filter(Boolean);
-
-  const counts = await Report.aggregate([
-    { $match: { reportedUser: { $in: reportedIds } } },
-    { $group: { _id: '$reportedUser', count: { $sum: 1 } } },
+// ─── Users ────────────────────────────────────────────────────
+exports.listUsers = async ({ page = 1, search = '', banned = '' }) => {
+  const normalizedPage = Math.max(1, +page || 1);
+  const [users, total] = await Promise.all([
+    adminRepo.findAllUsers({ page: normalizedPage, search, banned }),
+    adminRepo.countUsers({ search, banned }),
   ]);
-
-  const countMap = Object.fromEntries(
-    counts.map(c => [c._id.toString(), c.count])
-  );
-
-  return reports.map(r => ({
-    ...r,
-    totalReportsAgainstUser:
-      countMap[r.reportedUser?._id?.toString()] ?? 0,
-  }));
+  return { users, total, page: normalizedPage, pages: Math.ceil(total / 20) };
 };
 
-exports.countPendingReports = () =>
-  Report.countDocuments(buildPendingFilter());
+exports.banUser = async (userId, adminId, reason, adminNote) => {
+  const user = await adminRepo.banUser(userId, reason, adminId);
+  if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
 
-exports.resolveReport = (reportId, adminId, status) =>
-  Report.findByIdAndUpdate(
-    reportId,
-    { $set: { status, resolvedBy: adminId, resolvedAt: new Date() } },
-    { returnDocument: 'after' }
-  );
+  await User.findByIdAndUpdate(userId, { $inc: { refreshTokenVersion: 1 } });
+  sessionCache.invalidate(userId);
 
-// ── السجلات ───────────────────────────────────────────────────
-exports.logAdminAction = ({
-  adminId,
-  action,
-  targetId,
-  targetModel,
-  reason,
-  meta,
-  targetName,
-  adminNote,
-}) =>
-  AdminLog.create({
-    adminId,
-    action,
-    targetId,
-    targetModel,
-    reason,
-    meta,
-    targetName,
-    adminNote,
+  await adminRepo.logAdminAction({
+    adminId, action: 'BAN', targetId: userId, targetModel: 'User',
+    targetName: user.name, reason: reason ?? 'حظر يدوي', adminNote: adminNote ?? null,
+    meta: { targetName: user.name, targetEmail: user.email ?? null },
   });
 
-exports.findAdminLogs = ({ page = 1, limit = 20 } = {}) =>
-  AdminLog.find()
-    .sort({ createdAt: -1 })
-    .skip((page - 1) * limit)
-    .limit(limit)
-    .populate('adminId',  'name email')
-    .populate('targetId', 'name email title')
-    .lean();
+  return user;
+};
 
-// ── الإحصائيات (Dashboard) ────────────────────────────────────
-exports.getDashboardStats = () =>
-  Promise.all([
-    User.countDocuments(),
-    User.countDocuments({ isBanned: true }),
-    Item.countDocuments(),
-    Item.countDocuments({ status: 'تم التسليم' }),
-    Report.countDocuments({ status: 'pending' }),
-  ]).then(([totalUsers, bannedUsers, totalItems, deliveredItems, pendingReports]) => ({
-    totalUsers,
-    bannedUsers,
-    totalItems,
-    deliveredItems,
-    pendingReports,
-  }));
+exports.unbanUser = async (userId, adminId, adminNote = null) => {
+  const user = await adminRepo.unbanUser(userId);
+  if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
 
-// ── البلاغات مع العدادات التراكمية (للداشبورد الكامل) ─────────
-exports.findPendingReportsWithCounts = async ({
-  page   = 1,
-  limit  = 20,
-  status = 'pending',
-} = {}) => {
-  const skip = (page - 1) * limit;
+  await adminRepo.logAdminAction({
+    adminId, action: 'UNBAN', targetId: userId, targetModel: 'User',
+    targetName: user.name, reason: 'رفع الحظر يدوياً من الأدمن', adminNote: adminNote ?? null,
+    meta: { targetName: user.name, targetEmail: user.email ?? null },
+  });
 
-  const reports = await Report.aggregate([
-    { $match: { status } },
-    { $sort:  { createdAt: -1 } },
-    { $skip:  skip },
-    { $limit: limit },
+  return user;
+};
 
-    {
-      $lookup: {
-        from:         'users',
-        localField:   'reportedUser',
-        foreignField: '_id',
-        as:           'reportedUserData',
-        pipeline: [{
-          $project: {
-            name: 1, email: 1, avatar: 1,
-            isBanned: 1, trustLevel: 1, trustScore: 1,
-          },
-        }],
-      },
-    },
-
-    {
-      $lookup: {
-        from:         'users',
-        localField:   'reporter',
-        foreignField: '_id',
-        as:           'reporterData',
-        pipeline: [{ $project: { name: 1, avatar: 1, trustLevel: 1 } }],
-      },
-    },
-
-    {
-      $lookup: {
-        from:         'items',
-        localField:   'relatedItem',
-        foreignField: '_id',
-        as:           'relatedItemData',
-        pipeline: [{ $project: { title: 1, imageUrl: 1, status: 1 } }],
-      },
-    },
-
-    {
-      $lookup: {
-        from: 'reports',
-        let:  { uid: '$reportedUser' },
-        pipeline: [
-          { $match: { $expr: { $eq: ['$reportedUser', '$$uid'] } } },
-          { $count: 'total' },
-        ],
-        as: 'totalReportsLookup',
-      },
-    },
-
-    {
-      $lookup: {
-        from: 'reports',
-        let:  { uid: '$reportedUser' },
-        pipeline: [
-          {
-            $match: {
-              $expr: {
-                $and: [
-                  { $eq: ['$reportedUser', '$$uid'] },
-                  { $eq: ['$status', 'pending'] },
-                ],
-              },
-            },
-          },
-          { $count: 'total' },
-        ],
-        as: 'pendingReportsLookup',
-      },
-    },
-
-    {
-      $addFields: {
-        // ✅ الإصلاح: إعادة التسمية لتطابق ما يتوقعه الـ Frontend
-        reporter:     { $arrayElemAt: ['$reporterData',     0] },
-        reportedUser: { $arrayElemAt: ['$reportedUserData', 0] },
-        relatedItem:  { $arrayElemAt: ['$relatedItemData',  0] },
-        totalReportsAgainstUser: {
-          $ifNull: [{ $arrayElemAt: ['$totalReportsLookup.total',  0] }, 0],
-        },
-        pendingReportsAgainstUser: {
-          $ifNull: [{ $arrayElemAt: ['$pendingReportsLookup.total', 0] }, 0],
-        },
-        isRepeatOffender: {
-          $gt: [
-            { $ifNull: [{ $arrayElemAt: ['$totalReportsLookup.total', 0] }, 0] },
-            3,
-          ],
-        },
-      },
-    },
-
-    {
-      // ✅ حذف كل الأسماء المؤقتة من الـ response النهائي
-      $project: {
-        totalReportsLookup:   0,
-        pendingReportsLookup: 0,
-        reporterData:         0,
-        reportedUserData:     0,
-        relatedItemData:      0,
-      },
-    },
+// ─── Items ────────────────────────────────────────────────────
+exports.listItems = async ({ page = 1 }) => {
+  const normalizedPage = Math.max(1, +page || 1);
+  const [items, total] = await Promise.all([
+    adminRepo.findAllItems({ page: normalizedPage }),
+    adminRepo.countItems(),
   ]);
+  return { items, total, page: normalizedPage, pages: Math.ceil(total / 20) };
+};
 
-  const total = await Report.countDocuments({ status });
-  return { reports, total };
+exports.deleteItem = async (itemId, adminId, adminNote) => {
+  const Item = require('../models/Item');
+  const item = await Item.findById(itemId).populate('donor', 'name email');
+  if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+
+  const donorName  = item.donor?.name  ?? null;
+  const donorEmail = item.donor?.email ?? null;
+  const itemTitle  = item.title        ?? 'غرض محذوف';
+
+  await Item.deleteOne({ _id: itemId });
+
+  await adminRepo.logAdminAction({
+    adminId, action: 'ITEM_HIDE', targetId: itemId, targetModel: 'Item',
+    targetName: donorName ?? itemTitle, reason: 'حذف غرض من لوحة الإدارة',
+    adminNote: adminNote ?? null,
+    meta: { targetName: donorName ?? itemTitle, targetEmail: donorEmail, itemTitle },
+  });
+
+  return item;
+};
+
+// ─── Reports ──────────────────────────────────────────────────
+exports.listReports = async ({ page = 1, status = 'pending' } = {}) => {
+  const normalizedPage = Math.max(1, +page || 1);
+  const { reports, total } = await adminRepo.findPendingReportsWithCounts({
+    page: normalizedPage, limit: 20, status,
+  });
+  return { reports, total, page: normalizedPage, pages: Math.ceil(total / 20) };
+};
+
+exports.resolveReport = async (reportId, adminId, action, _adminName, adminNote = null) => {
+  const allowedActions = ['warn', 'ban', 'dismiss'];
+  if (!allowedActions.includes(action)) throw new AppError('إجراء غير صالح على البلاغ', 400, 'INVALID_REPORT_ACTION');
+
+  const statusMap = { warn: 'actioned', ban: 'actioned', dismiss: 'dismissed' };
+  const report    = await adminRepo.resolveReport(reportId, adminId, statusMap[action]);
+  if (!report) throw new AppError('البلاغ غير موجود', 404, 'REPORT_NOT_FOUND');
+
+  const Report     = require('../models/Report');
+  const fullReport = await Report.findById(reportId)
+    .populate('reportedUser', 'name email isBanned')
+    .populate('reporter',     'name email')
+    .populate('relatedItem',  'title');
+
+  const actionLabel = { warn: 'تحذير', ban: 'حظر', dismiss: 'رفض البلاغ' }[action];
+
+  await adminRepo.logAdminAction({
+    adminId, action: 'REPORT_ACTION', targetId: reportId, targetModel: 'Report',
+    reason: actionLabel, adminNote: adminNote ?? null,
+    meta: {
+      targetName:       fullReport?.reportedUser?.name  ?? '—',
+      reportedBy:       fullReport?.reporter?.name      ?? '—',
+      reason:           fullReport?.reason              ?? '—',
+      action:           actionLabel,
+      relatedItemTitle: fullReport?.relatedItem?.title  ?? null,
+    },
+  });
+
+  if (action === 'warn' && report.reportedUser) {
+    await notifyUser(report.reportedUser, {
+      type: 'admin_warning', title: 'تحذير من الإدارة',
+      body: '⚠️ تلقيت تحذيراً من الإدارة بسبب بلاغ مقدم ضدك.',
+      itemId: fullReport?.relatedItem?._id ?? null,
+    });
+  }
+
+  if (action === 'ban' && report.reportedUser) {
+    if (!fullReport?.reportedUser?.isBanned) {
+      await exports.banUser(
+        report.reportedUser.toString(), adminId,
+        'حظر تلقائي من معالجة بلاغ', adminNote ?? null
+      );
+    }
+    await notifyUser(report.reportedUser, {
+      type: 'admin_ban', title: 'تم حظر حسابك',
+      body: '🚫 تم حظر حسابك من قبل الإدارة.',
+      itemId: fullReport?.relatedItem?._id ?? null,
+    });
+  }
+
+  return report;
+};
+
+// ─── Audit Logs ───────────────────────────────────────────────
+exports.listAuditLogs = async ({ page = 1 }) => {
+  const normalizedPage = Math.max(1, +page || 1);
+  const [logs, total] = await Promise.all([
+    adminRepo.findAdminLogs({ page: normalizedPage }),
+    AdminLog.countDocuments(),
+  ]);
+  return { logs, total, page: normalizedPage, pages: Math.ceil(total / 20) };
+};
+
+// ─── Promote / Demote ─────────────────────────────────────────
+exports.promoteToLevel2 = async (targetId, adminId, reason = null, adminNote = null) => {
+  const user = await userRepository.findByIdForAdmin(targetId);
+  if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
+  if (user.isBanned) throw new AppError('لا يمكن ترقية مستخدم محظور', 403, 'USER_BANNED');
+  if (user.trustLevel !== 1) throw new AppError(
+    `لا يمكن الترقية اليدوية — مستوى المستخدم الحالي هو ${user.trustLevel}`,
+    400, 'MANUAL_PROMOTE_RESTRICTED'
+  );
+
+  // ✅ FIX [ARCH-PROF-02]: جلب quota الديناميكية من SystemSettings
+  const settings    = await SystemSettings.getCached();
+  const level2Quota = settings?.level2Quota ?? 4;
+
+  // استخدام setTrustLevelAndQuota بدلاً من setTrustLevel
+  const updated = await userRepository.setTrustLevelAndQuota(targetId, 2, level2Quota);
+
+  await adminRepo.logAdminAction({
+    adminId, action: 'PROMOTE', targetId, targetModel: 'User',
+    targetName: user.name, reason: reason ?? 'ترقية يدوية', adminNote: adminNote ?? null,
+    meta: { targetName: user.name, targetEmail: user.email ?? null, fromLevel: user.trustLevel, toLevel: 2 },
+  });
+
+  return updated;
+};
+
+exports.demoteToLevel1 = async (targetId, adminId, reason = null, adminNote = null) => {
+  const user = await userRepository.findByIdForAdmin(targetId);
+  if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
+  if (user.trustLevel === 1) throw new AppError('المستخدم في المستوى 1 بالفعل', 400, 'ALREADY_LEVEL1');
+
+  // ✅ FIX [ARCH-PROF-02]: إعادة quota لقيمة Level 1 الديناميكية
+  const settings      = await SystemSettings.getCached();
+  const defaultQuota  = settings?.defaultUserQuota ?? 2;
+
+  const updated = await userRepository.setTrustLevelAndQuota(targetId, 1, defaultQuota);
+
+  await adminRepo.logAdminAction({
+    adminId, action: 'DEMOTE', targetId, targetModel: 'User',
+    targetName: user.name, reason: reason ?? 'تخفيض يدوي', adminNote: adminNote ?? null,
+    meta: { targetName: user.name, targetEmail: user.email ?? null, fromLevel: user.trustLevel, toLevel: 1 },
+  });
+
+  return updated;
 };
