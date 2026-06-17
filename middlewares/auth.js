@@ -183,21 +183,8 @@ exports.optionalAuth = async (req, res, next) => {
 //    مثل: تعديل إعدادات النظام، تغيير حدود النظام
 // ─────────────────────────────────────────────────────────────
 exports.requireSuperAdmin = (req, res, next) => {
-  if (!req.user) {
-    return next(new AppError(
-      'غير مصرح — يجب تسجيل الدخول أولاً 🔒',
-      401,
-      'UNAUTHORIZED'
-    ));
+  if (!req.user || (req.user.role !== 'superadmin' && req.user.role !== 'admin')) {
+    return next(new AppError('هذه العملية تتطلب صلاحيات مشرف أعلى 🛡️', 403));
   }
-
-  if (req.user.role !== 'super_admin') {
-    return next(new AppError(
-      'هذه العملية تتطلب صلاحيات مشرف أعلى 🛡️',
-      403,
-      'FORBIDDEN_SUPER_ADMIN_ONLY'
-    ));
-  }
-
   next();
 };

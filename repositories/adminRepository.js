@@ -4,7 +4,7 @@ const Item     = require('../models/Item');
 const Report   = require('../models/Report');
 const AdminLog = require('../models/AdminLog');
 
-// ── مساعد: تهريب أحرف RegExp وتحديد الطول لمنع ReDoS ────────
+// ── مساعد: تهريب أحرف RegExp لمنع ReDoS ─────────────────────
 const getSafeSearchRegex = (search) => {
   if (!search) return null;
   const truncated = String(search).slice(0, 100);
@@ -12,28 +12,21 @@ const getSafeSearchRegex = (search) => {
   return new RegExp(escaped, 'i');
 };
 
-// ─── helper داخلي لبناء filter المستخدمين ────────────────────
+// ── helper داخلي لبناء filter المستخدمين ─────────────────────
 const buildUserFilter = ({ search, banned = '' } = {}) => {
   const filter = {};
-
   const searchRegex = getSafeSearchRegex(search);
   if (searchRegex) {
-    filter.$or = [
-      { name:  searchRegex },
-      { email: searchRegex },
-    ];
+    filter.$or = [{ name: searchRegex }, { email: searchRegex }];
   }
-
   if (banned === 'true')       filter.isBanned = true;
   else if (banned === 'false') filter.isBanned = false;
-
   return filter;
 };
 
 // ── المستخدمون ────────────────────────────────────────────────
 exports.findAllUsers = ({ page = 1, limit = 20, search, banned = '' } = {}) => {
   const filter = buildUserFilter({ search, banned });
-
   return User.find(filter)
     .select('-password -refreshToken -verificationOtp -resetPasswordToken')
     .sort({ createdAt: -1 })
@@ -80,77 +73,32 @@ exports.findAllItems = ({ page = 1, limit = 20 } = {}) =>
 exports.countItems = () => Item.countDocuments();
 
 // ── البلاغات ──────────────────────────────────────────────────
-const buildPendingFilter = () => ({
-  status: 'pending',
-  $or: [
-    { appealDeadline: { $lte: new Date() } },
-    { appealText:     { $exists: true, $ne: null } },
-    { appealDeadline: { $exists: false } },
-  ],
-});
-
-exports.findPendingReports = async ({ page = 1, limit = 20 } = {}) => {
-  const filter = buildPendingFilter();
-
-  const reports = await Report.find(filter)
-    .populate('reporter',     'name email phone')
-    .populate('reportedUser', 'name email phone isBanned')
-    .populate('relatedItem',  'title')
-    .sort({ createdAt: -1 })
-    .skip((page - 1) * limit)
-    .limit(limit)
-    .lean();
-
-  const reportedIds = reports
-    .map(r => r.reportedUser?._id)
-    .filter(Boolean);
-
-  const counts = await Report.aggregate([
-    { $match: { reportedUser: { $in: reportedIds } } },
-    { $group: { _id: '$reportedUser', count: { $sum: 1 } } },
-  ]);
-
-  const countMap = Object.fromEntries(
-    counts.map(c => [c._id.toString(), c.count])
-  );
-
-  return reports.map(r => ({
-    ...r,
-    totalReportsAgainstUser:
-      countMap[r.reportedUser?._id?.toString()] ?? 0,
-  }));
-};
-
-exports.countPendingReports = () =>
-  Report.countDocuments(buildPendingFilter());
-
-exports.resolveReport = (reportId, adminId, status) =>
+// ✅ FIX BUG-04: يقبل adminNote ويحفظه في الـ document
+exports.resolveReport = (reportId, adminId, status, adminNote = null) =>
   Report.findByIdAndUpdate(
     reportId,
-    { $set: { status, resolvedBy: adminId, resolvedAt: new Date() } },
+    {
+      $set: {
+        status,
+        resolvedBy: adminId,
+        resolvedAt: new Date(),
+        ...(adminNote ? { adminNote } : {}),
+      },
+    },
     { returnDocument: 'after' }
   );
 
+// ✅ FIX BUG-03: حُذفت findPendingReports و buildPendingFilter (Dead Code)
+// الدالة الوحيدة المستخدمة هي findPendingReportsWithCounts
+
 // ── السجلات ───────────────────────────────────────────────────
 exports.logAdminAction = ({
-  adminId,
-  action,
-  targetId,
-  targetModel,
-  reason,
-  meta,
-  targetName,
-  adminNote,
+  adminId, action, targetId, targetModel,
+  reason, meta, targetName, adminNote,
 }) =>
   AdminLog.create({
-    adminId,
-    action,
-    targetId,
-    targetModel,
-    reason,
-    meta,
-    targetName,
-    adminNote,
+    adminId, action, targetId, targetModel,
+    reason, meta, targetName, adminNote,
   });
 
 exports.findAdminLogs = ({ page = 1, limit = 20 } = {}) =>
@@ -171,23 +119,22 @@ exports.getDashboardStats = () =>
     Item.countDocuments({ status: 'تم التسليم' }),
     Report.countDocuments({ status: 'pending' }),
   ]).then(([totalUsers, bannedUsers, totalItems, deliveredItems, pendingReports]) => ({
-    totalUsers,
-    bannedUsers,
-    totalItems,
-    deliveredItems,
-    pendingReports,
+    totalUsers, bannedUsers, totalItems, deliveredItems, pendingReports,
   }));
 
-// ── البلاغات مع العدادات التراكمية (للداشبورد الكامل) ─────────
+// ── البلاغات مع العدادات التراكمية ───────────────────────────
 exports.findPendingReportsWithCounts = async ({
   page   = 1,
-  limit  = 20,
-  status = 'pending',
+  limit  = 10,
+  status = null, // ✅ FIX BUG-06: null = كل الحالات بدون فلتر
 } = {}) => {
   const skip = (page - 1) * limit;
 
+  // ✅ FIX BUG-06: إذا status=null لا نُقيّد الـ $match بأي حالة
+  const matchStage = status ? { status } : {};
+
   const reports = await Report.aggregate([
-    { $match: { status } },
+    { $match: matchStage },
     { $sort:  { createdAt: -1 } },
     { $skip:  skip },
     { $limit: limit },
@@ -206,7 +153,6 @@ exports.findPendingReportsWithCounts = async ({
         }],
       },
     },
-
     {
       $lookup: {
         from:         'users',
@@ -216,7 +162,6 @@ exports.findPendingReportsWithCounts = async ({
         pipeline: [{ $project: { name: 1, avatar: 1, trustLevel: 1 } }],
       },
     },
-
     {
       $lookup: {
         from:         'items',
@@ -226,7 +171,6 @@ exports.findPendingReportsWithCounts = async ({
         pipeline: [{ $project: { title: 1, imageUrl: 1, status: 1 } }],
       },
     },
-
     {
       $lookup: {
         from: 'reports',
@@ -238,7 +182,6 @@ exports.findPendingReportsWithCounts = async ({
         as: 'totalReportsLookup',
       },
     },
-
     {
       $lookup: {
         from: 'reports',
@@ -259,30 +202,23 @@ exports.findPendingReportsWithCounts = async ({
         as: 'pendingReportsLookup',
       },
     },
-
     {
       $addFields: {
-        // ✅ الإصلاح: إعادة التسمية لتطابق ما يتوقعه الـ Frontend
         reporter:     { $arrayElemAt: ['$reporterData',     0] },
         reportedUser: { $arrayElemAt: ['$reportedUserData', 0] },
         relatedItem:  { $arrayElemAt: ['$relatedItemData',  0] },
         totalReportsAgainstUser: {
-          $ifNull: [{ $arrayElemAt: ['$totalReportsLookup.total',  0] }, 0],
+          $ifNull: [{ $arrayElemAt: ['$totalReportsLookup.total',   0] }, 0],
         },
         pendingReportsAgainstUser: {
           $ifNull: [{ $arrayElemAt: ['$pendingReportsLookup.total', 0] }, 0],
         },
         isRepeatOffender: {
-          $gt: [
-            { $ifNull: [{ $arrayElemAt: ['$totalReportsLookup.total', 0] }, 0] },
-            3,
-          ],
+          $gt: [{ $ifNull: [{ $arrayElemAt: ['$totalReportsLookup.total', 0] }, 0] }, 3],
         },
       },
     },
-
     {
-      // ✅ حذف كل الأسماء المؤقتة من الـ response النهائي
       $project: {
         totalReportsLookup:   0,
         pendingReportsLookup: 0,
@@ -291,8 +227,9 @@ exports.findPendingReportsWithCounts = async ({
         relatedItemData:      0,
       },
     },
-  ]);
+  // ✅ FIX BUG-05: حد زمني لحماية الـ DB من الـ slow queries
+  ]).option({ maxTimeMS: 10000 });
 
-  const total = await Report.countDocuments({ status });
+  const total = await Report.countDocuments(matchStage);
   return { reports, total };
 };

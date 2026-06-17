@@ -1,4 +1,4 @@
-// models/Report.js — النسخة المُصلَحة الكاملة
+// models/Report.js
 const mongoose = require('mongoose');
 
 const reportSchema = new mongoose.Schema(
@@ -7,8 +7,8 @@ const reportSchema = new mongoose.Schema(
     reportedUser: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     relatedItem:  { type: mongoose.Schema.Types.ObjectId, ref: 'Item' },
 
-    reason:  { type: String, required: true, maxlength: 300 }, // ✅ BUG-07: رُفع من 100 → 300 ليطابق validateBody.createReport
-    details: { type: String, maxlength: 1000 },                // ✅ BUG-07: رُفع من 500 → 1000 ليطابق validateBody
+    reason:  { type: String, required: true, maxlength: 300 },
+    details: { type: String, maxlength: 1000 },
 
     status: {
       type:    String,
@@ -16,22 +16,22 @@ const reportSchema = new mongoose.Schema(
       default: 'pending',
     },
 
+    // ✅ FIX BUG-04: adminNote يُحفَظ الآن بشكل صحيح من resolveReport
     adminNote:  { type: String, maxlength: 1000 },
-
-    // ✅ BUG-01: resolvedBy كان مفقوداً من الـ Schema — Mongoose يُهمله بصمت عند الحفظ
     resolvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 
-    // نافذة الطعن
-    appealText:     { type: String, maxlength: 1000 }, // ✅ BUG-07: ليطابق validateBody.submitAppeal
+    appealText:     { type: String, maxlength: 1000 },
     appealedAt:     { type: Date },
-    appealDeadline: { type: Date },  // ✅ BUG-02: يُحفَظ الآن من reportService عند الإنشاء
+    appealDeadline: { type: Date },
     resolvedAt:     { type: Date },
   },
   { timestamps: true }
 );
 
-// ✅ BUG-09 (توضيح مقصود): الـ unique index يشمل status='pending'
-// → يسمح بإعادة البلاغ بعد إغلاق السابق — هذا سلوك مقصود للسماح بالبلاغات المتجددة
+// ✅ FIX BUG-05: Compound index لتسريع الـ Aggregation على status + createdAt
+reportSchema.index({ status: 1, createdAt: -1 });
+
+// منع تكرار البلاغ المفتوح نفسه (يسمح بإعادة البلاغ بعد إغلاق السابق)
 reportSchema.index(
   { reporter: 1, reportedUser: 1, relatedItem: 1, status: 1 },
   { unique: true }

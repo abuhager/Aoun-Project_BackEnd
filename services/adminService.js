@@ -1,6 +1,4 @@
 // services/adminService.js
-// ✅ FIX [ARCH-PROF-02]: promoteToLevel2 + demoteToLevel1 يُحدّثان quota مع trustLevel
-
 const adminRepo      = require('../repositories/adminRepository');
 const userRepository = require('../repositories/userRepository');
 const AdminLog       = require('../models/AdminLog');
@@ -84,20 +82,34 @@ exports.deleteItem = async (itemId, adminId, adminNote) => {
 };
 
 // ─── Reports ──────────────────────────────────────────────────
-exports.listReports = async ({ page = 1, status = 'pending' } = {}) => {
+exports.listReports = async ({ page = 1, status = null } = {}) => {
+  // ✅ FIX BUG-06: status=null يعني كل الحالات، لا يوجد default
   const normalizedPage = Math.max(1, +page || 1);
+  const LIMIT = 10; // ✅ FIX BUG-07: توحيد limit=10 ليطابق Frontend SWR_KEY
+
   const { reports, total } = await adminRepo.findPendingReportsWithCounts({
-    page: normalizedPage, limit: 20, status,
+    page: normalizedPage,
+    limit: LIMIT,
+    status, // null = بدون فلتر
   });
-  return { reports, total, page: normalizedPage, pages: Math.ceil(total / 20) };
+
+  return {
+    reports,
+    total,
+    page:       normalizedPage,
+    totalPages: Math.ceil(total / LIMIT), // ✅ FIX BUG-07: "totalPages" بدلاً من "pages"
+  };
 };
 
-exports.resolveReport = async (reportId, adminId, action, _adminName, adminNote = null) => {
-  const allowedActions = ['warn', 'ban', 'dismiss'];
-  if (!allowedActions.includes(action)) throw new AppError('إجراء غير صالح على البلاغ', 400, 'INVALID_REPORT_ACTION');
+exports.resolveReport = async (reportId, adminId, status, adminNote = null) => {
+  // ✅ FIX BUG-01: قبول status مباشرة بدلاً من action
+  const allowedStatuses = ['actioned', 'reviewed', 'dismissed'];
+  if (!allowedStatuses.includes(status)) {
+    throw new AppError('حالة غير صالحة للبلاغ', 400, 'INVALID_REPORT_STATUS');
+  }
 
-  const statusMap = { warn: 'actioned', ban: 'actioned', dismiss: 'dismissed' };
-  const report    = await adminRepo.resolveReport(reportId, adminId, statusMap[action]);
+  // ✅ FIX BUG-04: تمرير adminNote ليُحفَظ في الـ document
+  const report = await adminRepo.resolveReport(reportId, adminId, status, adminNote);
   if (!report) throw new AppError('البلاغ غير موجود', 404, 'REPORT_NOT_FOUND');
 
   const Report     = require('../models/Report');
@@ -106,38 +118,34 @@ exports.resolveReport = async (reportId, adminId, action, _adminName, adminNote 
     .populate('reporter',     'name email')
     .populate('relatedItem',  'title');
 
-  const actionLabel = { warn: 'تحذير', ban: 'حظر', dismiss: 'رفض البلاغ' }[action];
+  const statusLabel = {
+    actioned:  'تم الإجراء',
+    reviewed:  'تمّت المراجعة',
+    dismissed: 'تم الرفض',
+  }[status];
 
   await adminRepo.logAdminAction({
-    adminId, action: 'REPORT_ACTION', targetId: reportId, targetModel: 'Report',
-    reason: actionLabel, adminNote: adminNote ?? null,
+    adminId,
+    action:      'REPORT_ACTION',
+    targetId:    reportId,
+    targetModel: 'Report',
+    reason:      statusLabel,
+    adminNote:   adminNote ?? null,
     meta: {
       targetName:       fullReport?.reportedUser?.name  ?? '—',
       reportedBy:       fullReport?.reporter?.name      ?? '—',
       reason:           fullReport?.reason              ?? '—',
-      action:           actionLabel,
+      action:           statusLabel,
       relatedItemTitle: fullReport?.relatedItem?.title  ?? null,
     },
   });
 
-  if (action === 'warn' && report.reportedUser) {
+  // ✅ إشعار فقط عند "actioned" — هو الوحيد ذو أثر على المستخدم
+  if (status === 'actioned' && report.reportedUser) {
     await notifyUser(report.reportedUser, {
-      type: 'admin_warning', title: 'تحذير من الإدارة',
-      body: '⚠️ تلقيت تحذيراً من الإدارة بسبب بلاغ مقدم ضدك.',
-      itemId: fullReport?.relatedItem?._id ?? null,
-    });
-  }
-
-  if (action === 'ban' && report.reportedUser) {
-    if (!fullReport?.reportedUser?.isBanned) {
-      await exports.banUser(
-        report.reportedUser.toString(), adminId,
-        'حظر تلقائي من معالجة بلاغ', adminNote ?? null
-      );
-    }
-    await notifyUser(report.reportedUser, {
-      type: 'admin_ban', title: 'تم حظر حسابك',
-      body: '🚫 تم حظر حسابك من قبل الإدارة.',
+      type:   'admin_warning',
+      title:  'تحذير من الإدارة',
+      body:   '⚠️ اتخذت الإدارة إجراءً بسبب بلاغ مقدم ضدك.',
       itemId: fullReport?.relatedItem?._id ?? null,
     });
   }
@@ -165,11 +173,9 @@ exports.promoteToLevel2 = async (targetId, adminId, reason = null, adminNote = n
     400, 'MANUAL_PROMOTE_RESTRICTED'
   );
 
-  // ✅ FIX [ARCH-PROF-02]: جلب quota الديناميكية من SystemSettings
   const settings    = await SystemSettings.getCached();
   const level2Quota = settings?.level2Quota ?? 4;
 
-  // استخدام setTrustLevelAndQuota بدلاً من setTrustLevel
   const updated = await userRepository.setTrustLevelAndQuota(targetId, 2, level2Quota);
 
   await adminRepo.logAdminAction({
@@ -186,9 +192,8 @@ exports.demoteToLevel1 = async (targetId, adminId, reason = null, adminNote = nu
   if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
   if (user.trustLevel === 1) throw new AppError('المستخدم في المستوى 1 بالفعل', 400, 'ALREADY_LEVEL1');
 
-  // ✅ FIX [ARCH-PROF-02]: إعادة quota لقيمة Level 1 الديناميكية
-  const settings      = await SystemSettings.getCached();
-  const defaultQuota  = settings?.defaultUserQuota ?? 2;
+  const settings     = await SystemSettings.getCached();
+  const defaultQuota = settings?.defaultUserQuota ?? 2;
 
   const updated = await userRepository.setTrustLevelAndQuota(targetId, 1, defaultQuota);
 
