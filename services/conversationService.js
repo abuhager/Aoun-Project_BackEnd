@@ -14,16 +14,46 @@ exports.listConversationsLogic = async (userId) => {
   return Promise.all(convs.map(async (c) => toConversationListItem(c, await repo.countUnreadForConversation(c._id, userId))));
 };
 
+// ══════════════════════════════════════════════════════════════
+// ✅ تعديل المنطق: السماح بالمحادثات للأغراض المتاحة والمحجوزة دون تعارض
+// ══════════════════════════════════════════════════════════════
 exports.openConversationLogic = async ({ itemId, userId }) => {
   ensureId(itemId, 'itemId');
+  
   const item = await Item.findById(itemId).populate('donor', '_id name');
   if (!item) throw Object.assign(new Error('الغرض غير موجود'), { status: 404 });
-  const donorId    = item.donor?._id?.toString?.() || item.donor?.toString?.();
-  const bookedById = typeof item.bookedBy === 'object' ? item.bookedBy?._id?.toString?.() : item.bookedBy?.toString?.();
-  if (!bookedById) throw Object.assign(new Error('لا توجد محادثة قبل الحجز'), { status: 400 });
-  if (userId !== donorId && userId !== bookedById) throw Object.assign(new Error('هذه المحادثة مقيدة'), { status: 403 });
-  let conv = await repo.findConversationByItemAndParticipants(itemId, donorId, bookedById);
-  if (!conv) conv = await repo.createConversation({ item: itemId, participants: [donorId, bookedById] });
+
+  const donorId = item.donor?._id?.toString?.() || item.donor?.toString?.();
+  const bookedById = item.bookedBy ? (typeof item.bookedBy === 'object' ? item.bookedBy?._id?.toString?.() : item.bookedBy?.toString?.()) : null;
+
+  let participantB = null;
+
+  if (userId === donorId) {
+    // 1. إذا كان المتبرع هو من يفتح الشات، يجب أن يكون الغرض محجوزاً لشخص ما لنعرف مع من يتحدث
+    if (!bookedById) {
+      throw Object.assign(new Error('لا توجد حجوزات نشطة على هذا الغرض للتحدث مع المستلم'), { status: 400 });
+    }
+    participantB = bookedById;
+  } else {
+    // 2. إذا كان مستخدم عادي يفتح الشات، يتحدث مع المتبرع فوراً (سواء الغرض متاح أو محجوز له)
+    // حماية: إذا كان الغرض محجوزاً لشخص آخر، نمنع الأطراف الخارجية من التطفل
+    if (bookedById && bookedById !== userId) {
+      throw Object.assign(new Error('هذه المحادثة مقيدة، الغرض محجوز لمستلم آخر 🛡️'), { status: 403 });
+    }
+    participantB = donorId;
+  }
+
+  // البحث عن محادثة قائمة بين الطرفين (المستخدم الحالي والطرف الثاني المستهدف)
+  let conv = await repo.findConversationByItemAndParticipants(itemId, userId, participantB);
+  
+  // إذا لم توجد محادثة سابقة، قم بإنشاء واحدة جديدة
+  if (!conv) {
+    conv = await repo.createConversation({ 
+      item: itemId, 
+      participants: [userId, participantB] 
+    });
+  }
+
   return toConversationOpenResponse(conv);
 };
 
@@ -55,7 +85,7 @@ exports.sendMessageLogic = async ({ conversationId, text, user, io, correlationI
   if (receiverId) {
     const notif = await Notification.create({ user: receiverId, type: 'new_message', title: 'رسالة جديدة', body: 'رسالة جديدة بخصوص: ' + (updated.item?.title || 'أحد الأغراض'), itemId: updated.item?._id || null });
     notificationDto = toNotificationDto(notif, updated._id.toString());
-    emit(io, 'user_' + receiverId, 'notification:new',     notificationDto);
+    emit(io, 'user_' + receiverId, 'notification:new',      notificationDto);
     emit(io, 'user_' + receiverId, 'conversation:updated', { conversationId: updated._id.toString(), lastMessage: msgDto });
   }
   return { message: { ...msgDto, correlationId }, notification: notificationDto };
