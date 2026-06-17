@@ -62,62 +62,58 @@ const initSocket = (httpServer) => {
 
     // حدث دخول محادثة خاصة بغرض معين
     socket.on('joinConversation', async ({ itemId }) => {
-      try {
-        const item = await Item.findById(itemId).select('donor bookedBy');
-        if (!item) return socket.emit('error', { msg: 'الغرض غير موجود' });
+  try {
+    // ✅ SEC-02: تحقق أن الـ Item موجود وبحالة محجوز أو تم التسليم
+    const item = await Item.findById(itemId)
+      .select('donor bookedBy status');
 
-        if (!item.bookedBy) {
-          return socket.emit('error', { msg: 'لا يمكن فتح محادثة قبل وجود حجز' });
-        }
+    if (!item)
+      return socket.emit('error', { msg: 'الغرض غير موجود' });
 
-        const uid = socket.userId.toString();
-        const isDonor = item.donor.toString() === uid;
-        const isBooker = item.bookedBy.toString() === uid;
+    // ✅ SEC-02: لا محادثة إلا بعد وجود حجز فعلي
+    if (!item.bookedBy || !['محجوز', 'تم التسليم'].includes(item.status))
+      return socket.emit('error', { msg: 'لا يمكن فتح محادثة قبل وجود حجز نشط' });
 
-        // ✅ حماية برمجية: منع أي مستخدم غريب من التجسس أو الدخول للمحادثة
-        if (!isDonor && !isBooker) {
-          return socket.emit('error', { msg: 'غير مصرح لك بدخول هذه المحادثة 🚫' });
-        }
+    const uid      = socket.userId.toString();
+    const isDonor  = item.donor.toString()    === uid;
+    const isBooker = item.bookedBy.toString() === uid;
 
-        // إيجاد المحادثة أو إنشاؤها إن لم تكن موجودة
-        let conv = await Conversation.findOne({ item: itemId }, {
-          participants: 1,
-          messages: { $slice: -50 } // ✅ الإصلاح: تحجيم جلب الرسائل من الـ Database مباشرة لآخر 50 رسالة
-        });
+    if (!isDonor && !isBooker)
+      return socket.emit('error', { msg: 'غير مصرح لك بدخول هذه المحادثة 🚫' });
 
-        if (!conv) {
-          conv = await Conversation.create({
-            item: itemId,
-            participants: [item.donor, item.bookedBy],
-          });
-        }
+    let conv = await Conversation.findOne(
+      { item: itemId },
+      { participants: 1, messages: { $slice: -50 } }
+    );
 
-        // جعل السوكيت ينضم لغرفة المحادثة المشتركة
-        socket.join(`conv_${conv._id}`);
+    if (!conv) {
+      // ✅ SEC-02: نُنشئ المحادثة فقط إذا تحقق الشرطان أعلاه
+      conv = await Conversation.create({
+        item:         itemId,
+        participants: [item.donor, item.bookedBy],
+      });
+    }
 
-        // تحويل وتجهيز آخر 50 رسالة بعد جلبها بكفاءة
-        const messages = conv.messages.map((m) => ({
-          _id: m._id,
-          sender: m.sender,
-          text: m.text,
-          read: m.read,
-          createdAt: m.createdAt,
-        }));
+    socket.join(`conv_${conv._id}`);
 
-        // إرسال تأكيد الدخول مع الرسائل القديمة للعميل الحالي
-        socket.emit('conversationJoined', {
-          convId: conv._id,
-          messages,
-        });
+    const messages = (conv.messages || []).map((m) => ({
+      _id:       m._id,
+      sender:    m.sender,
+      text:      m.text,
+      read:      m.read,
+      createdAt: m.createdAt,
+    }));
 
-        // تحديث الرسائل كمقروءة وإعلام الطرف الآخر
-        await markRead(conv, socket.userId);
-        io.to(`conv_${conv._id}`).emit('messagesRead', { by: socket.userId });
-      } catch (err) {
-        console.error('joinConversation Error:', err.message);
-        socket.emit('error', { msg: 'خطأ في السيرفر' });
-      }
-    });
+    socket.emit('conversationJoined', { convId: conv._id, messages });
+
+    await markRead(conv, socket.userId);
+    io.to(`conv_${conv._id}`).emit('messagesRead', { by: socket.userId });
+
+  } catch (err) {
+    console.error('[joinConversation]', err.message);
+    socket.emit('error', { msg: 'خطأ في السيرفر' });
+  }
+});
 
     // حدث إرسال رسالة جديدة
     socket.on('sendMessage', async ({ convId, text }) => {

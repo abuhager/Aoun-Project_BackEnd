@@ -374,16 +374,24 @@ exports.cancelBookingLogic = async (itemId, userId) => {
 // 7. تأكيد التسليم المزدوج — ✅ RACE-02 + LOGIC-01: Atomic بالكامل
 // ─────────────────────────────────────────────────────────────────────────────
 exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
-  const userIdStr = userId.toString();
+  // ✅ فحص الحماية الأولية
+  if (!userId) throw new AppError('المستخدم غير معرّف', 401, 'UNAUTHORIZED');
 
-  // ── تأكيد المستلم ─────────────────────────────────────────────────────────
+  const mongoose = require('mongoose');
+  
+  // ✅ توحيد أنواع البيانات: تحويل لـ ObjectId للاستعلامات الذرية ولـ String للمقارنات التشخيصية
+  const userObjectId = typeof userId === 'string' ? new mongoose.Types.ObjectId(userId) : userId;
+  const userIdStr    = userId.toString();
+
+  // ── تأكيد المستلم ──────────────────────────────────────────────────────────
   if (confirmationType === 'recipient_confirm') {
+    // ✅ RACE-02: تحديث ذري آمن باستخدام الـ userObjectId الصحيح
     const item = await Item.findOneAndUpdate(
       {
         _id:                itemId,
         status:             'محجوز',
-        bookedBy:           userId,
-        recipientConfirmed: false,   // ← يمنع التأكيد المزدوج
+        bookedBy:           userObjectId, // يُطابق الـ ObjectId في الـ Database بدقة
+        recipientConfirmed: false,
       },
       {
         $set: {
@@ -391,18 +399,18 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
           recipientConfirmedAt: new Date(),
         },
       },
-      { returnDocument: 'after' }
-    ).populate('donor bookedBy', 'name email');
+      { returnDocument: 'after' } // منع التحذيرات المهجورة لـ Mongoose
+    ).populate('donor', 'name email');
 
     if (!item) {
-      const exists = await Item.findById(itemId).select('status bookedBy recipientConfirmed').lean();
+      // تشخيص دقيق وأمين لسبب الفشل لمنع تداخل الأخطاء
+      const exists = await Item.findById(itemId)
+        .select('status bookedBy recipientConfirmed').lean();
+        
       if (!exists)
         throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
-      
-      // ✅ تعديل الفحص المخصص لمنع خطأ 403 عند الضغط المتكرر
       if (exists.bookedBy?.toString() === userIdStr && exists.recipientConfirmed)
-        throw new AppError('لقد قمت بالتأكيد مسبقاً مسبقاً ✅', 400, 'ALREADY_CONFIRMED');
-        
+        throw new AppError('لقد قمت بالتأكيد مسبقاً ✅', 400, 'ALREADY_CONFIRMED');
       if (exists.bookedBy?.toString() !== userIdStr)
         throw new AppError('ليس لديك صلاحية تأكيد الاستلام', 403, 'FORBIDDEN');
       if (exists.status !== 'محجوز')
@@ -411,16 +419,16 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
       throw new AppError('تعذر تأكيد الاستلام', 400, 'CONFIRM_FAILED');
     }
 
+    // إشعار المتبرع (non-blocking)
     setImmediate(() => {
       try {
         getIO()
-          .to(getUserRoom(item.donor._id.toString()))
+          .to(`user_${item.donor._id}`)
           .emit('item:recipient_confirmed', {
             itemId:    item._id,
             itemTitle: item.title,
-            message:   `✅ المستلم أكّد الاستلام — بانتظار تأكيدك أنت`,
+            message:   '✅ المستلم أكّد الاستلام — بانتظار تأكيدك أنت',
           });
-
         notifyUser(item.donor._id.toString(), {
           type:    'recipient_confirmed',
           message: `📦 "${item.title}" — المستلم أكّد الوصول. أكّد أنت التسليم لإتمام العملية.`,
@@ -430,85 +438,113 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
     });
 
     return {
-      status:  'pending_donor',
-      msg:     'تم تأكيد الاستلام ✅ — بانتظار تأكيد المتبرع',
-      itemId:  item._id,
+      status: 'pending_donor',
+      msg:    'تم تأكيد الاستلام ✅ — بانتظار تأكيد المتبرع',
+      itemId: item._id,
     };
   }
 
-  // ── تأكيد المتبرع ─────────────────────────────────────────────────────────
+  // ── تأكيد المتبرع ──────────────────────────────────────────────────────────
   if (confirmationType === 'donor_confirm') {
-    const item = await Item.findOneAndUpdate(
-      {
-        _id:                itemId,
-        status:             'محجوز',
-        donor:              userId,
-        recipientConfirmed: true,    // ← المستلم أكّد أولاً
-        donorConfirmed:     false,   // ← يمنع التأكيد المزدوج
-      },
-      {
-        $set: {
-          donorConfirmed:   true,
-          donorConfirmedAt: new Date(),
-          status:           'تم التسليم',  // ✅ LOGIC-01: atomic في نفس اللحظة
-          deliveredAt:      new Date(),
-        },
-      },
-      { returnDocument: 'after' }
-    ).populate('donor bookedBy', 'name email trustScore gamification');
+    // ✅ RACE-01: عزل كامل للعملية داخل كائن Transaction موحد
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-    if (!item) {
-      const exists = await Item.findById(itemId).select('status donor recipientConfirmed donorConfirmed bookedBy').lean();
-      if (!exists)
-        throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
-      if (exists.donor?.toString() !== userIdStr)
-        throw new AppError('ليس لديك صلاحية تأكيد التسليم', 403, 'FORBIDDEN');
-      if (!exists.recipientConfirmed)
-        throw new AppError('بانتظار تأكيد المستلم أولاً ⏳', 400, 'RECIPIENT_NOT_CONFIRMED');
-      if (exists.donorConfirmed)
-        throw new AppError('لقد قمت بالتأكيد مسبقاً ✅', 400, 'ALREADY_CONFIRMED');
-      throw new AppError('تعذر تأكيد التسليم', 400, 'CONFIRM_FAILED');
+    let deliveredItem;
+
+    try {
+      // الخطوة 1: تحديث الـ Item وثيقاً داخل الـ Transaction
+      deliveredItem = await Item.findOneAndUpdate(
+        {
+          _id:                itemId,
+          status:             'محجوز',
+          donor:              userObjectId, 
+          recipientConfirmed: true,
+          donorConfirmed:     false,
+        },
+        {
+          $set: {
+            donorConfirmed:   true,
+            donorConfirmedAt: new Date(),
+            status:           'تم التسليم',
+            deliveredAt:      new Date(),
+          },
+        },
+        { returnDocument: 'after', session } // متوافق مع خيارات التحديث الحديثة
+      ).populate('donor bookedBy', 'name email trustScore gamification');
+
+      if (!deliveredItem) {
+        // تشخيص دقيق للفشل
+        const exists = await Item.findById(itemId)
+          .select('status donor recipientConfirmed donorConfirmed bookedBy')
+          .lean();
+        if (!exists)
+          throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+        if (exists.donor?.toString() !== userIdStr)
+          throw new AppError('ليس لديك صلاحية تأكيد التسليم', 403, 'FORBIDDEN');
+        if (!exists.recipientConfirmed)
+          throw new AppError('بانتظار تأكيد المستلم أولاً ⏳', 400, 'RECIPIENT_NOT_CONFIRMED');
+        if (exists.donorConfirmed)
+          throw new AppError('لقد قمت بالتأكيد مسبقاً ✅', 400, 'ALREADY_CONFIRMED');
+          
+        throw new AppError('تعذر تأكيد التسليم', 400, 'CONFIRM_FAILED');
+      }
+
+      // ✅ RACE-01: الخطوة 2: تحديث نقاط الـ Gamification داخل نفس الـ Transaction
+      await Promise.all([
+        User.findByIdAndUpdate(
+          deliveredItem.donor._id,
+          { $inc: { trustScore: 10, 'gamification.donationsCompleted': 1 } },
+          { session }
+        ),
+        User.findByIdAndUpdate(
+          deliveredItem.bookedBy._id,
+          { $inc: { 'gamification.receiptsCompleted': 1 } },
+          { session }
+        ),
+      ]);
+
+      await session.commitTransaction();
+      try { session.endSession(); } catch (_) {}
+
+    } catch (err) {
+      if (session.inTransaction()) await session.abortTransaction();
+      try { session.endSession(); } catch (_) {}
+      throw err;
     }
 
+    // ── إشعارات خارج الـ Transaction (non-blocking) ─────────────────────────
     setImmediate(async () => {
       try {
-        await Promise.allSettled([
-          User.findByIdAndUpdate(item.donor._id, {
-            $inc: { trustScore: 10, 'gamification.donationsCompleted': 1 },
-          }),
-          User.findByIdAndUpdate(item.bookedBy._id, {
-            $inc: { 'gamification.receiptsCompleted': 1 },
-          }),
-        ]);
+        const io = getIO();
 
-        await notifyUser(item.bookedBy._id.toString(), {
+        await notifyUser(deliveredItem.bookedBy._id.toString(), {
           type:    'delivery_completed',
-          message: `🎉 اكتملت عملية التسليم للغرض "${item.title}"`,
-          itemId:  item._id,
+          message: `🎉 اكتملت عملية التسليم للغرض "${deliveredItem.title}"`,
+          itemId:  deliveredItem._id,
         });
 
-        getIO()
-          .to(getUserRoom(item.bookedBy._id.toString()))
-          .emit('item:delivered', {
-            itemId:    item._id,
-            itemTitle: item.title,
-            message:   '🎉 تمت عملية التسليم بنجاح!',
-          });
+        io.to(`user_${deliveredItem.bookedBy._id}`).emit('item:delivered', {
+          itemId:    deliveredItem._id,
+          itemTitle: deliveredItem.title,
+          message:   '🎉 تمت عملية التسليم بنجاح!',
+        });
 
-        getIO().to('leaderboard_subscribers').emit('leaderboard:update');
+        // تحديث قائمة الصدارة الفورية
+        io.to('leaderboard_subscribers').emit('leaderboard:update');
+
       } catch (_) {}
     });
 
     return {
-      status:  'delivered',
-      msg:     'تم إتمام التسليم بنجاح 🎉',
-      itemId:  item._id,
+      status: 'delivered',
+      msg:    'تم إتمام التسليم بنجاح 🎉',
+      itemId: deliveredItem._id,
     };
   }
 
   throw new AppError('نوع التأكيد غير صحيح', 400, 'INVALID_CONFIRMATION_TYPE');
 };
-
 // ─────────────────────────────────────────────────────────────────────────────
 // 8. تعديل غرض
 // ─────────────────────────────────────────────────────────────────────────────

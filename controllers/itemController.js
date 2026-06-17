@@ -50,7 +50,6 @@ exports.leaveWaitlist = asyncHandler(async (req, res) => {
 exports.completeDelivery = asyncHandler(async (req, res) => {
   const { confirmationType } = req.body;
 
-  // ✅ تحقق مبكر — أوضح رسالة للـ Developer
   if (!confirmationType) {
     return res.status(400).json({
       success: false,
@@ -59,17 +58,14 @@ exports.completeDelivery = asyncHandler(async (req, res) => {
     });
   }
 
+  // ✅ تأمين قاطع: قراءة المعرف المتاح في التوكن وسحبه كـ string صريح وسليم
+  const currentUserId = req.user?._id || req.user?.id;
+
   const result = await itemService.completeDeliveryLogic(
     req.params.id,
-    req.user.id,
+    currentUserId, 
     confirmationType
   );
-
-  if (result?.status === 'delivered') {
-    try {
-      getIO().to('leaderboard_subscribers').emit('leaderboard:update');
-    } catch (_) {}
-  }
 
   res.json({ success: true, ...result });
 });

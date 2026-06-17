@@ -1,49 +1,36 @@
-// routes/items.js
-const express    = require('express');
-const rateLimit  = require('express-rate-limit');
-const router     = express.Router();
+// routes/items.js ✅ PATCHED [LOGIC-01 | ARCH-02]
+const express = require('express');
+const router  = express.Router();
 
-const { upload, verifyImageBuffer } = require('../middlewares/upload');
-const validateBody     = require('../middlewares/validateBody');
+const { requireAuth, optionalAuth } = require('../middlewares/auth');
 const validateObjectId = require('../middlewares/validateObjectId');
-const { requireAuth, requireLevel2 } = require('../middlewares/auth');
-
+const validateBody     = require('../middlewares/validateBody');
+const { upload, verifyImageBuffer } = require('../middlewares/upload');
 const {
-  getItems,
-  getMyItems,
-  getItemById,
-  createItem,
-  bookItem,
-  cancelBooking,
-  completeDelivery,
-   leaveWaitlist,
-  updateItem,
-  deleteItem,
+  getItems, getMyItems, getItemById,
+  createItem, bookItem, cancelBooking,
+  leaveWaitlist, completeDelivery,
+  updateItem, deleteItem,
 } = require('../controllers/itemController');
 
-const bookingLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: process.env.NODE_ENV !== 'production' ? 1000 : 20,
-  message: { msg: '🛑 محاولات حجز كثيرة جداً، الرجاء الانتظار 15 دقيقة.' },
-  standardHeaders: true,
-  legacyHeaders:   false,
-  skip: () => process.env.NODE_ENV !== 'production',
-});
-
-// ✅ [CRIT-1 FIX] يحقن confirmationType للمستلم تلقائياً
-// السبب: completeDelivery يتوقع req.body.confirmationType
-// لكن المستلم يُرسل POST بدون body → كانت النتيجة MISSING_CONFIRMATION_TYPE دائماً
+// ✅ [LOGIC-01]: حقن confirmationType تلقائياً للمستلم
 const injectRecipientConfirm = (req, _res, next) => {
   req.body = { ...req.body, confirmationType: 'recipient_confirm' };
   next();
 };
 
-// ── Public ──────────────────────────────────────────────────────
-router.get('/',    getItems);
-router.get('/me',  requireAuth, getMyItems);
-router.get('/:id', validateObjectId('id'), getItemById);
+// ── قراءة ─────────────────────────────────────────────────────────────────
+router.get('/',   optionalAuth, getItems);
+router.get('/me', requireAuth,  getMyItems);
 
-// ── Create ──────────────────────────────────────────────────────
+router.get(
+  '/:id',
+  optionalAuth,
+  validateObjectId('id'),
+  getItemById
+);
+
+// ── كتابة ─────────────────────────────────────────────────────────────────
 router.post(
   '/',
   requireAuth,
@@ -53,35 +40,47 @@ router.post(
   createItem
 );
 
-// ── Booking (Level2 فقط — الحجز يشترط التحقق) ─────────────────
 router.put(
   '/book/:id',
   requireAuth,
-  requireLevel2,
-  bookingLimiter,
   validateObjectId('id'),
   bookItem
 );
-router.put(
-  '/leave-waitlist/:id',
-  requireAuth,
-  validateObjectId('id'),
-  leaveWaitlist   // ← import من controller
-);
-// ── Cancel Booking ─────────────────────────────────────────────
-// ✅ [FIX] حُذف requireLevel2 من هنا
-// السبب: cancelBookingLogic يتحقق داخلياً (isBooker || isDonor || inWait)
-// المتبرع نفسه قد يكون Level1 ويحتاج إلغاء غرضه المحجوز من شخص آخر
-// requireLevel2 كانت تمنعه بدون سبب منطقي
+
 router.put(
   '/cancel/:id',
   requireAuth,
-  bookingLimiter,
   validateObjectId('id'),
   cancelBooking
 );
 
-// ── Delivery: تأكيد المتبرع (يُرسل body صريح) ─────────────────
+router.put(
+  '/leave-waitlist/:id',
+  requireAuth,
+  validateObjectId('id'),
+  leaveWaitlist
+);
+
+// ✅ [LOGIC-01 | ARCH-02]: Route موحّد للمستلم — POST /:id/confirm-receipt
+// يُطابق ما يستدعيه itemApi.ts فعلياً
+router.post(
+  '/:id/confirm-receipt',
+  requireAuth,
+  validateObjectId('id'),
+  injectRecipientConfirm,    // ← يحقن { confirmationType: 'recipient_confirm' }
+  completeDelivery
+);
+
+// ✅ [ARCH-02]: Route موحّد للمتبرع — POST /:id/confirm-delivery (بدل PUT /complete/:id)
+router.post(
+  '/:id/confirm-delivery',
+  requireAuth,
+  validateObjectId('id'),
+  validateBody('completeDelivery'),
+  completeDelivery
+);
+
+// ← نُبقي PUT /complete/:id للتوافق مع أي client قديم (Deprecated)
 router.put(
   '/complete/:id',
   requireAuth,
@@ -90,23 +89,13 @@ router.put(
   completeDelivery
 );
 
-// ── [CRIT-1 FIX] تأكيد الاستلام من المستلم ────────────────────
-// injectRecipientConfirm يُعبّئ confirmationType قبل الوصول للـ controller
-router.post(
-  '/:id/confirm-receipt',
-  requireAuth,
-  validateObjectId('id'),
-  injectRecipientConfirm,
-  completeDelivery
-);
-
-// ── Update / Delete ─────────────────────────────────────────────
+// ── تعديل وحذف ────────────────────────────────────────────────────────────
 router.put(
   '/:id',
   requireAuth,
+  validateObjectId('id'),
   upload.single('image'),
   verifyImageBuffer,
-  validateObjectId('id'),
   validateBody('updateItem'),
   updateItem
 );
