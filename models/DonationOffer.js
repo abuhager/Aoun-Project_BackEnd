@@ -1,4 +1,6 @@
-// models/DonationOffer.js
+// models/DonationOffer.js — ✅ DC-15 FIX
+// إضافة 'cancelled_by_requester' لـ status enum لمزامنة Frontend DonationOfferStatus
+
 const mongoose = require('mongoose');
 
 const donationOfferSchema = new mongoose.Schema(
@@ -25,22 +27,18 @@ const donationOfferSchema = new mongoose.Schema(
       enum:     ['جديد', 'مستعمل ممتاز', 'مستعمل جيد'],
       required: true,
     },
-    description: { type: String, maxlength: 500, trim: true },
-    imageUrl:    { type: String, default: null },
-    cloudinaryId:{ type: String, default: null },
+    description:  { type: String, maxlength: 500, trim: true },
+    imageUrl:     { type: String, default: null },
+    cloudinaryId: { type: String, default: null },
     status: {
       type:    String,
-      enum: ['pending', 'accepted', 'rejected', 'cancelled_by_requester'],
-
+      // ✅ DC-15 FIX: إضافة 'cancelled_by_requester' لمزامنة Frontend
+      enum:    ['pending', 'accepted', 'rejected', 'cancelled_by_requester'],
       default: 'pending',
       index:   true,
     },
   },
   { timestamps: true }
 );
-
-// فهرس مركّب: لا يسمح لنفس المتبرع بتقديم عرضين على نفس الطلب
-donationOfferSchema.index({ request: 1, donor: 1 }, { unique: true });
-donationOfferSchema.index({ request: 1, status: 1 });
 
 module.exports = mongoose.model('DonationOffer', donationOfferSchema);
