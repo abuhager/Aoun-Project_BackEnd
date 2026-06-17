@@ -210,19 +210,28 @@ const initCronJobs = async () => {
   }, { scheduled: true, timezone: 'Asia/Amman' });
 
 
-  // ── 3. ✅ NJ-18: تذكير قبل انتهاء الحجز بساعة (كل ساعة) ─────
+ // ── 3. ✅ NJ-18: تذكير قبل انتهاء الحجز بساعة (كل ساعة) ─────
   cron.schedule('30 * * * *', () => {
     runSafe('booking-reminder', async () => {
       const settings = await SystemSettings.getCached();
-      const expiryMs   = settings.bookingExpiryHours * 60 * 60 * 1000;
+      
+      // تأمين القيمة وحمايتها في حال لم تكن رقماً صالحاً
+      const expiryHours = Number(settings.bookingExpiryHours) || 24; 
+      const expiryMs   = expiryHours * 60 * 60 * 1000;
+      
       const windowFrom = new Date(Date.now() - expiryMs + 60 * 60 * 1000); 
       const windowTo   = new Date(Date.now() - expiryMs + 90 * 60 * 1000); 
+
+      // 🛑 التحقق من صلاحية التواريخ قبل إرسال الاستعلام لقاعدة البيانات لمنع الـ Cast Error
+      if (isNaN(windowFrom.getTime()) || isNaN(windowTo.getTime())) {
+        throw new Error(`حسابات النطاق الزمني غير صالحة: windowFrom=${windowFrom}, windowTo=${windowTo}`);
+      }
 
       // ✅ تحصين الفحص للتذكير أيضاً من الحقول المشوهة وجودة الـ Date
       const soonExpiring = await Item.find({
         status:             'محجوز',
         bookedAt:           { $exists: true, $type: 'date', $gte: windowFrom, $lt: windowTo },
-        reminderSent: {type:    Boolean,default: false,},               
+        reminderSent:       { $ne: true } // تعديل بسيط لضمان الفلترة بشكل أدق بدلاً من السلوك الافتراضي المشوه
       }).populate('bookedBy', 'name email').lean();
 
       if (!soonExpiring.length) return;
@@ -231,9 +240,9 @@ const initCronJobs = async () => {
 
       await Promise.allSettled(
         soonExpiring.map(async (item) => {
-          if (!item.bookedBy) return;
+          if (!item.bookedBy || !item.bookedBy._id) return;
 
-          // ✅ إصلاح تمرير المعامل الأول لـ notifyUser (نمرر الـ _id الصريح للكائن المحشو)
+          // ✅ إصلاح تمرير المعامل الأول لـ notifyUser
           await notifyUser(item.bookedBy._id, {
             type:      'booking_expiry_reminder',
             title:     '⏰ تذكير: حجزك على وشك الانتهاء',
@@ -248,7 +257,6 @@ const initCronJobs = async () => {
       );
     });
   }, { scheduled: true, timezone: 'Asia/Amman' });
-
 
   // ── 4. أرشفة طلبات التبرع المنتهية (يومياً 2 ص) ───────────
   cron.schedule('0 2 * * *', () => {

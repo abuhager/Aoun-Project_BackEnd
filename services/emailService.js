@@ -73,7 +73,7 @@ exports.sendResetPasswordEmail = async (to, _resetToken, name = '', resetUrl) =>
         <div style="text-align:center;margin:24px 0;">
           <a href="${resetUrl}"
              style="background:#b91c1c;color:#fff;padding:14px 32px;
-                    border-radius:8px;text-decoration:none;font-size:16px;
+                    border-radius:8px;text-on-surfaceecoration:none;font-size:16px;
                     font-weight:bold;display:inline-block;">
             إعادة تعيين كلمة المرور
           </a>
