@@ -1,51 +1,61 @@
 // jobs/cronJobs.js
-// ✅ DC-08 FIX: يوم تصفير الكوتا الآن ديناميكي من settings.quotaResetDayOfMonth
-// ✅ DC-09 FIX: مهلة انتهاء الحجز الآن ديناميكية من settings.bookingExpiryHours
-// لا يوجد أي رقم hardcoded في هذا الملف
+// ✅ DC-08 FIX (Flow10): يوم تصفير الكوتا ديناميكي من settings.quotaResetDayOfMonth
+// ✅ DC-09 FIX (Flow10): مهلة انتهاء الحجز من settings.bookingExpiryHours
+// ✅ NJ-18 FIX (Flow11): إضافة Cron لإرسال إشعار تذكير قبل انتهاء الحجز بساعة
+// ✅ NJ-19 FIX (Flow11): تسجيل سجل مركزي لحالة كل Cron Job
+// ✅ NJ-20 FIX (Flow11): processExpiredItem تُرسل إشعار notifyUser للمستخدم المحظوظ
 
-const cron          = require('node-cron');
-const User          = require('../models/User');
-const Item          = require('../models/Item');
-const SystemSettings = require('../models/SystemSettings');
-const { settingsEvents } = require('../models/SystemSettings'); // DC-08
+const cron       = require('node-cron');
+const User       = require('../models/User');
+const Item       = require('../models/Item');
+const SystemSettings  = require('../models/SystemSettings');
+const { settingsEvents } = require('../models/SystemSettings');
 const { fireSendEmail }  = require('../utils/sendEmail');
 const { generateOtp }    = require('../utils/otp');
 const DonationRequest    = require('../models/DonationRequest');
+const notifyUser         = require('../utils/notifyUser');  // ✅ NJ-20
 
 // ══════════════════════════════════════════════════════════════
-// Error Isolation Wrapper
+// ✅ NJ-19: سجل حالة Cron Jobs — يُساعد في Debugging
 // ══════════════════════════════════════════════════════════════
+const cronStatus = {
+  'quota-reset':              { lastRun: null, lastStatus: 'pending' },
+  'expire-old-bookings':      { lastRun: null, lastStatus: 'pending' },
+  'booking-reminder':         { lastRun: null, lastStatus: 'pending' },
+  'expire-donation-requests': { lastRun: null, lastStatus: 'pending' },
+};
+
 const runSafe = async (name, fn) => {
+  const start = Date.now();
+  cronStatus[name] = { lastRun: new Date(), lastStatus: 'running' };
+  console.log(`[Cron] ⏳ [${name}] بدأت`);
   try {
-    console.log(`[Cron] ⏳ بدأت مهمة: [${name}]`);
     await fn();
-    console.log(`[Cron] ✅ اكتملت مهمة: [${name}]`);
+    cronStatus[name].lastStatus = 'success';
+    console.log(`[Cron] ✅ [${name}] اكتملت في ${Date.now() - start}ms`);
   } catch (err) {
-    console.error(`[Cron] ❌ فشلت مهمة [${name}]:`, err.message);
+    cronStatus[name].lastStatus = 'failed';
+    console.error(`[Cron] ❌ [${name}] فشلت:`, err.message);
   }
 };
 
+// ✅ للاستخدام في healthcheck endpoint
+exports.getCronStatus = () => ({ ...cronStatus });
+
 // ══════════════════════════════════════════════════════════════
-// ✅ DC-08 FIX: Cron Task مُعاد جدولتها ديناميكياً
-// عند تغيير quotaResetDayOfMonth يُعاد إنشاء الـ task تلقائياً
+// DC-08: Cron تصفير الكوتا — ديناميكية الجدولة
 // ══════════════════════════════════════════════════════════════
-let _quotaTask = null; // المهمة الحالية المُسجَّلة
+let _quotaTask = null;
 
 function scheduleQuotaReset(dayOfMonth) {
-  // إيقاف المهمة القديمة إن وُجدت
-  if (_quotaTask) {
-    _quotaTask.stop();
-    _quotaTask = null;
-    console.log('[Cron] ♻️  إعادة جدولة تصفير الكوتا على يوم:', dayOfMonth);
-  }
+  if (_quotaTask) { _quotaTask.stop(); _quotaTask = null; }
 
-  // ✅ DC-08: الجدول الآن يقرأ dayOfMonth من الـ settings وليس hardcoded
   const cronExpr = `0 0 ${dayOfMonth} * *`;
+  console.log(`[Cron] 📅 جدولة تصفير الكوتا: "${cronExpr}"`);
 
   _quotaTask = cron.schedule(cronExpr, () => {
-    runSafe('reset-monthly-quotas', async () => {
+    runSafe('quota-reset', async () => {
       const settings = await SystemSettings.getCached();
-
       const [r1, r2] = await Promise.all([
         User.updateMany(
           { trustLevel: { $lte: 1 }, isBanned: false },
@@ -56,20 +66,16 @@ function scheduleQuotaReset(dayOfMonth) {
           { $set: { quota: settings.level2Quota } }
         ),
       ]);
-
-      const totalUpdated = r1.modifiedCount + r2.modifiedCount;
       console.log(
-        `[Cron] 📊 تجديد الكوتا: ${totalUpdated} مستخدم` +
-        ` (L0-L1: ${r1.modifiedCount}, L2+: ${r2.modifiedCount})`
+        `[Cron] 📊 تجديد الكوتا: L0-L1=${r1.modifiedCount}, L2+=${r2.modifiedCount}`
       );
-
       SystemSettings.invalidateCache();
     });
   }, { scheduled: true, timezone: 'Asia/Amman' });
 }
 
 // ══════════════════════════════════════════════════════════════
-// helper: معالجة حجز منتهٍ
+// ✅ NJ-20 FIX: processExpiredItem ترسل إشعار للمستخدم المحظوظ
 // ══════════════════════════════════════════════════════════════
 async function processExpiredItem(item) {
   const previousBookerId = item.bookedBy;
@@ -83,12 +89,8 @@ async function processExpiredItem(item) {
         { $inc: { quota: -1 } },
         { returnDocument: 'after' }
       );
-      if (candidate) {
-        luckyUser = candidate;
-        break;
-      } else {
-        skippedUsers.push(entry.user);
-      }
+      if (candidate) { luckyUser = candidate; break; }
+      else            { skippedUsers.push(entry.user); }
     }
   }
 
@@ -109,7 +111,7 @@ async function processExpiredItem(item) {
           bookedAt:           new Date(),
           recipientConfirmed: false,
         },
-        $pull:    { waitlist:    { user: luckyUser._id } },
+        $pull:     { waitlist:    { user: luckyUser._id } },
         $addToSet: { cancelledBy: previousBookerId },
       });
     } catch (updateErr) {
@@ -118,20 +120,31 @@ async function processExpiredItem(item) {
       return;
     }
 
+    // ✅ NJ-20: إشعار داخل التطبيق + بريد إلكتروني
+    await notifyUser(luckyUser._id, { // ✅ تعديل: تمرير الـ ID الصريح
+      type:      'booking_promoted',
+      title:     '🎉 وصل دورك!',
+      body:      `انتهى وقت المستلم السابق — الدور وصل لك الآن في "${item.title}".`,
+      itemId:    item._id,
+      email:     luckyUser.email,
+      actionUrl: `/items/${item._id}`,
+    }).catch((err) =>
+      console.warn('[Cron] notifyUser فشل:', err.message)
+    );
+
     fireSendEmail({
       email:   luckyUser.email,
       subject: `وصل دورك في: ${item.title} 🎉`,
       message: `
-        <div dir="rtl">
+        <div dir="rtl" style="font-family:sans-serif;line-height:1.8;max-width:540px;margin:auto;">
           <h2>مرحباً ${luckyUser.name}!</h2>
           <p>انتهى وقت المستلم السابق — الدور وصل لك الآن في <strong>${item.title}</strong>.</p>
           <p>⏱️ لديك مهلة محددة لإتمام الاستلام.</p>
           <p>يرجى التواصل مع المتبرع لتنسيق الاستلام.</p>
         </div>
       `,
-    }).catch((emailErr) =>
-      console.warn(`[Cron] ⚠️ تعذّر إرسال بريد:`, emailErr.message)
-    );
+    }).catch((err) => console.warn('[Cron] فشل إرسال بريد الترقية:', err.message));
+
   } else {
     await Item.findByIdAndUpdate(item._id, {
       $set: {
@@ -147,41 +160,38 @@ async function processExpiredItem(item) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// تهيئة الـ Cron Jobs
+// تهيئة كل الـ Cron Jobs
 // ══════════════════════════════════════════════════════════════
 const initCronJobs = async () => {
 
-  // ── 1. تصفير الكوتا — ديناميكي ──────────────────────────────────────────
-  // ✅ DC-08: قراءة اليوم من الإعدادات عند بدء التشغيل
+  // ── 1. تصفير الكوتا (ديناميكي) ─────────────────────────────
   const initSettings = await SystemSettings.getCached();
   scheduleQuotaReset(initSettings.quotaResetDayOfMonth);
 
-  // ✅ DC-08: إعادة الجدولة عند تغيير الإعدادات — يستمع لـ settingsEvents
   settingsEvents.on('invalidated', async () => {
     try {
       const fresh = await SystemSettings.getCached();
       scheduleQuotaReset(fresh.quotaResetDayOfMonth);
     } catch (err) {
-      console.error('[Cron] ❌ فشل تحديث جدول تصفير الكوتا:', err.message);
+      console.error('[Cron] ❌ فشل تحديث جدول الكوتا:', err.message);
     }
   });
 
 
-  // ── 2. فحص الحجوزات المنتهية (كل ساعة) ─────────────────────────────────
-  // ✅ DC-09: مهلة الحجز الآن تُقرأ من settings.bookingExpiryHours
+  // ── 2. فحص الحجوزات المنتهية (كل ساعة) ─────────────────────
   cron.schedule('0 * * * *', () => {
     runSafe('expire-old-bookings', async () => {
-      // ✅ DC-09 FIX: بدل 72 * 60 * 60 * 1000 hardcoded
       const settings  = await SystemSettings.getCached();
       const expiryMs  = settings.bookingExpiryHours * 60 * 60 * 1000;
       const threshold = new Date(Date.now() - expiryMs);
 
+      // ✅ تحصين الفحص: جلب المستندات التي تحتوي على تاريخ حقيقي وصالح فقط لمنع الـ Cast Error
       const expiredItems = await Item.find({
         status:   'محجوز',
-        bookedAt: { $lt: threshold },
+        bookedAt: { $exists: true, $type: 'date', $lt: threshold },
       }).select('_id bookedBy waitlist donor title').lean();
 
-      if (expiredItems.length === 0) return;
+      if (!expiredItems.length) return;
 
       console.log(`[Cron] 🔍 حجوزات منتهية: ${expiredItems.length}`);
 
@@ -189,22 +199,60 @@ const initCronJobs = async () => {
         expiredItems.map((item) => processExpiredItem(item))
       );
 
-      const failed  = results.filter((r) => r.status === 'rejected').length;
-      const success = expiredItems.length - failed;
-
-      console.log(`[Cron] 🦾 اكتمل الفحص: نجح ${success}/${expiredItems.length}`);
-      if (failed > 0) {
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      console.log(`[Cron] اكتمل: نجح ${expiredItems.length - failed}/${expiredItems.length}`);
+      if (failed) {
         results
           .filter((r) => r.status === 'rejected')
-          .forEach((r) => console.error('  > سبب الفشل:', r.reason?.message));
+          .forEach((r) => console.error('  > فشل:', r.reason?.message));
       }
     });
   }, { scheduled: true, timezone: 'Asia/Amman' });
 
 
-  // ── 3. أرشفة طلبات التبرع المنتهية (يومياً 2 ص) ──────────────────────────
+  // ── 3. ✅ NJ-18: تذكير قبل انتهاء الحجز بساعة (كل ساعة) ─────
+  cron.schedule('30 * * * *', () => {
+    runSafe('booking-reminder', async () => {
+      const settings = await SystemSettings.getCached();
+      const expiryMs   = settings.bookingExpiryHours * 60 * 60 * 1000;
+      const windowFrom = new Date(Date.now() - expiryMs + 60 * 60 * 1000); 
+      const windowTo   = new Date(Date.now() - expiryMs + 90 * 60 * 1000); 
+
+      // ✅ تحصين الفحص للتذكير أيضاً من الحقول المشوهة وجودة الـ Date
+      const soonExpiring = await Item.find({
+        status:             'محجوز',
+        bookedAt:           { $exists: true, $type: 'date', $gte: windowFrom, $lt: windowTo },
+        reminderSent:       { $ne: true },               
+      }).populate('bookedBy', 'name email').lean();
+
+      if (!soonExpiring.length) return;
+
+      console.log(`[Cron] ⏰ حجوزات قاربت الانتهاء: ${soonExpiring.length}`);
+
+      await Promise.allSettled(
+        soonExpiring.map(async (item) => {
+          if (!item.bookedBy) return;
+
+          // ✅ إصلاح تمرير المعامل الأول لـ notifyUser (نمرر الـ _id الصريح للكائن المحشو)
+          await notifyUser(item.bookedBy._id, {
+            type:      'booking_expiry_reminder',
+            title:     '⏰ تذكير: حجزك على وشك الانتهاء',
+            body:      `لديك ساعة تقريباً لإتمام استلام "${item.title}" — تواصل مع المتبرع الآن.`,
+            itemId:    item._id,
+            email:     item.bookedBy.email,
+            actionUrl: `/items/${item._id}`,
+          }).catch((err) => console.warn('[Cron] فشل إشعار التذكير:', err.message));
+
+          await Item.findByIdAndUpdate(item._id, { $set: { reminderSent: true } });
+        })
+      );
+    });
+  }, { scheduled: true, timezone: 'Asia/Amman' });
+
+
+  // ── 4. أرشفة طلبات التبرع المنتهية (يومياً 2 ص) ───────────
   cron.schedule('0 2 * * *', () => {
-    runSafe('cleanup-expired-donation-requests', async () => {
+    runSafe('expire-donation-requests', async () => {
       const result = await DonationRequest.updateMany(
         { status: 'active', expiresAt: { $lt: new Date() } },
         { $set: { status: 'expired' } }
@@ -217,4 +265,4 @@ const initCronJobs = async () => {
 
 };
 
-module.exports = { initCronJobs };
+module.exports = { initCronJobs, getCronStatus: exports.getCronStatus };
