@@ -30,7 +30,8 @@ const donationOfferSchema = new mongoose.Schema(
     cloudinaryId:{ type: String, default: null },
     status: {
       type:    String,
-      enum:    ['pending', 'accepted', 'rejected'],
+      enum: ['pending', 'accepted', 'rejected', 'cancelled_by_requester'],
+
       default: 'pending',
       index:   true,
     },

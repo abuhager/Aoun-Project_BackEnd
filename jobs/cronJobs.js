@@ -222,7 +222,7 @@ const initCronJobs = async () => {
       const soonExpiring = await Item.find({
         status:             'محجوز',
         bookedAt:           { $exists: true, $type: 'date', $gte: windowFrom, $lt: windowTo },
-        reminderSent:       { $ne: true },               
+        reminderSent: {type:    Boolean,default: false,},               
       }).populate('bookedBy', 'name email').lean();
 
       if (!soonExpiring.length) return;
