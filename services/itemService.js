@@ -1,4 +1,4 @@
-// services/itemService.js — ✅ PATCHED [RACE-01 | RACE-02 | LOGIC-01 | SEC-01 | SEC-02 | ARCH-01]
+// services/itemService.js — ✅ PATCHED & FIXED
 const mongoose         = require('mongoose');
 const Item             = require('../models/Item');
 const User             = require('../models/User');
@@ -172,14 +172,14 @@ exports.createItemLogic = async (body, userId, file) => {
   const uploadResult = await uploadToCloudinary(file.buffer);
 
   const item = await Item.create({
-    title:        body.title?.trim(),
-    description:  body.description?.trim(),
-    category:     body.category,
-    location:     body.location?.trim(),
-    condition:    body.condition,
-    safeHub:      body.safeHub,
-    donor:        userId,
-    imageUrl:     uploadResult.secure_url,
+    title:         body.title?.trim(),
+    description:   body.description?.trim(),
+    category:      body.category,
+    location:      body.location?.trim(),
+    condition:     body.condition,
+    safeHub:       body.safeHub,
+    donor:         userId,
+    imageUrl:      uploadResult.secure_url,
     cloudinaryId: uploadResult.public_id,
   });
 
@@ -237,11 +237,10 @@ exports.bookItemLogic = async (itemId, userId) => {
     );
 
   // ✅ RACE-01: Atomic — الشرط والتحديث في عملية واحدة
-  // filter: status === 'متاح' يمنع حجز غرض محجوز مسبقاً
-  // إذا سبق مستخدم آخر → findOneAndUpdate تُعيد null → نُعيد 409
+  // تم تحويل الخيار إلى returnDocument لمنع التحذيرات المهجورة
   const item = await Item.findOneAndUpdate(
     {
-      _id:     itemId,
+      _id:      itemId,
       status:  'متاح',           // ← الشرط الذري
       donor:   { $ne: userId },  // لا يحجز المتبرع غرضه
       bookedBy: null,
@@ -253,11 +252,10 @@ exports.bookItemLogic = async (itemId, userId) => {
         bookedAt:  new Date(),
       },
     },
-    { new: true, runValidators: true }
+    { returnDocument: 'after', runValidators: true }
   ).populate('donor', 'name email');
 
   if (!item) {
-    // تحقق: هل الغرض موجود أصلاً؟
     const exists = await Item.findById(itemId).select('status donor bookedBy').lean();
     if (!exists)
       throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
@@ -307,7 +305,6 @@ exports.cancelBookingLogic = async (itemId, userId) => {
   if (!isBooker && !isDonor && !inWait)
     throw new AppError('ليس لديك صلاحية إلغاء هذا الحجز', 403, 'FORBIDDEN');
 
-  // حالة: المستخدم في قائمة الانتظار فقط
   if (inWait && !isBooker && !isDonor) {
     item.waitlist = item.waitlist.filter((w) => w.user.toString() !== userId);
     await item.save();
@@ -315,8 +312,6 @@ exports.cancelBookingLogic = async (itemId, userId) => {
   }
 
   const canceledById = item.bookedBy?._id?.toString();
-
-  // ترقية أول شخص من الـ Waitlist
   const nextUser = item.waitlist?.[0] ?? null;
 
   if (nextUser) {
@@ -325,11 +320,9 @@ exports.cancelBookingLogic = async (itemId, userId) => {
     item.bookedAt  = new Date();
     item.status    = 'محجوز';
 
-    // إضافة المُلغي لـ cancelledBy لمنع إعادة الحجز
     if (canceledById) item.cancelledBy.push(canceledById);
     await item.save();
 
-    // ✅ LOGIC-02: إشعار المُرقَّى من Waitlist
     setImmediate(async () => {
       try {
         await notifyUser(nextUser.user.toString(), {
@@ -341,7 +334,6 @@ exports.cancelBookingLogic = async (itemId, userId) => {
           .to(getUserRoom(nextUser.user.toString()))
           .emit('item:waitlist_promoted', { itemId: item._id });
 
-        // ✅ LOGIC-02: إشعار المتبرع أيضاً بتغيّر الحاجز (كان مفقوداً)
         await notifyUser(item.donor._id.toString(), {
           type:    'booking_transferred',
           message: `🔄 تم نقل حجز "${item.title}" لمستخدم آخر من قائمة الانتظار`,
@@ -356,7 +348,6 @@ exports.cancelBookingLogic = async (itemId, userId) => {
     return { msg: 'تم إلغاء الحجز وتم ترقية أول شخص في قائمة الانتظار ✅' };
   }
 
-  // لا يوجد أحد في Waitlist → إعادة الغرض لـ "متاح"
   if (canceledById) item.cancelledBy.push(canceledById);
   item.bookedBy = null;
   item.bookedAt = null;
@@ -387,7 +378,6 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
 
   // ── تأكيد المستلم ─────────────────────────────────────────────────────────
   if (confirmationType === 'recipient_confirm') {
-    // ✅ RACE-02: Atomic — شرط + تحديث في عملية واحدة
     const item = await Item.findOneAndUpdate(
       {
         _id:                itemId,
@@ -401,24 +391,26 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
           recipientConfirmedAt: new Date(),
         },
       },
-      { new: true }
+      { returnDocument: 'after' }
     ).populate('donor bookedBy', 'name email');
 
     if (!item) {
-      const exists = await Item.findById(itemId)
-        .select('status bookedBy recipientConfirmed').lean();
+      const exists = await Item.findById(itemId).select('status bookedBy recipientConfirmed').lean();
       if (!exists)
         throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+      
+      // ✅ تعديل الفحص المخصص لمنع خطأ 403 عند الضغط المتكرر
+      if (exists.bookedBy?.toString() === userIdStr && exists.recipientConfirmed)
+        throw new AppError('لقد قمت بالتأكيد مسبقاً مسبقاً ✅', 400, 'ALREADY_CONFIRMED');
+        
       if (exists.bookedBy?.toString() !== userIdStr)
         throw new AppError('ليس لديك صلاحية تأكيد الاستلام', 403, 'FORBIDDEN');
       if (exists.status !== 'محجوز')
         throw new AppError('الغرض ليس في حالة الحجز', 400, 'INVALID_STATUS');
-      if (exists.recipientConfirmed)
-        throw new AppError('لقد قمت بالتأكيد مسبقاً ✅', 400, 'ALREADY_CONFIRMED');
+        
       throw new AppError('تعذر تأكيد الاستلام', 400, 'CONFIRM_FAILED');
     }
 
-    // إشعار المتبرع عبر Socket ليضغط "تأكيد التسليم"
     setImmediate(() => {
       try {
         getIO()
@@ -446,8 +438,6 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
 
   // ── تأكيد المتبرع ─────────────────────────────────────────────────────────
   if (confirmationType === 'donor_confirm') {
-    // ✅ RACE-02 + LOGIC-01: Atomic — شرط recipientConfirmed: true يضمن الترتيب الصحيح
-    // ✅ LOGIC-01: التحوّل لـ "تم التسليم" يحدث في نفس العملية الذرية
     const item = await Item.findOneAndUpdate(
       {
         _id:                itemId,
@@ -464,12 +454,11 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
           deliveredAt:      new Date(),
         },
       },
-      { new: true }
+      { returnDocument: 'after' }
     ).populate('donor bookedBy', 'name email trustScore gamification');
 
     if (!item) {
-      const exists = await Item.findById(itemId)
-        .select('status donor recipientConfirmed donorConfirmed bookedBy').lean();
+      const exists = await Item.findById(itemId).select('status donor recipientConfirmed donorConfirmed bookedBy').lean();
       if (!exists)
         throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
       if (exists.donor?.toString() !== userIdStr)
@@ -481,7 +470,6 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
       throw new AppError('تعذر تأكيد التسليم', 400, 'CONFIRM_FAILED');
     }
 
-    // تحديث نقاط المتبرع والمستلم (non-blocking)
     setImmediate(async () => {
       try {
         await Promise.allSettled([
@@ -493,14 +481,12 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
           }),
         ]);
 
-        // إشعار المستلم بالإتمام
         await notifyUser(item.bookedBy._id.toString(), {
           type:    'delivery_completed',
           message: `🎉 اكتملت عملية التسليم للغرض "${item.title}"`,
           itemId:  item._id,
         });
 
-        // Socket broadcast للمستلم
         getIO()
           .to(getUserRoom(item.bookedBy._id.toString()))
           .emit('item:delivered', {
@@ -509,7 +495,6 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
             message:   '🎉 تمت عملية التسليم بنجاح!',
           });
 
-        // Leaderboard update
         getIO().to('leaderboard_subscribers').emit('leaderboard:update');
       } catch (_) {}
     });

@@ -1,4 +1,5 @@
-// services/donationRequestService.js
+// services/donationRequestService.js — ✅ PATCHED [LOGIC-03 | ARCH-01]
+
 const SystemSettings             = require('../models/SystemSettings');
 const User                       = require('../models/User');
 const donationRequestRepository  = require('../repositories/donationRequestRepository');
@@ -11,8 +12,10 @@ const DonationRequest            = require('../models/DonationRequest');
 const donationOfferRepository    = require('../repositories/donationOfferRepository');
 const DonationOffer              = require('../models/DonationOffer');
 
+// ✅ ARCH-01: استيراد مشترك للتحقق من الصور بدل تكرار الشروط محلياً
+const { validateImageFile }      = require('../utils/imageValidation');
+
 const getMinTrustLevel            = (s) => s.minTrustLevelForRequests  ?? 2;
-const getMinTrustLevelForDonating = (s) => s.minTrustLevelForDonating ?? 1;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. إنشاء طلب تبرع جديد
@@ -84,9 +87,19 @@ exports.getDonationRequestsLogic = async (query, userId) => {
   const mine   = String(query.mine).toLowerCase() === 'true';
   const filter = {};
 
-  if (query.category && query.category !== 'all') filter.category = query.category;
-  if (query.location && query.location !== 'all') filter.location = query.location;
-  if (query.urgency  && query.urgency  !== 'all') filter.urgency  = query.urgency;
+  const allowedCategories = settings.categories ?? [];
+  const allowedLocations  = settings.locations  ?? [];
+
+  if (query.category && query.category !== 'all') {
+    if (allowedCategories.includes(query.category))
+      filter.category = query.category;
+  }
+  if (query.location && query.location !== 'all') {
+    if (!allowedLocations.length || allowedLocations.includes(query.location))
+      filter.location = query.location;
+  }
+  if (query.urgency && ['low', 'medium', 'high'].includes(query.urgency))
+    filter.urgency = query.urgency;
 
   if (mine) {
     filter.requester = userId;
@@ -107,19 +120,73 @@ exports.getDonationRequestsLogic = async (query, userId) => {
 // 3. إلغاء طلب تبرع
 // ─────────────────────────────────────────────────────────────────────────────
 exports.cancelRequestLogic = async (requestId, userId) => {
-  const request = await donationRequestRepository.cancelOwnedActiveRequest({
-    requestId,
-    userId,
-  });
+  const mongoose = require('mongoose');
+  const session  = await mongoose.startSession();
+  session.startTransaction();
 
-  if (!request)
-    throw new AppError(
-      'الطلب غير موجود أو لا تملك صلاحية إلغائه',
-      404,
-      'REQUEST_NOT_FOUND_OR_FORBIDDEN'
+  try {
+    const request = await DonationRequest.findOneAndUpdate(
+      { _id: requestId, requester: userId, status: 'active' },
+      { $set: { status: 'cancelled' } },
+      { new: true, session }
+    ).lean();
+
+    if (!request)
+      throw new AppError(
+        'الطلب غير موجود أو لا تملك صلاحية إلغائه',
+        404,
+        'REQUEST_NOT_FOUND_OR_FORBIDDEN'
+      );
+
+    const cancelledOffers = await DonationOffer.find(
+      { request: requestId, status: 'pending' },
+      { donor: 1 },
+      { session, lean: true }
     );
 
-  return { msg: 'تم إلغاء الطلب ✅' };
+    if (cancelledOffers.length > 0) {
+      await DonationOffer.updateMany(
+        { request: requestId, status: 'pending' },
+        { $set: { status: 'cancelled_by_requester' } },
+        { session }
+      );
+    }
+
+    await session.commitTransaction();
+    try { session.endSession(); } catch (_) {}
+
+    if (cancelledOffers.length > 0) {
+      setImmediate(async () => {
+        try {
+          const { getIO } = require('../socket/socketHandler');
+          const io = getIO();
+          await Promise.allSettled(
+            cancelledOffers.map(async (offer) => {
+              io.to(`user_${offer.donor}`).emit('offer:request_cancelled', {
+                type:      'REQUEST_CANCELLED',
+                requestId: request._id,
+                message:   'أُلغي الطلب من صاحبه — شكراً لتبرعك 🙏',
+              });
+              await notifyUser(offer.donor, {
+                type:  'request_cancelled_by_requester',
+                title: 'تم إلغاء الطلب',
+                body:  'أُلغي طلب كنت قد قدّمت عليه عرضاً — شكراً لتجاوبك',
+              });
+            })
+          );
+        } catch (err) {
+          console.warn('[cancelRequest] فشل الإشعارات:', err.message);
+        }
+      });
+    }
+
+    return { msg: 'تم إلغاء الطلب ✅' };
+
+  } catch (err) {
+    if (session.inTransaction()) await session.abortTransaction();
+    try { session.endSession(); } catch (_) {}
+    throw err;
+  }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,7 +213,7 @@ exports.getMyRequestsLogic = async (userId) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 5. المتبرع يقدّم عرضاً
+// 5. المتبرع يقدّم عرضاً (تم تطبيق LOGIC-03 و ARCH-01 بنجاح)
 // ─────────────────────────────────────────────────────────────────────────────
 exports.submitOfferLogic = async (requestId, donorId, body, file) => {
   const [request, donor, settings] = await Promise.all([
@@ -158,20 +225,26 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
   if (!request)
     throw new AppError('الطلب غير موجود أو غير نشط', 404, 'REQUEST_NOT_FOUND');
 
+  // ✅ LOGIC-03: التحقق الصارم من وجود المتبرع أولاً لمنع انهيار السيرفر عند استدعاء الحقول
+  if (!donor)
+    throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
+
   if (request.requester._id.toString() === donorId)
     throw new AppError('لا يمكنك التبرع لطلبك الخاص 🚫', 400, 'CANNOT_OFFER_OWN_REQUEST');
 
-  if (!donor?.isVerified)
+  if (!donor.isVerified)
     throw new AppError('يجب تفعيل حسابك أولاً ✅', 403, 'ACCOUNT_NOT_VERIFIED');
 
-  const minLevel = getMinTrustLevelForDonating(settings);
-  if ((donor.trustLevel ?? 1) < minLevel)
+  const minLevel = settings.minTrustLevelForDonating ?? 1;
+  
+  // ✅ LOGIC-03: فحص مستوى الثقة بعد التأكد التام من الكائن donor
+  if (donor.trustLevel < minLevel)
     throw new AppError(`يلزم Level ${minLevel} على الأقل للتبرع`, 403, 'INSUFFICIENT_TRUST_LEVEL');
 
   const [alreadyOffered, safeHub, pendingOffersCount] = await Promise.all([
     donationOfferRepository.existsByRequestAndDonor(requestId, donorId),
     SafeHub.findOne({ _id: body.safeHub, isActive: true }).lean(),
-    DonationOffer.countDocuments({ donor: donorId, status: 'pending' }),
+    donationOfferRepository.countPendingByDonor(donorId), // تم التحديث للدالة المستودعية المخصصة
   ]);
 
   if (alreadyOffered)
@@ -183,18 +256,15 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
   const maxPendingOffers = settings.maxPendingOffersPerDonor ?? 5;
   if (pendingOffersCount >= maxPendingOffers)
     throw new AppError(
-      `لديك ${pendingOffersCount} عرض معلّق حالياً — انتظر حتى يُقبل أو يُرفض بعضها`,
+      `لديك ${pendingOffersCount} عرض معلّق — انتظر حتى يُعالَج بعضها`,
       429,
       'MAX_PENDING_OFFERS_REACHED'
     );
 
   let imageUrl = null, cloudinaryId = null;
   if (file) {
-    const ALLOWED = ['image/jpeg', 'image/png', 'image/webp'];
-    if (!ALLOWED.includes(file.mimetype))
-      throw new AppError('نوع الصورة غير مدعوم', 400, 'INVALID_IMAGE_TYPE');
-    if (file.size > 5 * 1024 * 1024)
-      throw new AppError('حجم الصورة يتجاوز 5MB', 400, 'IMAGE_TOO_LARGE');
+    // ✅ ARCH-01: استبدال التحقق المحلي بالدالة المركزية الموحدة للمشروع
+    validateImageFile(file);
     const uploaded = await uploadToCloudinary(file.buffer);
     imageUrl     = uploaded.secure_url;
     cloudinaryId = uploaded.public_id;
@@ -259,26 +329,36 @@ exports.getOffersLogic = async (requestId, userId) => {
 // ─────────────────────────────────────────────────────────────────────────────
 exports.acceptOfferLogic = async (requestId, offerId, userId) => {
   const mongoose = require('mongoose');
-
-  const request = await DonationRequest.findOne({
-    _id:       requestId,
-    requester: userId,
-    status:    'active',
-  }).lean();
-
-  if (!request)
-    throw new AppError('الطلب غير موجود أو لا تملك صلاحية الاختيار', 404, 'REQUEST_NOT_FOUND');
-
-  const offer = await donationOfferRepository.findOfferById(offerId);
-
-  if (!offer || offer.request.toString() !== requestId || offer.status !== 'pending')
-    throw new AppError('العرض غير موجود أو تمت معالجته مسبقاً', 404, 'OFFER_NOT_FOUND');
-
-  const session = await mongoose.startSession();
+  const session  = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    // 1. إنشاء الـ Item المرتبط
+    const request = await DonationRequest.findOneAndUpdate(
+      { _id: requestId, requester: userId, status: 'active' },
+      { $set: { status: 'processing' } },
+      { new: false, session }
+    );
+
+    if (!request)
+      throw new AppError(
+        'الطلب غير موجود أو جارٍ معالجته من طرف آخر',
+        409,
+        'REQUEST_NOT_AVAILABLE'
+      );
+
+    const offer = await DonationOffer.findOneAndUpdate(
+      { _id: offerId, request: requestId, status: 'pending' },
+      { $set: { status: 'accepted' } },
+      { new: true, session }
+    ).populate('donor safeHub');
+
+    if (!offer)
+      throw new AppError(
+        'العرض غير موجود أو تمت معالجته مسبقاً',
+        409,
+        'OFFER_NOT_AVAILABLE'
+      );
+
     const [item] = await Item.create(
       [{
         title:           request.title,
@@ -298,13 +378,12 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
       { session }
     );
 
-    // 2. قبول هذا العرض
-    await donationOfferRepository.acceptOffer(offerId, session);
+    await DonationOffer.updateMany(
+      { request: requestId, status: 'pending', _id: { $ne: offerId } },
+      { $set: { status: 'rejected' } },
+      { session }
+    );
 
-    // 3. رفض باقي العروض المعلّقة
-    await donationOfferRepository.rejectAllPendingExcept(requestId, offerId, session);
-
-    // 4. تحديث الطلب → fulfilled
     await DonationRequest.findByIdAndUpdate(
       requestId,
       { $set: { status: 'fulfilled', fulfilledByItem: item._id } },
@@ -314,12 +393,12 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
     await session.commitTransaction();
     try { session.endSession(); } catch (_) {}
 
-    // إشعارات خارج الـ Transaction
     setImmediate(async () => {
       try {
-        const { getIO } = require('../socket');
+        const { getIO } = require('../socket/socketHandler');
+        const io = getIO();
 
-        getIO().to(`user_${offer.donor._id}`).emit('offer:accepted', {
+        io.to(`user_${offer.donor._id}`).emit('offer:accepted', {
           type:      'OFFER_ACCEPTED',
           requestId: request._id,
           offerId,
@@ -334,33 +413,32 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
           itemId: item._id.toString(),
         });
 
-        const rejected = await DonationOffer.find({
+        const rejectedOffers = await DonationOffer.find({
           request: requestId,
           status:  'rejected',
           _id:     { $ne: offerId },
         }).select('donor').lean();
 
-        for (const r of rejected) {
-          getIO().to(`user_${r.donor}`).emit('offer:rejected', {
-            type:      'OFFER_REJECTED',
-            requestId: request._id,
-            message:   'اختار صاحب الطلب شخصاً آخر هذه المرة 🙏',
-          });
-          await notifyUser(r.donor, {
-            type:  'offer_rejected',
-            title: 'لم يتم اختيارك هذه المرة',
-            body:  'شكراً لتبرعك — حاول مرة أخرى مع طلبات أخرى 💪',
-          });
-        }
+        await Promise.allSettled(
+          rejectedOffers.map(async (r) => {
+            io.to(`user_${r.donor}`).emit('offer:rejected', {
+              type:      'OFFER_REJECTED',
+              requestId: request._id,
+              message:   'اختار صاحب الطلب شخصاً آخر هذه المرة 🙏',
+            });
+            await notifyUser(r.donor, {
+              type:  'offer_rejected',
+              title: 'لم يتم اختيارك هذه المرة',
+              body:  'شكراً لتبرعك — حاول مرة أخرى مع طلبات أخرى 💪',
+            });
+          })
+        );
       } catch (err) {
         console.warn('[acceptOffer] فشل الإشعارات:', err.message);
       }
     });
 
-    return {
-      msg:    'تم اختيار المتبرع بنجاح 🎉',
-      itemId: item._id.toString(),
-    };
+    return { msg: 'تم اختيار المتبرع بنجاح 🎉', itemId: item._id.toString() };
 
   } catch (err) {
     if (session.inTransaction()) await session.abortTransaction();

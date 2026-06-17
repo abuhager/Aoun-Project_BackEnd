@@ -1,12 +1,19 @@
-// repositories/donationRequestRepository.js
+// repositories/donationRequestRepository.js ✅ PATCHED [LOGIC-02 | SEC-02]
 const DonationRequest = require('../models/DonationRequest');
+const DonationOffer   = require('../models/DonationOffer'); // ✅ SEC-02: كانت غائبة
 
-// ✅ تعريف واحد فقط — كان مُعرَّفاً مرتين في الملف الأصلي
-// ✅ دالة جديدة: تعدّ كل طلبات الشهر بغض النظر عن الحالة
+// عدد الطلبات في الشهر (بغض النظر عن الحالة) — للحد الأقصى عند الإنشاء
 exports.countAllMonthlyRequests = ({ userId, month }) =>
+  DonationRequest.countDocuments({ requester: userId, month });
+
+// ✅ LOGIC-02: كانت مستدعاة في getMyRequestsLogic لكنها غير موجودة → TypeError
+// عدد الطلبات النشطة في الشهر — للعرض في صفحة "طلباتي"
+exports.countActiveMonthlyRequests = ({ userId, month, now }) =>
   DonationRequest.countDocuments({
     requester: userId,
-    month,           // الحقل موجود فعلاً في الـ Schema من createRequestLogic
+    month,
+    status:    'active',
+    expiresAt: { $gt: now },
   });
 
 exports.createRequest = (payload) =>
@@ -15,7 +22,7 @@ exports.createRequest = (payload) =>
 exports.findRequests = ({ filter, skip, limit }) =>
   DonationRequest.find(filter)
     .populate('requester', 'name avatar trustLevel trustScore')
-    .populate({                        // ✅ أضف هاد
+    .populate({
       path:   'fulfilledByItem',
       select: '_id condition status safeHub donor',
       populate: [
@@ -31,7 +38,6 @@ exports.findRequests = ({ filter, skip, limit }) =>
 exports.countRequests = (filter) =>
   DonationRequest.countDocuments(filter);
 
-// ✅ إصلاح: { returnDocument: 'after' } مُهمَل منذ Mongoose 8 — الصواب { returnDocument: 'after' }
 exports.cancelOwnedActiveRequest = ({ requestId, userId }) =>
   DonationRequest.findOneAndUpdate(
     { _id: requestId, requester: userId, status: 'active' },
@@ -52,23 +58,20 @@ exports.findUserRequests = (userId) =>
     })
     .lean();
 
-    // جلب طلب نشط واحد بالـ ID مع populate للـ requester
 exports.findActiveRequestById = (requestId) =>
   DonationRequest.findOne({
     _id:       requestId,
     status:    'active',
     expiresAt: { $gt: new Date() },
   })
-  .populate('requester', 'name email')
-  .lean();
-
+    .populate('requester', 'name email')
+    .lean();
 
 exports.findRequestByIdWithItem = (requestId) =>
   DonationRequest.findById(requestId)
     .populate('requester', 'name')
     .populate({
       path:   'fulfilledByItem',
-      // ✅ أضف _id هنا
       select: '_id condition status safeHub donor recipientConfirmed donorConfirmed',
       populate: [
         { path: 'safeHub', select: 'name city address' },
@@ -77,15 +80,11 @@ exports.findRequestByIdWithItem = (requestId) =>
     })
     .lean();
 
-    // جلب طلب واحد كامل بـ ID مع populate
 exports.findRequestById = (requestId) =>
   DonationRequest.findById(requestId)
     .populate('requester', 'name avatar trustLevel trustScore')
     .lean();
 
-    // ✅ دالة جديدة: عدد عروض المتبرع المعلّقة
+// ✅ SEC-02: DonationOffer مُضافة بـ require في أعلى الملف
 exports.countPendingOffersByDonor = (donorId) =>
-  DonationOffer.countDocuments({
-    donor:  donorId,
-    status: 'pending',
-  });
+  DonationOffer.countDocuments({ donor: donorId, status: 'pending' });

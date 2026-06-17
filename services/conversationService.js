@@ -61,15 +61,18 @@ exports.openConversationLogic = async ({ itemId, userId }) => {
     ? item.bookedBy?._id?.toString?.()
     : item.bookedBy?.toString?.();
 
+  // 🔒 الشرط المطلوب: ممنوع نهائياً فتح أي محادثة إذا لم يكن الغرض محجوزاً مسبقاً
   if (!bookedById) {
-    throw Object.assign(new Error('لا توجد محادثة قبل حجز الغرض'), { status: 400 });
+    throw Object.assign(new Error('لا توجد محادثة قبل حجز الغرض فعلياً'), { status: 400 });
   }
 
+  // 🔒 حماية الصلاحيات: المحادثة مقيدة وحصرية فقط بين المتبرع والشخص الذي حجز الغرض
   const allowed = userId === donorId || userId === bookedById;
   if (!allowed) {
-    throw Object.assign(new Error('غير مصرح لك بفتح هذه المحادثة'), { status: 403 });
+    throw Object.assign(new Error('عذراً، هذه المحادثة مقيدة ومتاحة لأطراف الحجز فقط'), { status: 403 });
   }
 
+  // البحث عن محادثة سابقة أو إنشاء واحدة جديدة
   let conversation = await conversationRepository.findConversationByItemAndParticipants(
     itemId,
     donorId,
