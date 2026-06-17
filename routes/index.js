@@ -14,6 +14,5 @@ router.use('/notifications',     require('./notifications'));
 router.use('/leaderboard',       require('./leaderboard'));
 router.use('/settings',          require('./settings'));
 router.use('/donation-requests', require('./donationRequests'));
-router.use('/conversations',     require('./conversations'));
-
+router.use('/conversations',     require('./conversationRoutes'));
 module.exports = router;
