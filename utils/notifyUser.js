@@ -1,9 +1,3 @@
-// utils/notifyUser.js
-// ✅ NJ-05 FIX: إضافة حقل metadata.actionUrl لدعم deep-link في الإشعار
-// ✅ NJ-06 FIX: استخدام getIO()?.to() — لا يرمي خطأً إذا لم يُهيَّأ الـ Socket بعد
-// ✅ NJ-07 FIX: CRITICAL_TYPES الآن مقروءة من ملف ثوابت مركزية — لا تكرار
-// ✅ NJ-08 FIX: تحسين قراءة البريد من user object أو payload بترتيب واضح
-
 const Notification = require('../models/Notification');
 const AppError     = require('./AppError');
 
@@ -52,10 +46,11 @@ async function notifyUser(userId, payload) {
   // ── 2. Socket.io real-time emit ──────────────────────────────
   try {
     const { getIO } = require('../socket/socketHandler');
-    // ✅ NJ-06: getIO()? — لا يرمي خطأً إذا لم يُهيَّأ بعد (مثلاً في unit tests)
-    getIO()
-      ?.to(`user_${actualUserId}`)
-      ?.emit('notification:new', {
+    const io = getIO();
+    
+    if (io) {
+      // 💡 تحسين: التأكد من تطابق اسم الغرفة (user_ID) بين الـ Emit والـ Connection
+      io.to(`user_${actualUserId}`).emit('notification:new', {
         _id:            notification._id,
         user:           notification.user,
         type:           notification.type,
@@ -67,13 +62,15 @@ async function notifyUser(userId, payload) {
         isRead:         notification.isRead,
         createdAt:      notification.createdAt,
       });
+    } else {
+      console.warn('[notifyUser] Socket.io لم يتم تهيئته بعد (Skip Emit)');
+    }
   } catch (err) {
-    // Socket فشل — لا يوقف العملية
-    console.warn('[notifyUser] Socket emission skipped:', err.message);
+    // Socket فشل — لا يوقف العملية ولا يعطل حفظ الـ DB
+    console.error('[notifyUser Socket Error]:', err.message);
   }
 
   // ── 3. بريد احتياطي للإشعارات الحرجة فقط ────────────────────
-  // ✅ NJ-07: CRITICAL_NOTIFICATION_TYPES من ثابت موحّد
   if (CRITICAL_NOTIFICATION_TYPES.includes(payload.type)) {
     if (userEmail) {
       try {
@@ -89,8 +86,8 @@ async function notifyUser(userId, payload) {
                 ? `<a href="${payload.actionUrl}"
                       style="display:inline-block; padding:10px 20px; background:#01696f;
                              color:#fff; border-radius:8px; text-decoration:none; font-weight:bold;">
-                      الانتقال للتطبيق
-                   </a>`
+                       الانتقال للتطبيق
+                     </a>`
                 : ''
               }
               <hr style="border:none; border-top:1px solid #edeeef; margin:20px 0;" />
@@ -100,7 +97,7 @@ async function notifyUser(userId, payload) {
             </div>
           `,
         }).catch((emailErr) =>
-          console.error('[notifyUser Email Fallback] فشل الإرسال:', emailErr.message)
+          console.error('[notifyUser Email Fallback] فشل الإرسال الإجرائي:', emailErr.message)
         );
       } catch (importErr) {
         console.warn('[notifyUser] تعذر تحميل sendEmail:', importErr.message);

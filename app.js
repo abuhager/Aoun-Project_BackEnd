@@ -1,10 +1,11 @@
-// app.js — Flow 1 FINAL FIXED
+// app.js — Flow 1 FINAL FIXED WITH REQUEST ID
 // ✅ FIX-01: require('crypto') خارج middleware — لا re-require لكل طلب
 // ✅ FIX-02: cspNonce على res.locals بدل req + إرساله كـ header لـ Next.js
 // ✅ FIX-03: skipMultipart يستخدم req.is() بدل مقارنة نصية هشّة
-// ✅ FIX-04: CORS callback يستخدم Error عادي مع .status بدل AppError (cors lib لا تضمن تمرير AppError)
+// ✅ FIX-04: CORS callback يستخدم Error عادي مع .status بدل AppError
 // ✅ FIX-05: HPP_WHITELIST من env
 // ✅ FIX-06: /health يتحقق من MongoDB readyState
+// ✅ FIX-09: إضافة Request ID (crypto.randomUUID) لتتبع الأخطاء end-to-end
 
 const express      = require('express');
 const cors         = require('cors');
@@ -13,8 +14,8 @@ const cookieParser = require('cookie-parser');
 const hpp          = require('hpp');
 const mongoose     = require('mongoose');
 
-// ✅ FIX-01: require مرة واحدة عند bootstrap — لا تكرار لكل طلب
-const { randomBytes } = require('crypto');
+// ✅ FIX-01 & FIX-09: استيراد التوابع المطلوبة من crypto مرة واحدة عند الـ bootstrap
+const { randomBytes, randomUUID } = require('crypto');
 
 const { globalLimiter } = require('./middlewares/rateLimiter');
 const errorHandler      = require('./middlewares/errorHandler');
@@ -37,11 +38,16 @@ const HPP_WHITELIST = (process.env.HPP_WHITELIST || 'category,status,trustLevel'
   .map((s) => s.trim())
   .filter(Boolean);
 
+// ── 💡 FIX-09: Request ID Middleware (تتبع الطلبات) ───────────
+app.use((req, res, next) => {
+  // إذا كان الطلب قادماً من API Gateway أو Next.js يحمل ID مسبقاً نستخدمه، وإلا ننشئ واحدًا جديدًا
+  req.id = req.headers['x-request-id'] || randomUUID();
+  // نرسله أيضاً في الـ Response Headers لسهولة مراجعته من قبل العميل أو الـ Frontend عند حدوث خطأ
+  res.setHeader('X-Request-ID', req.id);
+  next();
+});
+
 // ── CSP Nonce per Request ─────────────────────────────────────
-// ✅ FIX-01 + FIX-02:
-//   - randomBytes مستوردة مرة واحدة (لا require داخل middleware)
-//   - nonce يُخزَّن على res.locals (المكان الصحيح للبيانات المرتبطة بالـ response)
-//   - يُرسَل كـ header → Next.js middleware.ts يقرأه ويحقنه في HTML
 app.use((_req, res, next) => {
   res.locals.cspNonce = randomBytes(16).toString('base64');
   // يُرسَل للـ frontend حتى يستخدمه في CSP الخاص بـ Next.js
@@ -57,7 +63,6 @@ app.use((req, res, next) => {
         defaultSrc: ["'self'"],
         imgSrc:     ["'self'", "https://res.cloudinary.com", "data:"],
         scriptSrc:  ["'self'", `'nonce-${res.locals.cspNonce}'`],
-        // unsafe-inline محذوف — nonce فقط للـ inline styles الضرورية
         styleSrc:   ["'self'", `'nonce-${res.locals.cspNonce}'`],
         connectSrc: ["'self'", process.env.API_URL].filter(Boolean),
         objectSrc:  ["'none'"],
@@ -69,14 +74,8 @@ app.use((req, res, next) => {
 });
 
 // ── CORS ──────────────────────────────────────────────────────
-// ✅ FIX-04:
-//   المشكلة السابقة: تمرير AppError لـ cors callback
-//   مكتبة cors لا تضمن أن تُمرِّر AppError لـ Express error chain بشكل صحيح
-//   في بعض النسخ تُرسل 500 مجردة بدلاً من الـ 403 المطلوب
-//   الحل: Error عادي مع .status يقرأه errorHandler عبر err.status fallback
 const corsOptions = {
   origin(origin, cb) {
-    // طلبات بدون origin (server-to-server, curl, mobile) — مسموحة
     if (!origin) return cb(null, true);
 
     if (ALLOWED_ORIGINS.length === 0) {
@@ -84,7 +83,6 @@ const corsOptions = {
         console.warn(`[CORS] ⚠️  ALLOWED_ORIGINS غير مضبوطة — تم السماح لـ: ${origin}`);
         return cb(null, true);
       }
-      // ✅ FIX-04: Error عادي مع .status بدل AppError
       const err = new Error('CORS: لا توجد origins مسموح بها — تأكد من ضبط ALLOWED_ORIGINS في متغيرات البيئة');
       err.status = 403;
       err.code   = 'CORS_MISCONFIGURED';
@@ -93,7 +91,6 @@ const corsOptions = {
 
     if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
 
-    // ✅ FIX-04: Error عادي مع .status
     const err = new Error(`CORS: Origin غير مصرح به — ${origin}`);
     err.status = 403;
     err.code   = 'CORS_ORIGIN_DENIED';
@@ -101,8 +98,8 @@ const corsOptions = {
   },
   credentials:          true,
   methods:              ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders:       ['Content-Type', 'Authorization', 'X-Requested-With'],
-  exposedHeaders:       ['X-RateLimit-Limit', 'X-RateLimit-Remaining'],
+  allowedHeaders:       ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Request-ID'],
+  exposedHeaders:       ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-Request-ID'],
   optionsSuccessStatus: 200,
 };
 
@@ -112,10 +109,6 @@ app.use(cors(corsOptions));
 const _jsonParser       = express.json({ limit: '100kb' });
 const _urlencodedParser = express.urlencoded({ extended: true, limit: '100kb' });
 
-// ✅ FIX-03:
-//   المشكلة السابقة: مقارنة نصية على content-type header هشّة
-//   مهاجم يمكنه إرسال content-type: multipart/form-data مع جسم JSON لتجاوز الـ parser
-//   الحل: req.is() — Express API الرسمي للـ MIME type detection، يتعامل مع الـ boundary بشكل صحيح
 const skipMultipart = (parser) => (req, res, next) => {
   if (req.is('multipart/form-data')) return next();
   parser(req, res, next);
@@ -140,7 +133,6 @@ const _sanitize = (obj) => {
 };
 
 app.use((req, _res, next) => {
-  // تخطي GET/HEAD/OPTIONS — لا body فيها → يُقلل العمليات على 60-70% من الطلبات
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
 
   if (req.body  && typeof req.body === 'object')  _sanitize(req.body);
@@ -176,7 +168,7 @@ app.use((req, _res, next) => {
   next(new AppError(
     `المسار غير موجود: ${req.method} ${req.originalUrl}`,
     404,
-    'ROUTE_NOT_FOUND'
+    `ROUTE_NOT_FOUND`
   ));
 });
 

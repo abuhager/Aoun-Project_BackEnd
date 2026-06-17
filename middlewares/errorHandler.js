@@ -1,10 +1,3 @@
-// middlewares/errorHandler.js — Flow 1 FINAL FIXED
-// ✅ FIX-01: CastError، Duplicate Key، ValidationError تُحوَّل إلى AppError قبل الإرسال
-// ✅ FIX-02: CORS error (err.code === 'CORS_*' أو err.status === 403) تُعالَج بشكل صريح
-// ✅ FIX-03: stack trace يُرسَل في dev فقط — في production يُسجَّل فقط دون إرساله
-// ✅ FIX-04: رسالة prod عامة للأخطاء غير العملياتية (لا تكشف تفاصيل الـ programmer error)
-// ✅ FIX-05: headers المُرسَلة مسبقاً — لا إرسال مكرر يتسبب في crash
-
 const AppError = require('../utils/AppError');
 
 // ── حوِّل أخطاء Mongoose المعروفة إلى AppError ────────────────
@@ -52,7 +45,7 @@ const normalizeCors = (err) => {
 const errorHandler = (err, req, res, next) => {
   // ✅ FIX-05: إذا أُرسلت الـ headers مسبقاً (stream أو نصف استجابة) — لا نُرسل مجدداً
   if (res.headersSent) {
-    console.error('[errorHandler] Headers أُرسلت مسبقاً — تجاهل الخطأ:', err.message);
+    console.error(`[errorHandler][Request-ID: ${req.id || 'N/A'}] Headers أُرسلت مسبقاً — تجاهل الخطأ:`, err.message);
     return;
   }
 
@@ -61,23 +54,26 @@ const errorHandler = (err, req, res, next) => {
   error     = normalizeCors(error);
 
   // تحديد ما إذا كان AppError رسمياً
-  const isAppError = error instanceof AppError;
-  const statusCode = isAppError ? error.statusCode : (error.status ?? 500);
+  const isAppError  = error instanceof AppError;
+  const statusCode  = isAppError ? error.statusCode : (error.status ?? 500);
   const isOperational = isAppError ? error.isOperational : false;
+  
+  // استخلاص الـ Request ID الموحد الذي تم إنشاؤه في app.js
+  const requestId   = req.id || req.headers['x-request-id'];
 
   // ✅ FIX-03: Stack trace — dev فقط
   if (process.env.NODE_ENV !== 'production') {
-    console.error('🐛 [Error]:', error);
+    console.error(`🐛 [Error][ID: ${requestId || 'N/A'}]:`, error);
   } else {
-    // ✅ FIX-04: في production نُسجِّل Programmer errors مع stack للـ debugging الخارجي
+    // ✅ FIX-04: في production نُسجِّل الـ Programmer errors بدقة للـ debugging الخارجي
     if (!isOperational) {
       console.error('💥 [Programmer Error]:', {
+        requestId,
         message:   error.message,
         stack:     error.stack,
         url:       req.originalUrl,
         method:    req.method,
-        userId:    req.user?.id,
-        requestId: req.headers['x-request-id'],
+        userId:    req.user?.id || req.user?._id,
       });
     }
   }
@@ -87,11 +83,12 @@ const errorHandler = (err, req, res, next) => {
     status:  statusCode >= 500 ? 'error' : 'fail',
     message: isOperational
       ? error.message
-      // ✅ FIX-04: رسالة عامة للـ Programmer errors في production — لا كشف للتفاصيل
+      // ✅ FIX-04: رسالة عامة للـ Programmer errors في production — لا كشف للتفاصيل التقنية
       : (process.env.NODE_ENV === 'production'
           ? 'حدث خطأ داخلي في الخادم. يرجى المحاولة لاحقاً.'
           : error.message),
-    code:    isAppError ? error.code : undefined,
+    code:      isAppError ? error.code : (error.code || 'INTERNAL_SERVER_ERROR'),
+    requestId: requestId, // 💡 إرسال الـ ID للـ Frontend لربط التذاكر وبلاغات الأعطال بسجلات الخادم فوراُ
   };
 
   // ✅ FIX-03: stack في dev فقط
