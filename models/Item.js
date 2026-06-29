@@ -102,7 +102,6 @@ const ItemSchema = new mongoose.Schema(
   type: mongoose.Schema.Types.ObjectId,
   ref: 'DonationRequest',
   default: null,
-  index: true,
 },
 
   },

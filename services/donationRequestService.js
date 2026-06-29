@@ -244,7 +244,7 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
   const [alreadyOffered, safeHub, pendingOffersCount] = await Promise.all([
     donationOfferRepository.existsByRequestAndDonor(requestId, donorId),
     SafeHub.findOne({ _id: body.safeHub, isActive: true }).lean(),
-    donationOfferRepository.countPendingByDonor(donorId), // تم التحديث للدالة المستودعية المخصصة
+    donationOfferRepository.countPendingOffersByDonor(donorId), // تم التحديث للدالة المستودعية المخصصة
   ]);
 
   if (alreadyOffered)

@@ -49,6 +49,7 @@ const systemSettingsSchema = new mongoose.Schema(
         '@student.bau.edu.jo',  '@bau.edu.jo',
         '@stu.just.edu.jo',     '@just.edu.jo',
         '@student.meu.edu.jo',  '@meu.edu.jo',
+        '@std-zuj.edu.jo',      '@zuj.edu.jo',
         '@student.philadelphia.edu.jo',
         '@psut.edu.jo',         '@gju.edu.jo',
       ],

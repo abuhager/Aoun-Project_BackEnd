@@ -1,4 +1,4 @@
-// repositories/conversationRepository.js
+// repositories/conversationRepository.js ✅ PATCHED FOR HISTORY FLOW
 // CRIT-01 ► appendMessage ذري | CRIT-02 ► markRead ذري | HIGH-03 ► $slice -50
 
 const mongoose     = require('mongoose');
@@ -30,6 +30,20 @@ exports.findConversationByIdWithMessages = (id) =>
 
 exports.findConversationByItemAndParticipants = (itemId, donorId, bookedById) =>
   Conversation.findOne({ item: itemId, participants: { $all: [donorId, bookedById] } });
+
+// ✅ [إضافة حرجية]: البحث عن المحادثة التاريخية بين الطرفين فقط لتجنب ضياع السجل عند تغير الـ itemId
+exports.findConversationByParticipantsOnly = (userIdA, userIdB) =>
+  Conversation.findOne({
+    participants: { $all: [new mongoose.Types.ObjectId(userIdA), new mongoose.Types.ObjectId(userIdB)] }
+  });
+
+// ✅ [إضافة حرجية]: تحديث حقل الـ item داخل المحادثة ليرتبط بالغرض المحجوز الجديد
+exports.updateConversationItem = (conversationId, newItemId) =>
+  Conversation.findByIdAndUpdate(
+    conversationId,
+    { $set: { item: newItemId } },
+    { new: true }
+  );
 
 exports.createConversation = ({ item, participants }) =>
   Conversation.create({ item, participants, messages: [], lastActivity: new Date() });

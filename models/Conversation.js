@@ -29,7 +29,7 @@ const conversationSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-conversationSchema.index({ item: 1 }, { unique: true });
+conversationSchema.index({ item: 1, participants: 1 }, { unique: true });
 conversationSchema.index({ participants: 1, lastActivity: -1 });
 conversationSchema.index({ lastActivity: -1 });
 

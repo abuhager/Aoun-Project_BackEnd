@@ -29,29 +29,37 @@ exports.openConversationLogic = async ({ itemId, userId }) => {
   let participantB = null;
 
   if (userId === donorId) {
-    // 1. إذا كان المتبرع هو من يفتح الشات، يجب أن يكون الغرض محجوزاً لشخص ما لنعرف مع من يتحدث
     if (!bookedById) {
       throw Object.assign(new Error('لا توجد حجوزات نشطة على هذا الغرض للتحدث مع المستلم'), { status: 400 });
     }
     participantB = bookedById;
   } else {
-    // 2. إذا كان مستخدم عادي يفتح الشات، يتحدث مع المتبرع فوراً (سواء الغرض متاح أو محجوز له)
-    // حماية: إذا كان الغرض محجوزاً لشخص آخر، نمنع الأطراف الخارجية من التطفل
     if (bookedById && bookedById !== userId) {
       throw Object.assign(new Error('هذه المحادثة مقيدة، الغرض محجوز لمستلم آخر 🛡️'), { status: 403 });
     }
     participantB = donorId;
   }
 
-  // البحث عن محادثة قائمة بين الطرفين (المستخدم الحالي والطرف الثاني المستهدف)
-  let conv = await repo.findConversationByItemAndParticipants(itemId, userId, participantB);
+  // 🔥 [الحل القاطع]: ابحث أولاً بالأطراف (Participants Only) عشان نسحب التاريخ القديم غصب عن الـ itemId الجديد
+  let conv = await repo.findConversationByParticipantsOnly(userId, participantB);
   
-  // إذا لم توجد محادثة سابقة، قم بإنشاء واحدة جديدة
+  // إذا لم يجد بالأطراف (أول مرة يحكوا مع بعض)، ابحث بالـ itemId كخيار بديل
+  if (!conv) {
+    conv = await repo.findConversationByItemAndParticipants(itemId, userId, participantB);
+  }
+
+  // إذا كانت المحادثة مش موجودة نهائياً، أنشئ وحدة جديدة
   if (!conv) {
     conv = await repo.createConversation({ 
       item: itemId, 
       participants: [userId, participantB] 
     });
+  } else {
+    // 🔄 مزامنة: إذا وجدنا المحادثة القديمة، نحدث حقل الـ item بالـ itemId الجديد عشان الشات يربط ع الغرض الحالي
+    if (conv.item?.toString() !== itemId) {
+      await repo.updateConversationItem(conv._id, itemId);
+      conv.item = itemId; // تحديث الكائن في الذاكرة قبل الإرجاع
+    }
   }
 
   return toConversationOpenResponse(conv);

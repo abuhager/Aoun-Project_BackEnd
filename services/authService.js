@@ -6,6 +6,7 @@
 // ✅ FIX [DUP-PROF-02]     : phone + phoneVerified في buildSafeUser
 // ✅ FIX [PERF-PROF-02]    : حذف .select().lean() المكرر فوق findPublicProfile
 // ✅ FIX [SEC-PROF-03]     : توحيد صيغة الهاتف +962 قبل الحفظ في updateMeLogic
+// ✅ FIX [STUDENT-UPGRADE] : إصلاح مشكلة الترقية التلقائية للطلاب عند تأكيد الحساب
 
 const bcrypt       = require('bcryptjs');
 const crypto       = require('crypto');
@@ -33,11 +34,11 @@ const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const isUniversityEmail = async (email) => {
   const settings = await SystemSettings.getCached();
   const domains  = settings?.universityEmailDomains ?? [];
-  return domains.some((d) => email.toLowerCase().endsWith(d.toLowerCase()));
+  const lowerEmail = email.toLowerCase().trim();
+  return domains.some((d) => lowerEmail.endsWith(d.toLowerCase().trim()));
 };
 
 const _upgradeStudentTrust = async (user) => {
-  if (user.isVerifiedStudent) return;
   if (!(await isUniversityEmail(user.email))) return;
 
   user.isVerifiedStudent = true;
@@ -55,8 +56,8 @@ const buildSafeUser = (user) => ({
   _id:               user._id,
   name:              user.name,
   email:             user.email,
-  phone:             user.phone        ?? null,   // ✅ جديد
-  phoneVerified:     user.phoneVerified ?? false, // ✅ جديد
+  phone:             user.phone        ?? null,   
+  phoneVerified:     user.phoneVerified ?? false, 
   avatar:            user.avatar,
   role:              user.role,
   trustScore:        user.trustScore,
@@ -126,24 +127,41 @@ exports.resendOtpLogic = async ({ email }) => {
 
 // ─── registerLogic ───────────────────────────────────────────
 exports.registerLogic = async ({ name, email, password, phone }) => {
-  const exists = await userRepository.findByEmail(email);
-
-  if (exists) {
-    await bcrypt.hash(password, BCRYPT_ROUNDS);
-    const isStudent = await isUniversityEmail(email);
-    return { statusCode: 201, body: { msg: 'تم إنشاء الحساب! تحقق من إيميلك 📬', email, isVerifiedStudent: isStudent } };
-  }
-
   const settings          = await SystemSettings.getCached();
   const otpExpiryMinutes  = settings?.otpExpiryMinutes         ?? 10;
   const defaultQuota      = settings?.defaultUserQuota         ?? 2;
   const studentTrustLevel = settings?.studentDefaultTrustLevel ?? 2;
+  const isStudent         = await isUniversityEmail(email);
+
+  const exists = await userRepository.findByEmail(email);
+
+  if (exists) {
+    if (exists.isVerified) {
+      await bcrypt.hash(password, BCRYPT_ROUNDS);
+      return { statusCode: 201, body: { msg: 'تم إنشاء الحساب! تحقق من إيميلك 📬', email, isVerifiedStudent: isStudent } };
+    }
+
+    const rawOtp    = generateOtp();
+    const otpHash   = hashOtp(rawOtp);
+    const otpExpiry = new Date(Date.now() + otpExpiryMinutes * 60 * 1000);
+
+    await userRepository.updateUser(exists._id, {
+      verificationOtp:       otpHash,
+      verificationOtpExpiry: otpExpiry,
+      otpAttempts:           0,
+      isVerifiedStudent:     isStudent,
+      trustLevel:            isStudent ? studentTrustLevel : 1, 
+      quota:                 isStudent ? (settings?.studentQuota ?? 5) : defaultQuota,
+    });
+
+    await emailService.sendVerificationEmail(email, rawOtp, exists.name, isStudent);
+    return { statusCode: 201, body: { msg: 'تم إنشاء الحساب! تحقق من إيميلك 📬', email, isVerifiedStudent: isStudent } };
+  }
 
   const hashed    = await bcrypt.hash(password, BCRYPT_ROUNDS);
   const rawOtp    = generateOtp();
   const otpHash   = hashOtp(rawOtp);
   const otpExpiry = new Date(Date.now() + otpExpiryMinutes * 60 * 1000);
-  const isStudent = await isUniversityEmail(email);
 
   await userRepository.createUser({
     name,
@@ -154,7 +172,7 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
     verificationOtpExpiry: otpExpiry,
     otpAttempts:           0,
     isVerifiedStudent:     isStudent,
-    trustLevel:            isStudent ? studentTrustLevel : 1,
+    trustLevel:            isStudent ? studentTrustLevel : 1, 
     quota:                 isStudent ? (settings?.studentQuota ?? 5) : defaultQuota,
   });
 
@@ -199,12 +217,13 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
 
   const updatedUser = await userRepository.atomicVerifyAndComplete(user._id, user.verificationOtp, {
     $set: {
-      isVerified:      true,
-      trustLevel:      mutableUser.trustLevel,
-      quota:           mutableUser.quota,
-      otpAttempts:     0,
-      refreshToken:    hashedRefresh,
-      sessionIssuedAt: new Date(),
+      isVerified:        true,
+      isVerifiedStudent: mutableUser.isVerifiedStudent,
+      trustLevel:        mutableUser.trustLevel,
+      quota:             mutableUser.quota,
+      otpAttempts:       0,
+      refreshToken:      hashedRefresh,
+      sessionIssuedAt:   new Date(),
     },
     $unset: { verificationOtp: 1, verificationOtpExpiry: 1 },
   });
@@ -380,7 +399,6 @@ exports.getMeLogic = async (userId, page = 1) => {
   const user = await userRepository.findById(userId);
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
 
-  // ✅ FIX [DUP-PROF-01]: استخدام الدالة المشتركة
   const { pageSize, skip } = await _getProfilePageParams(page);
 
   const [
@@ -416,13 +434,11 @@ exports.getMeLogic = async (userId, page = 1) => {
 
 // ─── getPublicProfileLogic ────────────────────────────────────
 exports.getPublicProfileLogic = async (userId, page = 1) => {
-  // ✅ FIX [PERF-PROF-02]: حذف .select().lean() المكرر — findPublicProfile يُعيد lean() أصلاً
   const userCheck = await userRepository.findPublicProfile(userId);
 
   if (!userCheck) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
   if (userCheck.isBanned) return { statusCode: 403, body: { msg: 'هذا الحساب محظور' } };
 
-  // ✅ FIX [DUP-PROF-01]: استخدام الدالة المشتركة
   const { pageSize, skip } = await _getProfilePageParams(page);
 
   const [donations, received, totalRatings, totalDonationsCount, totalReceivedCount] = await Promise.all([
@@ -525,7 +541,6 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, mimetype) => {
   if (updates.name) user.name = updates.name.trim();
 
   if (updates.phone) {
-    // ✅ FIX [SEC-PROF-03]: توحيد صيغة الهاتف +962 قبل الحفظ
     let phone = updates.phone.replace(/[\s\-]/g, '');
     phone     = phone.replace(/^(00962|\+962|0)/, '');
     const normalizedPhone = `+962${phone}`;

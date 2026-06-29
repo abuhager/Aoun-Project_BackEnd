@@ -1,12 +1,10 @@
-// repositories/donationRequestRepository.js ✅ PATCHED [LOGIC-02 | SEC-02]
+// repositories/donationRequestRepository.js ✅ CLEANED & MOVED
 const DonationRequest = require('../models/DonationRequest');
-const DonationOffer   = require('../models/DonationOffer'); // ✅ SEC-02: كانت غائبة
 
 // عدد الطلبات في الشهر (بغض النظر عن الحالة) — للحد الأقصى عند الإنشاء
 exports.countAllMonthlyRequests = ({ userId, month }) =>
   DonationRequest.countDocuments({ requester: userId, month });
 
-// ✅ LOGIC-02: كانت مستدعاة في getMyRequestsLogic لكنها غير موجودة → TypeError
 // عدد الطلبات النشطة في الشهر — للعرض في صفحة "طلباتي"
 exports.countActiveMonthlyRequests = ({ userId, month, now }) =>
   DonationRequest.countDocuments({
@@ -84,7 +82,3 @@ exports.findRequestById = (requestId) =>
   DonationRequest.findById(requestId)
     .populate('requester', 'name avatar trustLevel trustScore')
     .lean();
-
-// ✅ SEC-02: DonationOffer مُضافة بـ require في أعلى الملف
-exports.countPendingOffersByDonor = (donorId) =>
-  DonationOffer.countDocuments({ donor: donorId, status: 'pending' });

@@ -1,196 +1,256 @@
-// scripts/seed.js
+// scripts/seed.js — النسخة المصلحة بتشفير الباسورد آمن
 const mongoose = require('mongoose');
-const bcrypt   = require('bcryptjs');
-require('dotenv').config();
+const dotenv = require('dotenv');
+const bcrypt = require('bcryptjs'); // 🔥 استيراد مكتبة التشفير
 
-const User    = require('../models/User');
-const Item    = require('../models/Item');
+// تحميل متغيرات البيئة
+dotenv.config();
+
+// استيراد الموديلات
+const User = require('../models/User');
 const SafeHub = require('../models/SafeHub');
+const Item = require('../models/Item');
+const DonationRequest = require('../models/DonationRequest');
+const DonationOffer = require('../models/DonationOffer');
+const Conversation = require('../models/Conversation');
+const Notification = require('../models/Notification');
+const Rating = require('../models/Rating');
+const Report = require('../models/Report');
+const SystemSettings = require('../models/SystemSettings');
+const AdminLog = require('../models/AdminLog');
 
-mongoose.connect(process.env.MONGO_URI).then(async () => {
-  console.log('✅ MongoDB متصل');
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:20017/aoun_db';
+const BCRYPT_ROUNDS = parseInt(process.env.BCRYPT_ROUNDS, 10) || 12;
 
-  // ─── نظّف كل شيء ───────────────────────────────────────────
-  await Promise.all([
-    User.deleteMany({}),
-    Item.deleteMany({}),
-    SafeHub.deleteMany({}),
-  ]);
-  console.log('🗑️  تم حذف البيانات القديمة');
+const seedDatabase = async () => {
+  try {
+    console.log('⏳ جاري الاتصال بقاعدة البيانات...');
+    await mongoose.connect(MONGO_URI);
+    console.log('✅ تم الاتصال بنجاح.');
 
-  // ─── 1. SafeHubs ────────────────────────────────────────────
-  const hubs = await SafeHub.create([
-    {
-      name:         'مركز الزرقاء الرئيسي',
-      address:      'شارع الملك طلال، مقابل البريد',
-      city:         'الزرقاء',
-      workingHours: '9:00 ص — 5:00 م',
-      isActive:     true,
-    },
-    {
-      name:         'مركز عمان الغربي',
-      address:      'شارع الجامعة الأردنية',
-      city:         'عمان',
-      workingHours: '10:00 ص — 6:00 م',
-      isActive:     true,
-    },
-    {
-      name:         'مركز إربد',
-      address:      'شارع الجامعة، بجانب مسجد النور',
-      city:         'إربد',
-      workingHours: '9:00 ص — 4:00 م',
-      isActive:     true,
-    },
-    {
-      name:         'مركز العقبة',
-      address:      'شارع الملك حسين',
-      city:         'العقبة',
-      workingHours: '8:00 ص — 3:00 م',
-      isActive:     false, // غير نشط — للتيست
-    },
-  ]);
-  console.log(`🏪 تم إضافة ${hubs.length} مراكز`);
+    // 1. تنظيف قاعدة البيانات القديمة لتجنب تعارض الفهارس الفريدة
+    console.log('🧹 جاري تنظيف البيانات القديمة...');
+    await Promise.all([
+      User.deleteMany({}),
+      SafeHub.deleteMany({}),
+      Item.deleteMany({}),
+      DonationRequest.deleteMany({}),
+      DonationOffer.deleteMany({}),
+      Conversation.deleteMany({}),
+      Notification.deleteMany({}),
+      Rating.deleteMany({}),
+      Report.deleteMany({}),
+      SystemSettings.deleteMany({}),
+      AdminLog.deleteMany({})
+    ]);
 
-  // ─── 2. Users ────────────────────────────────────────────────
-  const password = await bcrypt.hash('Test@1234', 10);
+    // 2. إدخال إعدادات النظام الأساسية
+    console.log('⚙️ إدخال إعدادات النظام...');
+    const settings = await SystemSettings.create({
+      _id: 'global',
+      defaultQuota: 2,
+      level2Quota: 4,
+      maxBookingsPerUser: 3,
+      maxActiveRequestsPerMonth: 2,
+      categories: ['كتب', 'إلكترونيات', 'أثاث', 'ملابس', 'أخرى'],
+      universityEmailDomains: [
+        '@student.ju.edu.jo',   '@ju.edu.jo',
+        '@std-zuj.edu.jo',      '@stu.yarmouk.edu.jo', // 🔥 نطاق جامعة الزيتونة مدمج وثابت
+        '@yarmouk.edu.jo',     '@psut.edu.jo',
+      ],
+      reportReasons: ['لم يُسلّم الغرض', 'معلومات مضللة', 'سلوك غير لائق', 'أخرى']
+    });
 
-  const users = await User.create([
-    {
-      name:               'أحمد المتبرع',
-      email:              'donor@test.com',
-      password,
-      role:               'user',
-      quota:              5,
-      trustScore:         85,
-      isVerifiedStudent:  true,
-      phone:              '0791234567',
-    },
-    {
-      name:               'سارة المستلمة',
-      email:              'receiver@test.com',
-      password,
-      role:               'user',
-      quota:              3,
-      trustScore:         70,
-      isVerifiedStudent:  true,
-      phone:              '0797654321',
-    },
-    {
-      name:               'مريم المستخدمة',
-      email:              'user@test.com',
-      password,
-      role:               'user',
-      quota:              5,
-      trustScore:         60,
-      isVerifiedStudent:  false,
-      phone:              '0799999999',
-    },
-    {
-      name:               'Admin النظام',
-      email:              'admin@test.com',
-      password,
-      role:               'admin',
-      quota:              99,
-      trustScore:         100,
-      isVerifiedStudent:  false,
-      phone:              '0790000000',
-    },
-  ]);
-  console.log(`👥 تم إضافة ${users.length} مستخدمين`);
+    // 3. تشفير الرقم السري للمستخدمين التجريبيين
+    console.log('🔐 جاري تشفير كلمة المرور الافتراضية...');
+    const rawPassword = '1870547aA';
+    const hashedPassword = await bcrypt.hash(rawPassword, BCRYPT_ROUNDS); // 🔥 تشفير حقيقي يطابق الباكيند
 
-  const [donor, receiver, , ] = users;
+    console.log('👤 إنشاء مستخدمين تجريبيين مفعّلين...');
+    const admin = await User.create({
+      name: 'أحمد المسؤول',
+      email: 'admin@aoun.jo',
+      password: hashedPassword, // الحفظ بالهاش المشفر
+      role: 'admin',
+      isVerified: true,
+      phone: '+962790000001',
+      phoneVerified: true,
+      trustLevel: 4,
+      trustScore: 100
+    });
 
-  // ─── 3. Items ────────────────────────────────────────────────
-  const items = await Item.create([
-    // متاح
-    {
-      title:       'لابتوب ديل Core i5',
-      description: 'لابتوب مستعمل بحالة ممتازة، الرام 8GB والهارد 256GB SSD',
-      category:    'إلكترونيات',
-      location:    'الزرقاء',
-      condition:   'مستعمل ممتاز',
-      status:      'متاح',
-      imageUrl:    'https://placehold.co/400x300?text=Laptop',
-      donor:       donor._id,
-      safeHub:     hubs[0]._id,
-    },
-    {
-      title:       'كتب جامعية — هندسة برمجيات',
-      description: 'مجموعة كتب سنة ثانية، حالة جيدة جداً',
-      category:    'كتب',
-      location:    'عمان',
-      condition:   'مستعمل جيد',
-      status:      'متاح',
-      imageUrl:    'https://placehold.co/400x300?text=Books',
-      donor:       donor._id,
-      safeHub:     hubs[1]._id,
-    },
-    {
-      title:       'كرسي مكتب مريح',
-      description: 'كرسي مكتب بظهر طويل، مستعمل سنة واحدة فقط',
-      category:    'أثاث',
-      location:    'إربد',
-      condition:   'مستعمل ممتاز',
-      status:      'متاح',
-      imageUrl:    'https://placehold.co/400x300?text=Chair',
-      donor:       donor._id,
-      safeHub:     hubs[2]._id,
-    },
-    // محجوز
-    {
-      title:       'هاتف سامسونج A52',
-      description: 'هاتف بحالة جيدة، بطارية تدوم يوم كامل',
-      category:    'إلكترونيات',
-      location:    'الزرقاء',
-      condition:   'مستعمل جيد',
-      status:      'محجوز',
-      imageUrl:    'https://placehold.co/400x300?text=Phone',
-      donor:       donor._id,
-      bookedBy:    receiver._id,
-      bookedAt:    new Date(),
-      deliveryOtp: '4821',
-      safeHub:     hubs[0]._id,
-    },
-    // تم التسليم
-    {
-      title:       'طابعة HP LaserJet',
-      description: 'طابعة ليزر بحالة جيدة، تحتاج كارتريج جديد',
-      category:    'إلكترونيات',
-      location:    'عمان',
-      condition:   'مستعمل جيد',
-      status:      'تم التسليم',
-      imageUrl:    'https://placehold.co/400x300?text=Printer',
-      donor:       donor._id,
-      bookedBy:    receiver._id,
-      bookedAt:    new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
-      isRated:     false,
-      safeHub:     hubs[1]._id,
-    },
-    // جديد
-    {
-      title:       'ملابس شتوية للأطفال',
-      description: 'ملابس نظيفة مقاس 8-10 سنوات',
-      category:    'ملابس',
-      location:    'الزرقاء',
-      condition:   'جديد',
-      status:      'متاح',
-      imageUrl:    'https://placehold.co/400x300?text=Clothes',
-      donor:       receiver._id, // المستلمة تتبرع أيضاً
-      safeHub:     hubs[0]._id,
-    },
-  ]);
-  console.log(`📦 تم إضافة ${items.length} أغراض`);
+    const donor = await User.create({
+      name: 'عمر المتبرع',
+      email: 'donor@gmail.com',
+      password: hashedPassword,
+      role: 'user',
+      isVerified: true,
+      phone: '+962790000002',
+      phoneVerified: true,
+      trustLevel: 2,
+      trustScore: 85,
+      totalDonations: 5
+    });
 
-  // ─── ملخص ───────────────────────────────────────────────────
-  console.log('\n══════════════════════════════');
-  console.log('🎉 Seed تم بنجاح!');
-  console.log('══════════════════════════════');
-  console.log('📧 Accounts:');
-  console.log('   donor@test.com    | Test@1234 | متبرع');
-  console.log('   receiver@test.com | Test@1234 | مستلم');
-  console.log('   user@test.com     | Test@1234 | مستخدم عادي');
-  console.log('   admin@test.com    | Test@1234 | أدمن');
-  console.log('══════════════════════════════\n');
+    const requester = await User.create({
+      name: 'سارة المستلمة',
+      email: 'sara@student.ju.edu.jo',
+      password: hashedPassword,
+      role: 'user',
+      isVerified: true,
+      phone: '+962790000003',
+      phoneVerified: true,
+      isVerifiedStudent: true,
+      trustLevel: 1,
+      trustScore: 70
+    });
 
-  mongoose.disconnect();
-});
+    // 4. إنشاء المراكز الآمنة (SafeHubs)
+    console.log('📍 إنشاء المراكز الآمنة...');
+    const hubAmman = await SafeHub.create({
+      name: 'مركز عمان الآمن - العبدلي',
+      address: 'شارع الملك حسين، بجانب الهيئة المستقلة',
+      city: 'عمان',
+      coordinates: { lat: 31.9631, lng: 35.9052 },
+      isActive: true,
+      createdBy: admin._id,
+      workingHours: '9:00 ص — 6:00 م'
+    });
+
+    const hubIrbid = await SafeHub.create({
+      name: 'مركز إربد الآمن - قُرب جامعة اليرموك',
+      address: 'شارع الجامعة، مجمع الرشيد',
+      city: 'إربد',
+      coordinates: { lat: 32.5514, lng: 35.8514 },
+      isActive: true,
+      createdBy: admin._id
+    });
+
+    // 5. إنشاء طلب تبرع (Donation Request)
+    console.log('📝 إنشاء طلبات التبرع...');
+    const request1 = await DonationRequest.create({
+      requester: requester._id,
+      title: 'بحاجة إلى كتاب فيزياء 101 للجامعة',
+      category: 'كتب',
+      urgency: 'high',
+      description: 'أنا طالبة في الجامعة الأردنية وأحتاج هذا الكتاب لغايات الدراسة الحالية.',
+      location: 'عمان',
+      status: 'active',
+      month: new Date().toISOString().substring(0, 7),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+    });
+
+    // 6. إنشاء عرض تبرع مبني على الطلب (Donation Offer)
+    console.log('🤝 إنشاء عروض التبرع...');
+    const offer1 = await DonationOffer.create({
+      request: request1._id,
+      donor: donor._id,
+      safeHub: hubAmman._id,
+      condition: 'مستعمل ممتاز',
+      description: 'لدي نسخة نظيفة جداً من كتاب الفيزياء 101 وسأقوم بتسليمها للمركز غداً.',
+      status: 'pending'
+    });
+
+    // 7. إنشاء غرض متاح عام (Item)
+    console.log('📦 إنشاء الأغراض المتاحة...');
+    const item1 = await Item.create({
+      title: 'شاحن حاسوب محمول HP أصلي',
+      description: 'شاحن مستعمل يعمل بكفاءة ممتازة، بقوة 65 واط.',
+      category: 'إلكترونيات',
+      location: 'عمان',
+      condition: 'مستعمل جيد',
+      safeHub: hubAmman._id,
+      donor: donor._id,
+      status: 'متاح',
+      waitlist: []
+    });
+
+    const item2 = await Item.create({
+      title: 'طاولة دراسة خشبية',
+      description: 'طاولة صغيرة مناسبة لطلاب الشقق المفروشة.',
+      category: 'أثاث',
+      location: 'إربد',
+      condition: 'مستعمل ممتاز',
+      safeHub: hubIrbid._id,
+      donor: donor._id,
+      bookedBy: requester._id,
+      bookedAt: new Date(),
+      status: 'محجوز'
+    });
+
+    // 8. إنشاء محادثة (Conversation)
+    console.log('💬 إنشاء المحادثات والرسائل...');
+    await Conversation.create({
+      item: item2._id,
+      participants: [donor._id, requester._id],
+      messages: [
+        {
+          sender: requester._id,
+          text: 'مرحباً، هل الطاولة تفك وتتركب بسهولة؟',
+          createdAt: new Date(Date.now() - 3600000),
+          read: true
+        },
+        {
+          sender: donor._id,
+          text: 'أهلاً وسهلاً، نعم الطاولة خفيفة ويمكن نقلها بالسيارة العادية بسهولة.',
+          createdAt: new Date(Date.now() - 1800000),
+          read: false
+        }
+      ],
+      lastActivity: new Date()
+    });
+
+    // 9. إنشاء تقييم افتراضي
+    console.log('⭐ إنشاء التقييمات...');
+    await Rating.create({
+      item: item2._id,
+      rater: requester._id,
+      ratee: donor._id,
+      score: 9,
+      comment: 'المتبرع متعاون جداً وجزاه الله خيراً',
+      isHandoverConfirmed: true,
+      trustDelta: 5
+    });
+
+    // 10. إنشاء بلاغ تجريبي
+    console.log('🚩 إنشاء بلاغات الشكاوى...');
+    await Report.create({
+      reporter: requester._id,
+      reportedUser: donor._id,
+      relatedItem: item1._id,
+      reason: 'معلومات مضللة',
+      details: 'لقد ذكرت هذا البلاغ كنموذج فحص للنظام فقط لضمان عمل الفهارس المركبة.',
+      status: 'pending'
+    });
+
+    // 11. سجلات المشرفين (Admin Logs)
+    console.log('🛡️ إنشاء سجلات الرقابة...');
+    await AdminLog.create({
+      adminId: admin._id,
+      action: 'HUB_MANAGE',
+      targetModel: 'User',
+      targetName: 'تحديث مراكز الدعم الافتراضية للبلد',
+      adminNote: 'تم تهيئة النظام وبدء العمل بالـ SafeHubs الجديدة'
+    });
+
+    // 12. إشعارات (Notifications)
+    console.log('🔔 إرسال الإشعارات الافتراضية...');
+    await Notification.create({
+      user: donor._id,
+      type: 'request_new_offer',
+      title: 'عرض جديد مطلوب',
+      body: 'هناك طلب متوافق مع تصنيفاتك المفضلة، تفقد قائمة الطلبات الحالية.'
+    });
+
+    console.log('--------------------------------------------------');
+    console.log('🎉 تم ملء قاعدة البيانات بالباسوردات المشفرة بنجاح!');
+    console.log('--------------------------------------------------');
+    
+    process.exit(0);
+  } catch (error) {
+    console.error('❌ حدث خطأ أثناء عملية السيرش (Seeding):', error);
+    process.exit(1);
+  }
+};
+
+seedDatabase();
