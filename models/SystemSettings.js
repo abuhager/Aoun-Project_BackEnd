@@ -98,7 +98,7 @@ const systemSettingsSchema = new mongoose.Schema(
     requireHubForBooking: { type: Boolean, default: false },
     maintenanceMode:      { type: Boolean, default: false },
     platformName: { type: String, default: process.env.PLATFORM_NAME ?? 'عون' },
-    contactEmail:         { type: String,  default: 'support@aoun.jo' },
+    contactEmail:         { type: String,  default: 'aoun.help.center@gmail.com' },
   },
   { timestamps: true }
 );
