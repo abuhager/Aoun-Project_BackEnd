@@ -14,11 +14,15 @@ exports.getStats = () => adminRepo.getDashboardStats();
 // ─── Users ────────────────────────────────────────────────────
 exports.listUsers = async ({ page = 1, search = '', banned = '' }) => {
   const normalizedPage = Math.max(1, +page || 1);
+  // ✅ FIX [HC-ADMIN-01]: adminPageSize ديناميكي بدل 20 ثابت
+  const settings  = await SystemSettings.getCached();
+  const PAGE_SIZE = settings?.adminPageSize ?? 20;
+
   const [users, total] = await Promise.all([
-    adminRepo.findAllUsers({ page: normalizedPage, search, banned }),
+    adminRepo.findAllUsers({ page: normalizedPage, search, banned, limit: PAGE_SIZE }),
     adminRepo.countUsers({ search, banned }),
   ]);
-  return { users, total, page: normalizedPage, pages: Math.ceil(total / 20) };
+  return { users, total, page: normalizedPage, pages: Math.ceil(total / PAGE_SIZE) };
 };
 
 exports.banUser = async (userId, adminId, reason, adminNote) => {
@@ -53,11 +57,15 @@ exports.unbanUser = async (userId, adminId, adminNote = null) => {
 // ─── Items ────────────────────────────────────────────────────
 exports.listItems = async ({ page = 1 }) => {
   const normalizedPage = Math.max(1, +page || 1);
+  // ✅ FIX [HC-ADMIN-01]: adminPageSize ديناميكي بدل 20 ثابت
+  const settings  = await SystemSettings.getCached();
+  const PAGE_SIZE = settings?.adminPageSize ?? 20;
+
   const [items, total] = await Promise.all([
-    adminRepo.findAllItems({ page: normalizedPage }),
+    adminRepo.findAllItems({ page: normalizedPage, limit: PAGE_SIZE }),
     adminRepo.countItems(),
   ]);
-  return { items, total, page: normalizedPage, pages: Math.ceil(total / 20) };
+  return { items, total, page: normalizedPage, pages: Math.ceil(total / PAGE_SIZE) };
 };
 
 exports.deleteItem = async (itemId, adminId, adminNote) => {
@@ -83,24 +91,24 @@ exports.deleteItem = async (itemId, adminId, adminNote) => {
 
 // ─── Reports ──────────────────────────────────────────────────
 exports.listReports = async ({ page = 1, status = null } = {}) => {
-  // ✅ FIX BUG-06: status=null يعني كل الحالات، لا يوجد default
   const normalizedPage = Math.max(1, +page || 1);
-  const LIMIT = 10; // ✅ FIX BUG-07: توحيد limit=10 ليطابق Frontend SWR_KEY
+  // ✅ FIX [HC-ADMIN-02]: adminReportsPageSize ديناميكي بدل LIMIT = 10 ثابت
+  const settings = await SystemSettings.getCached();
+  const LIMIT    = settings?.adminReportsPageSize ?? 10;
 
   const { reports, total } = await adminRepo.findPendingReportsWithCounts({
     page: normalizedPage,
     limit: LIMIT,
-    status, // null = بدون فلتر
+    status,
   });
 
   return {
     reports,
     total,
     page:       normalizedPage,
-    totalPages: Math.ceil(total / LIMIT), // ✅ FIX BUG-07: "totalPages" بدلاً من "pages"
+    totalPages: Math.ceil(total / LIMIT),
   };
 };
-
 exports.resolveReport = async (reportId, adminId, status, adminNote = null) => {
   // ✅ FIX BUG-01: قبول status مباشرة بدلاً من action
   const allowedStatuses = ['actioned', 'reviewed', 'dismissed'];
@@ -156,11 +164,15 @@ exports.resolveReport = async (reportId, adminId, status, adminNote = null) => {
 // ─── Audit Logs ───────────────────────────────────────────────
 exports.listAuditLogs = async ({ page = 1 }) => {
   const normalizedPage = Math.max(1, +page || 1);
+  // ✅ FIX [HC-ADMIN-01]: adminPageSize ديناميكي بدل 20 ثابت
+  const settings  = await SystemSettings.getCached();
+  const PAGE_SIZE = settings?.adminPageSize ?? 20;
+
   const [logs, total] = await Promise.all([
-    adminRepo.findAdminLogs({ page: normalizedPage }),
+    adminRepo.findAdminLogs({ page: normalizedPage, limit: PAGE_SIZE }),
     AdminLog.countDocuments(),
   ]);
-  return { logs, total, page: normalizedPage, pages: Math.ceil(total / 20) };
+  return { logs, total, page: normalizedPage, pages: Math.ceil(total / PAGE_SIZE) };
 };
 
 // ─── Promote / Demote ─────────────────────────────────────────

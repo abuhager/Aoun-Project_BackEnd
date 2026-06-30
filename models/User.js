@@ -24,7 +24,7 @@ const userSchema = new mongoose.Schema(
     phoneOtpExpiry:    { type: Date,   select: false },
 
     // ── نظام التحقق ومستوى الثقة ───────────────────────────
-    trustLevel:        { type: Number, min: 1, max: 4, default: 1 },
+    trustLevel: { type: Number, min: 1, max: 2, default: 1 },
     trustScore:        { type: Number, default: 70 },
     promotedByAdmin:   { type: Boolean, default: false },
     isVerifiedStudent: { type: Boolean, default: false },

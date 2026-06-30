@@ -81,9 +81,16 @@ const schemas = {
   }).unknown(false),
 
   resolveReport: Joi.object({
-    action:    Joi.string().valid('warn', 'ban', 'dismiss').required(),
-    adminNote: Joi.string().max(1000).optional().allow('').trim(),
-  }).unknown(false),
+  status: Joi.string()
+    .valid('reviewed', 'dismissed', 'actioned')
+    .required()
+    .messages({ 'any.only': 'الحالة يجب أن تكون: reviewed أو dismissed أو actioned' }),
+  adminNote: Joi.string().min(3).max(1000).required().trim()
+    .messages({
+      'string.empty': 'ملاحظة المشرف مطلوبة',
+      'string.min': 'ملاحظة المشرف يجب أن تكون 3 أحرف على الأقل',
+    }),
+}).unknown(false),
 
   adjustTrust: Joi.object({
     delta: Joi.number().integer().min(-100).max(100).required(),

@@ -2,43 +2,81 @@
 const mongoose      = require('mongoose');
 const EventEmitter  = require('events');
 
-// ─── DC-04: EventEmitter مركزي لإخطار باقي النظام بتغيير الإعدادات ───────
 const settingsEvents = new EventEmitter();
 
 const systemSettingsSchema = new mongoose.Schema(
   {
-    _id:                           { type: String,   default: 'global' },
-    defaultQuota:                  { type: Number,   default: 2,   min: 0,  max: 20 },
-    level2Quota:                   { type: Number,   default: 4,   min: 0,  max: 20 },
-    maxBookingsPerUser:            { type: Number,   default: 3,   min: 1,  max: 10 },
-    maxActiveRequestsPerMonth:     { type: Number,   default: 1,   min: 1,  max: 5  },
-    requestExpiryDays:             { type: Number,   default: 30,  min: 1,  max: 180 },
-    donorQuotaReward:              { type: Number,   default: 1,   min: 0,  max: 5  },
-    trustScorePerDonation:         { type: Number,   default: 5,   min: 0,  max: 20 },
-    trustScorePerRequest:          { type: Number,   default: 2,   min: 0,  max: 10 },
-    bookingExpiryHours:            { type: Number,   default: 72,  min: 1,  max: 336 },
-    maxActiveDonationsPerUser:     { type: Number,   default: 2,   min: 1,  max: 20 },
-    maxActiveDonationsLevel2Plus:  { type: Number,   default: 4,   min: 1,  max: 20 },
+    _id: { type: String, default: 'global' },
+
+    // ─── حصص المستخدمين ──────────────────────────────────────────────────
+    defaultUserQuota:         { type: Number, default: 2, min: 0, max: 20 },
+    studentQuota:             { type: Number, default: 5, min: 1, max: 20 },
+    studentDefaultTrustLevel: { type: Number, default: 2, min: 1, max: 4  },
+    level2Quota:              { type: Number, default: 4, min: 0, max: 20 },
+
+    // ─── حدود الحجز والتبرع ──────────────────────────────────────────────
+    maxBookingsPerUser:           { type: Number, default: 3,  min: 1, max: 10  },
+    maxActiveRequestsPerMonth:    { type: Number, default: 1,  min: 1, max: 5   },
+    maxActiveDonationsPerUser:    { type: Number, default: 2,  min: 1, max: 20  },
+    maxActiveDonationsLevel2Plus: { type: Number, default: 4,  min: 1, max: 20  },
+    bookingExpiryHours:           { type: Number, default: 72, min: 1, max: 336 },
+    requestExpiryDays:            { type: Number, default: 30, min: 1, max: 180 },
+
+    // ─── نقاط الثقة والمكافآت ────────────────────────────────────────────
+    donorQuotaReward:      { type: Number, default: 1, min: 0, max: 5  },
+    trustScorePerDonation: { type: Number, default: 5, min: 0, max: 20 },
+    trustScorePerRequest:  { type: Number, default: 2, min: 0, max: 10 },
+
+    // ✅ [HC-RATING-01]: حدود حساب trustDelta ديناميكية بدل hardcoded
+    ratingThresholdExcellent: { type: Number, default: 9, min: 1, max: 10 },
+    ratingThresholdGood:      { type: Number, default: 7, min: 1, max: 10 },
+    ratingThresholdNeutral:   { type: Number, default: 5, min: 1, max: 10 },
+    ratingThresholdBad:       { type: Number, default: 3, min: 1, max: 10 },
+
+    // ─── التصنيفات وأسباب البلاغات ───────────────────────────────────────
     categories: {
       type: [String],
       default: ['كتب', 'إلكترونيات', 'أثاث', 'ملابس', 'أخرى'],
       validate: {
         validator: (v) => v.length >= 1 && v.length <= 30,
-        message: 'يجب أن يكون هناك تصنيف واحد على الأقل',
+        message:   'يجب أن يكون هناك تصنيف واحد على الأقل',
       },
     },
     reportReasons: {
       type: [String],
       default: [
-        'لم يُسلّم الغرض',
-        'معلومات مضللة',
-        'سلوك غير لائق',
-        'غرض مختلف عن الوصف',
-        'أخرى',
+        'لم يُسلّم الغرض', 'معلومات مضللة',
+        'سلوك غير لائق', 'غرض مختلف عن الوصف', 'أخرى',
       ],
     },
-    autoReportBanThreshold:   { type: Number,  default: 5,               min: 1,  max: 20 },
-    quotaResetDayOfMonth:     { type: Number,  default: 1,               min: 1,  max: 28 },
+
+    // ─── حدود البلاغات والحظر ────────────────────────────────────────────
+    autoReportBanThreshold: { type: Number, default: 5, min: 1, max: 20 },
+
+    // ─── إعدادات OTP وكلمة المرور ────────────────────────────────────────
+    otpExpiryMinutes:           { type: Number, default: 10, min: 1,  max: 60  },
+    maxOtpAttempts:             { type: Number, default: 5,  min: 3,  max: 10  },
+    resetPasswordExpiryMinutes: { type: Number, default: 15, min: 5,  max: 60  },
+
+    // ─── إعدادات الصور الشخصية ───────────────────────────────────────────
+    maxAvatarSizeMb: { type: Number, default: 5,   min: 1,   max: 20   },
+    avatarWidth:     { type: Number, default: 400, min: 100, max: 1000 },
+    avatarHeight:    { type: Number, default: 400, min: 100, max: 1000 },
+
+    // ─── إعدادات Pagination ──────────────────────────────────────────────
+    maxPageSize:          { type: Number, default: 20, min: 5, max: 100 },
+    profilePageSize:      { type: Number, default: 10, min: 5, max: 50  },
+    // ✅ [HC-ADMIN-01/02]: pagination لوحة الآدمن ديناميكي
+    adminPageSize:        { type: Number, default: 20, min: 5, max: 100 },
+    adminReportsPageSize: { type: Number, default: 10, min: 5, max: 50  },
+
+    // ─── إعدادات الطلبات والعروض ──────────────────────────────────────────
+    // ✅ [HC-OFFER-01]: حدود الأهلية والعروض ديناميكية
+    minTrustLevelForRequests: { type: Number, default: 2, min: 1, max: 4 },
+    minTrustLevelForDonating: { type: Number, default: 1, min: 1, max: 4 },
+    maxPendingOffersPerDonor: { type: Number, default: 5, min: 1, max: 20 },
+
+    // ─── إعدادات الجامعات ─────────────────────────────────────────────────
     universityEmailDomains: {
       type: [String],
       default: [
@@ -54,34 +92,30 @@ const systemSettingsSchema = new mongoose.Schema(
         '@psut.edu.jo',         '@gju.edu.jo',
       ],
     },
+
+    // ─── إعدادات النظام العامة ────────────────────────────────────────────
+    quotaResetDayOfMonth: { type: Number,  default: 1,                min: 1, max: 28 },
     requireHubForBooking: { type: Boolean, default: false },
     maintenanceMode:      { type: Boolean, default: false },
-    platformName:         { type: String,  default: 'عون' },
+    platformName:         { type: String,  default: 'عون'             },
     contactEmail:         { type: String,  default: 'support@aoun.jo' },
   },
   { timestamps: true }
 );
 
-// ─── getInstance ──────────────────────────────────────────────────────────────
-// DC-03 FIX: استخدام lean() في كلا المسارين لإرجاع plain object نظيف
+// ─── getInstance ─────────────────────────────────────────────────────────────
 systemSettingsSchema.statics.getInstance = async function () {
   let settings = await this.findById('global').lean();
-
   if (!settings) {
-    // DC-03 FIX: بدل doc.toObject() — نُنشئ ثم نجلب بـ lean() مباشرةً
     await this.create({ _id: 'global' });
     settings = await this.findById('global').lean();
   }
-
   return settings;
 };
 
-// ─── In-Memory Cache ──────────────────────────────────────────────────────────
-// DC-02 NOTE: هذا الـ cache يعمل بشكل صحيح في بيئة single-process (Render, Vercel, PM2 fork)
-// في بيئة PM2 cluster مع عدة workers: TTL القصير (5 ثانية) يُقلّل stale window
-// الحل الدائم لـ cluster هو استبدال _cache بـ Redis — انظر TODO أدناه
+// ─── In-Memory Cache ─────────────────────────────────────────────────────────
 const IS_CLUSTER = parseInt(process.env.WEB_CONCURRENCY ?? '1', 10) > 1;
-const CACHE_TTL  = IS_CLUSTER ? 5_000 : 60_000; // DC-02 FIX: TTL قصير في cluster
+const CACHE_TTL  = IS_CLUSTER ? 5_000 : 60_000;
 
 let _cache   = null;
 let _cacheAt = 0;
@@ -93,23 +127,13 @@ systemSettingsSchema.statics.getCached = async function () {
   return _cache;
 };
 
-// DC-02 + DC-04 FIX: invalidateCache تُطلق حدث 'invalidated' ليستمع إليه
-// أي كود في النظام يحتاج يعيد تحميل الإعدادات
 systemSettingsSchema.statics.invalidateCache = function () {
   _cache   = null;
   _cacheAt = 0;
-  // DC-04: إخطار باقي النظام بأن الإعدادات تغيّرت
   settingsEvents.emit('invalidated');
 };
 
-// TODO [DC-02 FINAL]: لحل cluster بشكل نهائي، استبدل _cache بـ:
-// const redis = require('../config/redis');
-// getCached  → redis.get('sys:settings') مع JSON.parse
-// invalidate → redis.del('sys:settings') + redis.publish('settings:invalidated', '1')
-// كل worker يستمع: redis.subscribe('settings:invalidated', () => { _localCache = null })
-
 const SystemSettings = mongoose.model('SystemSettings', systemSettingsSchema);
 
-// DC-04: export الـ EventEmitter مع الـ Model
-module.exports              = SystemSettings;
+module.exports                = SystemSettings;
 module.exports.settingsEvents = settingsEvents;

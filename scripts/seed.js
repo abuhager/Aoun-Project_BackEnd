@@ -75,7 +75,7 @@ const seedDatabase = async () => {
       isVerified: true,
       phone: '+962790000001',
       phoneVerified: true,
-      trustLevel: 4,
+      trustLevel: 2,
       trustScore: 100
     });
 
