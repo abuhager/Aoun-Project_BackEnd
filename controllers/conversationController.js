@@ -1,72 +1,71 @@
-// controllers/conversationController.js
-const svc  = require('../services/conversationService');
-const repo = require('../repositories/conversationRepository');
-const uid  = (req) => (req.user._id || req.user.id).toString();
+const catchAsync = require("../utils/asyncHandler");
+const conversationService = require("../services/conversationService");
 
+const uid = (req) => req.user?.id || req.user?._id?.toString();
 
-// GET /api/conversations
-exports.listConversations = async (req, res, next) => {
-  try {
-    const result = await svc.listConversationsLogic(uid(req));
-    // [FIX] الفرونت يتوقع مصفوفة مباشرة، وليس { conversations: [...] }
-    res.json(result.conversations);
-  } catch (e) { next(e); }
-};
+exports.listConversations = catchAsync(async (req, res) => {
+  const data = await conversationService.listConversationsLogic(uid(req));
+  res.status(200).json({
+    status: "success",
+    results: data.length,
+    data,
+  });
+});
 
+exports.openConversation = catchAsync(async (req, res) => {
+  const data = await conversationService.openConversationLogic({
+    itemId: req.body.itemId,
+    userId: uid(req),
+    io: req.io,
+  });
 
-// POST /api/conversations
-exports.openConversation = async (req, res, next) => {
-  try {
-    const result = await svc.openConversationLogic({
-      itemId: req.body.itemId,
-      userId: uid(req),
-      io: req.io,
-    });
+  res.status(200).json({
+    status: "success",
+    data,
+  });
+});
 
-    const messages = await repo.findMessagesByConversation(
-      result.conversation._id.toString(),
-      { page: 1, limit: 30 }
-    );
+exports.getMessages = catchAsync(async (req, res) => {
+  const data = await conversationService.getMessagesLogic({
+    conversationId: req.params.conversationId,
+    userId: uid(req),
+    io: req.io,
+    page: req.query.page || 1,
+  });
 
-    res.json({ ...result.conversation, messages });
-  } catch (e) { next(e); }
-};
+  res.status(200).json({
+    status: "success",
+    ...data,
+  });
+});
 
+exports.sendMessage = catchAsync(async (req, res) => {
+  const data = await conversationService.sendMessageLogic({
+    conversationId: req.params.conversationId,
+    text: req.body.text,
+    correlationId: req.body.correlationId,
+    user: {
+      id: uid(req),
+      name: req.user?.name,
+    },
+    io: req.io,
+  });
 
-// GET /api/conversations/:conversationId/messages
-exports.getMessages = async (req, res, next) => {
-  try {
-    res.json(await svc.getMessagesLogic({
-      conversationId: req.params.conversationId,
-      userId: uid(req),
-      io: req.io,
-      page: req.query.page,
-    }));
-  } catch (e) { next(e); }
-};
+  res.status(201).json({
+    status: "success",
+    ...data,
+  });
+});
 
+exports.markConversationRead = catchAsync(async (req, res) => {
+  const data = await conversationService.markConversationReadLogic({
+    conversationId: req.params.conversationId,
+    userId: uid(req),
+    io: req.io,
+  });
 
-// POST /api/conversations/:conversationId/messages
-exports.sendMessage = async (req, res, next) => {
-  try {
-    res.status(201).json(await svc.sendMessageLogic({
-      conversationId: req.params.conversationId,
-      text: req.body.text,
-      correlationId: req.body.correlationId,
-      user: { id: uid(req), name: req.user.name },
-      io: req.io,
-    }));
-  } catch (e) { next(e); }
-};
-
-
-// PUT /api/conversations/:conversationId/read
-exports.markConversationRead = async (req, res, next) => {
-  try {
-    res.json(await svc.markConversationReadLogic({
-      conversationId: req.params.conversationId,
-      userId: uid(req),
-      io: req.io,
-    }));
-  } catch (e) { next(e); }
-};
+  res.status(200).json({
+    status: "success",
+    ...data,
+  });
+});

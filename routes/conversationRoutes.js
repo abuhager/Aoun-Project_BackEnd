@@ -1,13 +1,23 @@
-// routes/conversationRoutes.js
-const express    = require('express');
-const router     = express.Router();
-const c          = require('../controllers/conversationController');
-const { requireAuth } = require('../middlewares/auth');
+const express = require("express");
+const auth = require("../middlewares/auth");
+const controller = require("../controllers/conversationController");
 
-router.get ('/',                         requireAuth, c.listConversations);
-router.post('/',                         requireAuth, c.openConversation);
-router.get ('/:conversationId/messages', requireAuth, c.getMessages);
-router.post('/:conversationId/messages', requireAuth, c.sendMessage);
-router.put ('/:conversationId/read',     requireAuth, c.markConversationRead);
+const router = express.Router();
+
+router.use(auth.requireAuth);
+
+router
+  .route("/")
+  .get(controller.listConversations)
+  .post(controller.openConversation);
+
+router
+  .route("/:conversationId/messages")
+  .get(controller.getMessages)
+  .post(controller.sendMessage);
+
+router
+  .route("/:conversationId/read")
+  .put(controller.markConversationRead);
 
 module.exports = router;

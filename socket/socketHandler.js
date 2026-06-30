@@ -1,8 +1,8 @@
-const { Server } = require('socket.io');
-const jwt          = require('jsonwebtoken');
-const Conversation = require('../models/Conversation');
-const Message      = require('../models/Message');
-const Item         = require('../models/Item');
+const { Server }       = require('socket.io');
+const jwt              = require('jsonwebtoken');
+const Conversation     = require('../models/Conversation');
+const Message          = require('../models/Message');
+const Item             = require('../models/Item');
 
 let io;
 
@@ -12,101 +12,89 @@ function getAllowedOrigins() {
 }
 
 const initSocket = (httpServer) => {
-  const allowedOrigins = getAllowedOrigins();
-
   io = new Server(httpServer, {
     cors: {
       origin(origin, cb) {
         if (!origin) return cb(null, true);
-        if (allowedOrigins.includes(origin)) return cb(null, true);
+        if (getAllowedOrigins().includes(origin)) return cb(null, true);
         return cb(new Error(`CORS_ORIGIN_DENIED:${origin}`));
       },
       credentials: true,
     },
   });
 
-  // ── 1. Auth Middleware ────────────────────────────────────────────────────
+  // ── Auth Middleware ──────────────────────────────────────────────────────
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) return next(new Error('AUTH_REQUIRED'));
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const nowSec  = Math.floor(Date.now() / 1000);
-      if (!decoded.exp || decoded.exp < nowSec) return next(new Error('TOKEN_EXPIRED'));
+      if (!decoded.exp || decoded.exp < Math.floor(Date.now() / 1000))
+        return next(new Error('TOKEN_EXPIRED'));
       socket.userId   = decoded.user.id;
       socket.userName = decoded.user.name;
       socket.userRole = decoded.user.role || 'user';
       next();
     } catch (err) {
-      return next(new Error(err.name === 'TokenExpiredError' ? 'TOKEN_EXPIRED' : 'INVALID_TOKEN'));
+      next(new Error(err.name === 'TokenExpiredError' ? 'TOKEN_EXPIRED' : 'INVALID_TOKEN'));
     }
   });
 
-  // ── 2. Connection ─────────────────────────────────────────────────────────
   io.on('connection', (socket) => {
-
-    // غرفة شخصية للإشعارات
     socket.join(`user_${socket.userId}`);
 
-    // ── joinConversation ─────────────────────────────────────────────────
-    // يقبل { itemId } أو { convId } أو كليهما
-    socket.on('joinConversation', async ({ itemId, convId }) => {
+    // ── joinConversation ──────────────────────────────────────────────────
+    socket.on('joinConversation', async ({ itemId, convId }, ack) => {
       try {
         let conv;
 
         if (convId) {
-          // إذا عنده convId مباشرة — أسرع
           conv = await Conversation.findById(convId).select('participants item');
         } else if (itemId) {
-          // تحقق من الـ Item أولاً
           const item = await Item.findById(itemId).select('donor bookedBy status');
           if (!item)
             return socket.emit('error', { msg: 'الغرض غير موجود' });
           if (!item.bookedBy || !['محجوز', 'تم التسليم'].includes(item.status))
-            return socket.emit('error', { msg: 'لا يمكن فتح محادثة قبل وجود حجز نشط' });
+            return socket.emit('error', { msg: 'لا يمكن فتح محادثة قبل الحجز' });
 
           const uid      = socket.userId.toString();
           const isDonor  = item.donor.toString()    === uid;
           const isBooker = item.bookedBy.toString() === uid;
           if (!isDonor && !isBooker)
-            return socket.emit('error', { msg: 'غير مصرح لك بدخول هذه المحادثة 🚫' });
+            return socket.emit('error', { msg: 'غير مصرح 🚫' });
 
-          conv = await Conversation.findOne({ item: itemId }).select('participants item');
-          if (!conv) {
-            conv = await Conversation.create({
-              item:         itemId,
-              participants: [item.donor, item.bookedBy],
-            });
-          }
+          conv = await Conversation.findOneAndUpdate(
+            { item: itemId },
+            { $setOnInsert: { item: itemId, participants: [item.donor, item.bookedBy] } },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+          ).select('participants item');
         } else {
           return socket.emit('error', { msg: 'itemId أو convId مطلوب' });
         }
 
         if (!conv) return socket.emit('error', { msg: 'المحادثة غير موجودة' });
 
-        // تحقق من الصلاحية
         const isParticipant = conv.participants
           .map((p) => p.toString())
           .includes(socket.userId.toString());
         if (!isParticipant)
-          return socket.emit('error', { msg: 'غير مصرح لك بدخول هذه المحادثة 🚫' });
+          return socket.emit('error', { msg: 'غير مصرح 🚫' });
 
         socket.join(`conv_${conv._id}`);
 
-        // جلب آخر 50 رسالة من Message collection المنفصل
         const messages = await Message.find({ conversation: conv._id })
           .populate('sender', 'name avatar _id')
-          .sort({ createdAt: -1 })
+          .sort({ createdAt: 1 }) 
           .limit(50)
-          .lean()
-          .then((msgs) => msgs.reverse()); // الأقدم أولاً للعرض
+          .lean();
 
+        // ✅ FIX-1: إرسال conversationJoined — الـ useChat يستمع لهذا
         socket.emit('conversationJoined', { convId: conv._id, messages });
 
-        // علّم الرسائل مقروءة
         await markRead(conv._id, socket.userId);
         io.to(`conv_${conv._id}`).emit('messagesRead', { by: socket.userId });
 
+        if (typeof ack === 'function') ack({ ok: true });
       } catch (err) {
         console.error('[joinConversation]', err.message);
         socket.emit('error', { msg: 'خطأ في السيرفر' });
@@ -114,9 +102,10 @@ const initSocket = (httpServer) => {
     });
 
     // ── sendMessage ──────────────────────────────────────────────────────
-    socket.on('sendMessage', async ({ convId, text }) => {
+    // ✅ FIX-4: يبث على conv_ room — يصل للطرفين بغض النظر عن user_ room
+    socket.on('sendMessage', async ({ convId, text }, ack) => {
       if (!text?.trim() || text.length > 1000)
-        return socket.emit('error', { msg: 'نص الرسالة غير صالح أو طويل جداً' });
+        return socket.emit('error', { msg: 'نص الرسالة غير صالح' });
 
       try {
         const conv = await Conversation.findById(convId).select('participants');
@@ -126,9 +115,8 @@ const initSocket = (httpServer) => {
           .map((p) => p.toString())
           .includes(socket.userId.toString());
         if (!isParticipant)
-          return socket.emit('error', { msg: 'غير مصرح لك بالإرسال في هذه المحادثة 🚫' });
+          return socket.emit('error', { msg: 'غير مصرح 🚫' });
 
-        // ✅ حفظ في Message collection المنفصل (متوافق مع conversationRepository)
         const newMessage = await Message.create({
           conversation: convId,
           sender:       socket.userId,
@@ -136,7 +124,6 @@ const initSocket = (httpServer) => {
           read:         false,
         });
 
-        // تحديث lastMessage في Conversation
         await Conversation.findByIdAndUpdate(convId, {
           $set: { lastMessage: newMessage._id, lastActivity: new Date() },
           $inc: { unreadCount: 1 },
@@ -146,13 +133,13 @@ const initSocket = (httpServer) => {
           .populate('sender', 'name avatar _id')
           .lean();
 
-        // ✅ اسم الحدث 'message:new' — متوافق مع useChat.ts
+        // ✅ البث على غرفة المحادثة — كلا الطرفين يستقبلان
         io.to(`conv_${convId}`).emit('message:new', {
           conversationId: convId,
-          message: populated,
+          message:        populated,
         });
 
-        // إشعار للطرف الآخر في غرفته الشخصية
+        // إشعار للطرف الآخر حتى لو مش فاتح المحادثة
         const otherId = conv.participants.find(
           (p) => p.toString() !== socket.userId.toString()
         );
@@ -165,13 +152,16 @@ const initSocket = (httpServer) => {
           });
         }
 
+        // ✅ FIX-3: acknowledgement للـ client
+        if (typeof ack === 'function') ack({ ok: true, messageId: newMessage._id });
       } catch (err) {
         console.error('[sendMessage]', err.message);
-        socket.emit('error', { msg: 'حدث خطأ أثناء إرسال الرسالة' });
+        socket.emit('error', { msg: 'خطأ أثناء الإرسال' });
+        if (typeof ack === 'function') ack({ ok: false });
       }
     });
 
-    // ── Typing ───────────────────────────────────────────────────────────
+    // ── Typing ────────────────────────────────────────────────────────────
     socket.on('typing', ({ convId }) => {
       socket.to(`conv_${convId}`).emit('userTyping', {
         userId: socket.userId,
@@ -183,7 +173,7 @@ const initSocket = (httpServer) => {
       socket.to(`conv_${convId}`).emit('userStopTyping', { userId: socket.userId });
     });
 
-    // ── readMessages ─────────────────────────────────────────────────────
+    // ── readMessages ──────────────────────────────────────────────────────
     socket.on('readMessages', async ({ convId }) => {
       try {
         await markRead(convId, socket.userId);
@@ -193,12 +183,11 @@ const initSocket = (httpServer) => {
       }
     });
 
-    // ── leaveConversation ────────────────────────────────────────────────
+    // ── leaveConversation ─────────────────────────────────────────────────
     socket.on('leaveConversation', ({ convId }) => {
       if (convId) socket.leave(`conv_${convId}`);
     });
 
-    // ── Cleanup on disconnect ────────────────────────────────────────────
     socket.on('disconnecting', () => {
       for (const room of socket.rooms) {
         if (room.startsWith('conv_')) {
@@ -211,7 +200,7 @@ const initSocket = (httpServer) => {
   return io;
 };
 
-// ── Helper: markRead ──────────────────────────────────────────────────────────
+// ── Helper ───────────────────────────────────────────────────────────────────
 const markRead = async (conversationId, userId) => {
   await Message.updateMany(
     { conversation: conversationId, sender: { $ne: userId }, read: false },

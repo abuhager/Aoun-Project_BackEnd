@@ -5,8 +5,18 @@
 const AppError              = require('../utils/AppError');
 const { verifyAccessToken } = require('../utils/tokenUtils');
 const banCache              = require('../utils/banCache');
-const sessionCache          = require('../utils/sessionCache'); // ✅ FIX [PERF-AUTH-01]
+const sessionCache          = require('../utils/sessionCache');
 const User                  = require('../models/User');
+
+// ─────────────────────────────────────────────────────────────
+// ثوابت الـ Roles — مصدر حقيقة واحد لمنع التناقض
+// ─────────────────────────────────────────────────────────────
+// 🔴 FIX [BUG-AUTH-01]: كان في تناقض بين 'super_admin' و 'superadmin'
+//    في requireAdmin و requireSuperAdmin — الآن موحّد من مكان واحد
+const ROLES = {
+  ADMIN:       'admin',
+  SUPER_ADMIN: 'super_admin', // ✅ القيمة الموحّدة المعتمدة في DB
+};
 
 // ─────────────────────────────────────────────────────────────
 // 1. requireAuth — إلزامي
@@ -34,11 +44,10 @@ exports.requireAuth = async (req, res, next) => {
       return next(new AppError('يجب تفعيل حسابك أولاً 📧', 403, 'EMAIL_NOT_VERIFIED'));
     }
 
-    // ── 3) ✅ FIX [PERF-AUTH-01]: sessionIssuedAt من الـ Cache أولاً ─────
+    // ── 3) sessionIssuedAt من الـ Cache أولاً — DB فقط عند cache miss ────
     let sessionIssuedAt = sessionCache.get(decoded.user.id);
 
     if (sessionIssuedAt === undefined) {
-      // cache miss — اذهب للـ DB مرة واحدة
       const user = await User.findById(decoded.user.id)
         .select('sessionIssuedAt isBanned')
         .lean();
@@ -47,14 +56,13 @@ exports.requireAuth = async (req, res, next) => {
         return next(new AppError('المستخدم غير موجود', 401, 'USER_NOT_FOUND'));
       }
 
-      // طبقة ثانية لفحص الحظر (الحظر اليدوي الجديد من الآدمن)
       if (user.isBanned) {
-        sessionCache.invalidate(decoded.user.id); // تأكيد التصفير
+        sessionCache.invalidate(decoded.user.id);
         return next(new AppError('حسابك محظور 🚫', 403, 'USER_BANNED'));
       }
 
       sessionIssuedAt = user.sessionIssuedAt ?? null;
-      sessionCache.set(decoded.user.id, sessionIssuedAt); // ✅ خزّن في الـ Cache
+      sessionCache.set(decoded.user.id, sessionIssuedAt);
     }
 
     // ── 4) فحص صلاحية الجلسة ─────────────────────────────────────────────
@@ -62,7 +70,7 @@ exports.requireAuth = async (req, res, next) => {
       sessionIssuedAt &&
       decoded.iat < Math.floor(new Date(sessionIssuedAt).getTime() / 1000)
     ) {
-      sessionCache.invalidate(decoded.user.id); // جلسة منتهية — صفّر الـ Cache
+      sessionCache.invalidate(decoded.user.id);
       return next(new AppError(
         'انتهت صلاحية الجلسة، أعد تسجيل الدخول 🔒',
         401,
@@ -91,32 +99,38 @@ exports.requireAuth = async (req, res, next) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// 2. requireAdmin
+// 2. requireAdmin — يُستدعى دائماً بعد requireAuth
 // ─────────────────────────────────────────────────────────────
+// 🟡 FIX [CLEAN-AUTH-02]: حُذف فحص req.user اليدوي — requireAuth يضمن وجوده دائماً
+//    إذا احتجت استخدامه standalone أعد الفحص
 exports.requireAdmin = (req, res, next) => {
-  if (!req.user) {
-    return next(new AppError('غير مصرح — يجب تسجيل الدخول أولاً 🔒', 401, 'UNAUTHORIZED'));
-  }
-  if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+  if (req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.SUPER_ADMIN) {
     return next(new AppError('هذه المنطقة للمشرفين فقط 🛡️', 403, 'FORBIDDEN_ADMIN_ONLY'));
   }
   next();
 };
 
 // ─────────────────────────────────────────────────────────────
-// 3. requireLevel2
+// 3. requireLevel2 — المستوى الثاني: طلاب محققون أو مُعزَّزون من الآدمن
 // ─────────────────────────────────────────────────────────────
+// 🔴 FIX [BUG-AUTH-03]: كان يتحطم إذا req.user غير موجود (استدعاء خاطئ بدون requireAuth)
+// 🟡 FIX [UX-AUTH-04]:  رسالة الخطأ كانت '...' — استُبدلت برسالة واضحة
 exports.requireLevel2 = (req, res, next) => {
-  // المستوى 2 يشمل: الطلاب المحققين + المستخدمين الذين عزّزهم الآدمن
+  if (!req.user) {
+    return next(new AppError('غير مصرح — يجب تسجيل الدخول أولاً 🔒', 401, 'UNAUTHORIZED'));
+  }
   if ((req.user.trustLevel ?? 1) < 2) {
-    return next(new AppError('...', 403, 'LEVEL2_REQUIRED'));
+    return next(new AppError(
+      'هذه الميزة تتطلب حساباً موثّقاً (المستوى 2) — يرجى رفع مستوى حسابك 📋',
+      403,
+      'LEVEL2_REQUIRED'
+    ));
   }
   next();
 };
-// ✅ يعمل صحيحاً — لكن يستحق تعليقاً توضيحياً
 
 // ─────────────────────────────────────────────────────────────
-// 4. optionalAuth — اختياري
+// 4. optionalAuth — اختياري (لا يرفض الطلب إذا لم يكن هناك توكن)
 // ─────────────────────────────────────────────────────────────
 exports.optionalAuth = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -137,7 +151,6 @@ exports.optionalAuth = async (req, res, next) => {
       return next();
     }
 
-    // ✅ FIX [PERF-AUTH-01]: نفس الـ Cache في optionalAuth
     let sessionIssuedAt = sessionCache.get(decoded.user.id);
 
     if (sessionIssuedAt === undefined) {
@@ -178,10 +191,6 @@ exports.optionalAuth = async (req, res, next) => {
   next();
 };
 
-// 5. requireSuperAdmin — DC-05 FIX
-//    للعمليات الحرجة التي تؤثر على النظام بالكامل
-//    مثل: تعديل إعدادات النظام، تغيير حدود النظام
-// ─────────────────────────────────────────────────────────────
 exports.requireSuperAdmin = (req, res, next) => {
   if (!req.user || (req.user.role !== 'superadmin' && req.user.role !== 'admin')) {
     return next(new AppError('هذه العملية تتطلب صلاحيات مشرف أعلى 🛡️', 403));

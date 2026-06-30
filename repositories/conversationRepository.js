@@ -1,101 +1,91 @@
-const Conversation = require('../models/Conversation');
-const Message      = require('../models/Message');
+const Conversation = require("../models/Conversation");
+const Message = require("../models/Message");
 
-// ─── الدوال الموجودة (بدون تغيير) ──────────────────────────────────────────
+exports.createOrGetConversation = async ({ item, owner, requester }) => {
+  const update = {
+    $setOnInsert: {
+      item,
+      owner,
+      requester,
+      participants: [owner, requester],
+      unreadCount: 0,
+      lastMessage: "",
+      lastMessageAt: null,
+    },
+  };
 
-exports.findExistingConversation = async (participants) => {
-  return Conversation.findOne({
-    participants: { $all: participants, $size: participants.length },
-    isActive: true,
-  }).lean();
+  const conversation = await Conversation.findOneAndUpdate(
+    { item, owner, requester },
+    update,
+    {
+      new: true,
+      upsert: true,
+      setDefaultsOnInsert: true,
+    }
+  )
+    .populate("item", "title images")
+    .populate("owner", "name avatar")
+    .populate("requester", "name avatar");
+
+  return conversation;
 };
 
-exports.createConversation = async (data) => {
-  const conv = new Conversation(data);
-  await conv.save();
-  return conv.toObject();
+exports.findUserConversations = async (userId) => {
+  return Conversation.find({ participants: userId })
+    .populate("item", "title images")
+    .populate("owner", "name avatar")
+    .populate("requester", "name avatar")
+    .sort({ updatedAt: -1 });
 };
 
 exports.findConversationById = async (conversationId) => {
   return Conversation.findById(conversationId)
-    .populate('participants', 'name avatar _id')
-    .populate('lastMessage')
-    .lean();
+    .populate("item", "title images")
+    .populate("owner", "name avatar")
+    .populate("requester", "name avatar");
 };
 
-exports.findConversationsByUser = async (userId) => {
-  return Conversation.find({
-    participants: userId,
-    isActive: true,
-  })
-    .populate('participants', 'name avatar _id')
-    .populate('lastMessage')
-    .sort({ updatedAt: -1 })
-    .lean();
-};
-
-// ─── [جديد] findOrCreateByItem ─────────────────────────────────────────────
-/**
- * ابحث عن محادثة مرتبطة بـ item معين، أو أنشئها إذا لم تكن موجودة.
- * يستخدم upsert لتجنب race condition ومشكلة الـ 409.
- *
- * @param {string} itemId
- * @param {string[]} participants — مُرتَّبة مسبقاً
- * @returns {Promise<object>}
- */
-exports.findOrCreateByItem = async (itemId, participants) => {
-  const conv = await Conversation.findOneAndUpdate(
-    { item: itemId },
-    { $setOnInsert: { item: itemId, participants } },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
-  )
-    .populate('participants', 'name avatar _id')
-    .lean();
-  return conv;
-};
-
-// ─── الدوال المُصلَحة / الجديدة ────────────────────────────────────────────
-
-exports.appendMessage = async (conversationId, messageData) => {
-  const newMessage = await Message.create({
+exports.appendMessage = async ({ conversationId, sender, text }) => {
+  const message = await Message.create({
     conversation: conversationId,
-    sender: messageData.sender,
-    text:   messageData.text,
+    sender,
+    text,
   });
 
   await Conversation.findByIdAndUpdate(conversationId, {
-    $set: { lastMessage: newMessage._id },
+    $set: {
+      lastMessage: text,
+      lastMessageAt: new Date(),
+    },
     $inc: { unreadCount: 1 },
   });
 
-  return newMessage.toObject();
+  return Message.findById(message._id).populate("sender", "name avatar");
 };
 
-exports.findMessagesByConversation = async (conversationId, { page = 1, limit = 30 } = {}) => {
+exports.findMessagesByConversation = async (conversationId, { page = 1, limit = 20 } = {}) => {
   const skip = (page - 1) * limit;
-  return Message.find({ conversation: conversationId })
-    .populate('sender', 'name avatar _id')
-    .sort({ createdAt: -1 })
-    .skip(skip)
-    .limit(limit)
-    .lean();
+
+  const [messages, total] = await Promise.all([
+    Message.find({ conversation: conversationId })
+      .populate("sender", "name avatar")
+      .sort({ createdAt: 1 })
+      .skip(skip)
+      .limit(limit),
+    Message.countDocuments({ conversation: conversationId }),
+  ]);
+
+  return {
+    messages,
+    total,
+    page,
+    totalPages: Math.ceil(total / limit),
+  };
 };
 
-exports.countUnreadForConversation = async (conversationId, userId) => {
-  return Message.countDocuments({
-    conversation: conversationId,
-    sender: { $ne: userId },
-    read: false,
-  });
-};
-
-exports.markMessagesAsRead = async (conversationId, userId) => {
+exports.markMessagesAsRead = async ({ conversationId, userId }) => {
   await Message.updateMany(
-    {
-      conversation: conversationId,
-      sender: { $ne: userId },
-      read: false,
-    },
+    { conversation: conversationId, sender: { $ne: userId }, read: false },
     { $set: { read: true } }
   );
 
@@ -104,10 +94,10 @@ exports.markMessagesAsRead = async (conversationId, userId) => {
   });
 };
 
-exports.closeConversation = async (conversationId) => {
-  return Conversation.findByIdAndUpdate(
-    conversationId,
-    { $set: { isActive: false } },
-    { new: true }
-  ).lean();
+exports.countUnreadForConversation = async ({ conversationId, userId }) => {
+  return Message.countDocuments({
+    conversation: conversationId,
+    sender: { $ne: userId },
+    read: false,
+  });
 };
