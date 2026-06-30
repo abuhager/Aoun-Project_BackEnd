@@ -80,7 +80,7 @@ exports.sendWhatsAppOtp = async (phone, otp) => {
   const jid = `${cleanPhone}@s.whatsapp.net`;
 
   await sock.sendMessage(jid, {
-    text: `🔐 رمز التحقق في منصة *عون*: *${otp}*\n⏱️ صالح 10 دقائق فقط.\n⚠️ لا تشاركه مع أحد.`,
+    text: `🔐 رمز التحقق في منصة *${PLATFORM_NAME}*: *${otp}*\n⏱️ صالح 10 دقائق فقط.\n⚠️ لا تشاركه مع أحد.`,
   });
 };
 

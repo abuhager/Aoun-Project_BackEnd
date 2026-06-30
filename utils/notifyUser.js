@@ -1,26 +1,21 @@
-const Notification = require('../models/Notification');
-const AppError     = require('./AppError');
+const Notification   = require('../models/Notification');
+const AppError       = require('./AppError');
+const SystemSettings = require('../models/SystemSettings'); // ✅ إضافة
 
-// ✅ NJ-07: أنواع الإشعارات الحرجة — مكان واحد للتعديل
+// ✅ جلب platformName من DB مع Cache
+const getPlatformName = async () => {
+  const settings = await SystemSettings.getCached();
+  return settings?.platformName ?? 'عون';
+};
+
 const CRITICAL_NOTIFICATION_TYPES = Object.freeze([
   'admin_ban',
   'admin_warning',
   'account_suspended',
 ]);
 
-/**
- * ترسل إشعاراً للمستخدم عبر:
- * 1. تسجيل في قاعدة البيانات (Notification model)
- * 2. Socket.io real-time emit لغرفة المستخدم
- * 3. بريد إلكتروني احتياطي للإشعارات الحرجة فقط
- *
- * @param {string|object} userId - ID المستخدم أو كائن User الكامل
- * @param {object} payload       - بيانات الإشعار
- * @returns {Promise<Notification>}
- */
 async function notifyUser(userId, payload) {
-  // ✅ NJ-08: استخلاص الـ ID والبريد بشكل موحّد
-  const isObject    = userId && typeof userId === 'object';
+  const isObject     = userId && typeof userId === 'object';
   const actualUserId = isObject ? userId._id : userId;
   const userEmail    = payload.email ?? (isObject ? userId.email : null);
 
@@ -36,7 +31,6 @@ async function notifyUser(userId, payload) {
     body:           payload.body,
     itemId:         payload.itemId         ?? null,
     conversationId: payload.conversationId ?? null,
-    // ✅ NJ-05: دعم actionUrl لتوجيه المستخدم عند الضغط على الإشعار
     metadata: {
       ...(payload.metadata ?? {}),
       ...(payload.actionUrl ? { actionUrl: payload.actionUrl } : {}),
@@ -47,9 +41,8 @@ async function notifyUser(userId, payload) {
   try {
     const { getIO } = require('../socket/socketHandler');
     const io = getIO();
-    
+
     if (io) {
-      // 💡 تحسين: التأكد من تطابق اسم الغرفة (user_ID) بين الـ Emit والـ Connection
       io.to(`user_${actualUserId}`).emit('notification:new', {
         _id:            notification._id,
         user:           notification.user,
@@ -66,7 +59,6 @@ async function notifyUser(userId, payload) {
       console.warn('[notifyUser] Socket.io لم يتم تهيئته بعد (Skip Emit)');
     }
   } catch (err) {
-    // Socket فشل — لا يوقف العملية ولا يعطل حفظ الـ DB
     console.error('[notifyUser Socket Error]:', err.message);
   }
 
@@ -74,36 +66,37 @@ async function notifyUser(userId, payload) {
   if (CRITICAL_NOTIFICATION_TYPES.includes(payload.type)) {
     if (userEmail) {
       try {
+        const platformName = await getPlatformName(); // ✅ من DB
         const { fireSendEmail } = require('./sendEmail');
+
         fireSendEmail({
           email:   userEmail,
           subject: payload.title,
           message: `
-            <div dir="rtl" style="font-family: sans-serif; line-height: 1.8; color: #191c1d; max-width: 560px; margin: auto;">
-              <h2 style="color: #c0392b; margin-bottom: 8px;">${payload.title}</h2>
-              <p style="margin: 0 0 16px;">${payload.body}</p>
+            <div dir="rtl" style="font-family:sans-serif;line-height:1.8;color:#191c1d;max-width:560px;margin:auto;">
+              <h2 style="color:#c0392b;margin-bottom:8px;">${payload.title}</h2>
+              <p style="margin:0 0 16px;">${payload.body}</p>
               ${payload.actionUrl
                 ? `<a href="${payload.actionUrl}"
-                      style="display:inline-block; padding:10px 20px; background:#01696f;
-                             color:#fff; border-radius:8px; text-decoration:none; font-weight:bold;">
+                      style="display:inline-block;padding:10px 20px;background:#01696f;
+                             color:#fff;border-radius:8px;text-decoration:none;font-weight:bold;">
                        الانتقال للتطبيق
                      </a>`
                 : ''
               }
-              <hr style="border:none; border-top:1px solid #edeeef; margin:20px 0;" />
-              <p style="font-size:11px; color:#747775;">
-                هذا إشعار إداري رسمي من منصة عون.
+              <hr style="border:none;border-top:1px solid #edeeef;margin:20px 0;" />
+              <p style="font-size:11px;color:#747775;">
+                هذا إشعار إداري رسمي من منصة ${platformName}. <!-- ✅ ديناميكي -->
               </p>
             </div>
           `,
         }).catch((emailErr) =>
-          console.error('[notifyUser Email Fallback] فشل الإرسال الإجرائي:', emailErr.message)
+          console.error('[notifyUser Email Fallback] فشل الإرسال:', emailErr.message)
         );
       } catch (importErr) {
         console.warn('[notifyUser] تعذر تحميل sendEmail:', importErr.message);
       }
     } else {
-      // ✅ NJ-08: تحذير واضح إذا لم يتوفر البريد لإشعار حرج
       console.warn(
         `[notifyUser] ⚠️ إشعار حرج "${payload.type}" للمستخدم ${actualUserId}` +
         ` — لم يُرسل بريد: حقل email غير متوفر في payload أو user object.`
@@ -114,7 +107,6 @@ async function notifyUser(userId, payload) {
   return notification;
 }
 
-// تصدير ثوابت الأنواع الحرجة لاستخدامها في أماكن أخرى بدون تكرار
 notifyUser.CRITICAL_TYPES = CRITICAL_NOTIFICATION_TYPES;
 
 module.exports = notifyUser;

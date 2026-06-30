@@ -1,20 +1,24 @@
 // services/emailService.js
-// إرسال الإيميلات عبر Brevo Transactional Email REST API
-const axios = require('axios');
+const axios          = require('axios');
+const SystemSettings = require('../models/SystemSettings');
 
 const BREVO_URL = 'https://api.brevo.com/v3/smtp/email';
 
-const SENDER = {
-  name:  'منصة عون',
-  email: process.env.SMTP_USER || 'aoun.help.center@gmail.com',
+// ── دالة مساعدة: تجلب platformName من DB (مع Cache) ────────────
+const getPlatformName = async () => {
+  const settings = await SystemSettings.getCached();
+  return settings?.platformName ?? 'عون';
 };
 
 // ── دالة مساعدة داخلية ───────────────────────────────────────
-const _send = async ({ to, subject, htmlContent }) => {
+const _send = async ({ to, subject, htmlContent, platformName }) => {
   await axios.post(
     BREVO_URL,
     {
-      sender:      SENDER,
+      sender: {
+        name:  `منصة ${platformName}`,
+        email: process.env.SMTP_USER || 'aoun.help.center@gmail.com',
+      },
       to:          [{ email: to }],
       subject,
       htmlContent,
@@ -32,13 +36,16 @@ const _send = async ({ to, subject, htmlContent }) => {
 // 1. إيميل تأكيد الحساب (OTP)
 // ─────────────────────────────────────────────────────────────
 exports.sendVerificationEmail = async (to, otp, name = '', isStudent = false) => {
+  const platformName = await getPlatformName(); // ✅ من DB
+
   const studentBadge = isStudent
     ? `<p style="color:#1a6b4a;font-weight:bold;">✅ تم التعرف على إيميلك الجامعي — مستوى الثقة 2</p>`
     : '';
 
   await _send({
     to,
-    subject: 'تأكيد حسابك في منصة عون 📬',
+    platformName,
+    subject: `تأكيد حسابك في منصة ${platformName} 📬`,
     htmlContent: `
       <div dir="rtl" style="font-family:Arial,sans-serif;max-width:480px;margin:auto;
                             border:1px solid #e5e7eb;border-radius:12px;padding:32px;">
@@ -62,9 +69,12 @@ exports.sendVerificationEmail = async (to, otp, name = '', isStudent = false) =>
 // 2. إيميل إعادة تعيين كلمة المرور
 // ─────────────────────────────────────────────────────────────
 exports.sendResetPasswordEmail = async (to, _resetToken, name = '', resetUrl) => {
+  const platformName = await getPlatformName(); // ✅ من DB
+
   await _send({
     to,
-    subject: 'إعادة تعيين كلمة المرور — منصة عون 🔐',
+    platformName,
+    subject: `إعادة تعيين كلمة المرور — منصة ${platformName} 🔐`,
     htmlContent: `
       <div dir="rtl" style="font-family:Arial,sans-serif;max-width:480px;margin:auto;
                             border:1px solid #e5e7eb;border-radius:12px;padding:32px;">
@@ -73,7 +83,7 @@ exports.sendResetPasswordEmail = async (to, _resetToken, name = '', resetUrl) =>
         <div style="text-align:center;margin:24px 0;">
           <a href="${resetUrl}"
              style="background:#b91c1c;color:#fff;padding:14px 32px;
-                    border-radius:8px;text-on-surfaceecoration:none;font-size:16px;
+                    border-radius:8px;text-decoration:none;font-size:16px;
                     font-weight:bold;display:inline-block;">
             إعادة تعيين كلمة المرور
           </a>

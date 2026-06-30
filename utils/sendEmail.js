@@ -1,8 +1,15 @@
 // utils/sendEmail.js
-// ✅ NJ-12 FIX: إضافة replyTo اختيارية + from name ديناميكي من SystemSettings
-// ✅ NJ-13 FIX: تحسين تسجيل أخطاء Brevo — يُسجَّل status + message كاملاً
-// ✅ NJ-14 FIX: fireSendEmail تُعيد Promise<void> (لا undefined)
-//              حتى يمكن للمستدعي إضافة .catch() أو await إذا أراد
+const SystemSettings = require('../models/SystemSettings');
+
+// ✅ جلب platformName من DB مع Cache
+const getPlatformName = async () => {
+  try {
+    const settings = await SystemSettings.getCached();
+    return settings?.platformName ?? 'عون';
+  } catch {
+    return 'عون'; // fallback آمن لو DB ما استجاب
+  }
+};
 
 const sendEmail = async (options) => {
   if (!process.env.BREVO_API_KEY) {
@@ -10,9 +17,10 @@ const sendEmail = async (options) => {
     return;
   }
 
-  // ✅ NJ-12: اسم المُرسِل ديناميكي — يقرأ من ENV أو يستخدم الافتراضي
-  const senderName  = process.env.PLATFORM_NAME ?? 'منصة عون المجتمعية';
-  const senderEmail = process.env.PLATFORM_EMAIL ?? 'aoun.help.center@gmail.com';
+  // ✅ اسم المُرسِل من DB وليس ENV
+  const platformName = await getPlatformName();
+  const senderName   = `منصة ${platformName} المجتمعية`;
+  const senderEmail  = process.env.PLATFORM_EMAIL ?? 'aoun.help.center@gmail.com';
 
   try {
     const body = {
@@ -22,7 +30,6 @@ const sendEmail = async (options) => {
       htmlContent: options.message,
     };
 
-    // ✅ NJ-12: replyTo اختيارية — مفيدة للردود على بريد الدعم
     if (options.replyTo) {
       body.replyTo = { email: options.replyTo };
     }
@@ -38,7 +45,6 @@ const sendEmail = async (options) => {
     });
 
     if (!response.ok) {
-      // ✅ NJ-13 FIX: تسجيل تفاصيل الخطأ الكاملة من Brevo
       let errBody;
       try { errBody = await response.json(); } catch { errBody = {}; }
       console.error('[sendEmail] ❌ فشل إرسال الإيميل:', {
@@ -58,7 +64,6 @@ const sendEmail = async (options) => {
   }
 };
 
-// ✅ NJ-14 FIX: fireSendEmail تُعيد Promise<void> بشكل صريح
 const fireSendEmail = (options) => sendEmail(options).catch((err) => {
   console.error('[fireSendEmail] unhandled error:', err.message);
 });

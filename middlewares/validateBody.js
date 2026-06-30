@@ -196,39 +196,74 @@ const schemas = {
   }).min(1).unknown(false),
 
   // ──────────── settings ─────────────────────────────────────────────────────
-  updateSettings: Joi.object({
-    defaultQuota:                   Joi.number().integer().min(1).max(20).optional(),
-    level2Quota:                    Joi.number().integer().min(1).max(20).optional(),
-    maxBookingsPerUser:             Joi.number().integer().min(1).max(10).optional(),
-    maxActiveRequestsPerMonth:      Joi.number().integer().min(1).max(5).optional(),
-    requestExpiryDays:              Joi.number().integer().min(1).max(180).optional(),
-    donorQuotaReward:               Joi.number().integer().min(0).max(5).optional(),
-    trustScorePerDonation:          Joi.number().integer().min(0).max(20).optional(),
-    trustScorePerRequest:           Joi.number().integer().min(0).max(10).optional(),
-    bookingExpiryHours:             Joi.number().integer().min(1).max(336).optional(),
-    maxActiveDonationsPerUser:      Joi.number().integer().min(1).max(20).optional(),
-    maxActiveDonationsLevel2Plus:   Joi.number().integer().min(1).max(20).optional(),
-    categories: Joi.array()
-      .items(Joi.string().min(2).max(50).trim())
-      .min(1).max(30).optional(),
-    reportReasons: Joi.array()
-      .items(Joi.string().min(2).max(100).trim())
-      .min(1).max(50).optional(),
-    autoReportBanThreshold: Joi.number().integer().min(1).max(20).optional(),
-    quotaResetDayOfMonth:   Joi.number().integer().min(1).max(28).optional(),
-    universityEmailDomains: Joi.array()
-      .items(
-        Joi.string().trim().pattern(EMAIL_DOMAIN)
-          .message('كل نطاق يجب أن يبدأ بـ @ مثل: @ju.edu.jo')
-      )
-      .max(50).optional(),
-    requireHubForBooking: Joi.boolean().optional(),
-    maintenanceMode:      Joi.boolean().optional(),
-    platformName:         Joi.string().min(2).max(100).trim().optional(),
-    contactEmail:         Joi.string()
-                            .email({ tlds: { allow: false } })
-                            .trim().optional(),
-  }).min(1).unknown(false),
+updateSettings: Joi.object({
+  // ── الحصص والحجوزات ──────────────────────────────────────
+  defaultQuota:                   Joi.number().integer().min(1).max(20).optional(),
+  defaultUserQuota:               Joi.number().integer().min(1).max(20).optional(),
+  studentQuota:                   Joi.number().integer().min(1).max(20).optional(),
+  level2Quota:                    Joi.number().integer().min(1).max(20).optional(),
+  maxBookingsPerUser:             Joi.number().integer().min(1).max(10).optional(),
+  maxActiveRequestsPerMonth:      Joi.number().integer().min(1).max(5).optional(),
+  maxActiveDonationsPerUser:      Joi.number().integer().min(1).max(20).optional(),
+  maxActiveDonationsLevel2Plus:   Joi.number().integer().min(1).max(20).optional(),
+  maxPendingOffersPerDonor:       Joi.number().integer().min(1).max(20).optional(),
+  donorQuotaReward:               Joi.number().integer().min(0).max(5).optional(),
+  quotaResetDayOfMonth:           Joi.number().integer().min(1).max(28).optional(),
+
+  // ── مستويات الثقة ────────────────────────────────────────
+  studentDefaultTrustLevel:       Joi.number().integer().min(1).max(4).optional(),
+  minTrustLevelForRequests:       Joi.number().integer().min(1).max(4).optional(),
+  minTrustLevelForDonating:       Joi.number().integer().min(1).max(4).optional(),
+  trustScorePerDonation:          Joi.number().integer().min(0).max(20).optional(),
+  trustScorePerRequest:           Joi.number().integer().min(0).max(10).optional(),
+
+  // ── التقييمات ────────────────────────────────────────────
+  ratingThresholdExcellent:       Joi.number().integer().min(1).max(10).optional(),
+  ratingThresholdGood:            Joi.number().integer().min(1).max(10).optional(),
+  ratingThresholdNeutral:         Joi.number().integer().min(1).max(10).optional(),
+  ratingThresholdBad:             Joi.number().integer().min(1).max(10).optional(),
+
+  // ── المهل الزمنية ────────────────────────────────────────
+  bookingExpiryHours:             Joi.number().integer().min(1).max(336).optional(),
+  requestExpiryDays:              Joi.number().integer().min(1).max(180).optional(),
+  otpExpiryMinutes:               Joi.number().integer().min(1).max(60).optional(),
+  maxOtpAttempts:                 Joi.number().integer().min(1).max(10).optional(),
+  resetPasswordExpiryMinutes:     Joi.number().integer().min(5).max(60).optional(),
+
+  // ── الصور والصفحات ───────────────────────────────────────
+  maxAvatarSizeMb:                Joi.number().integer().min(1).max(20).optional(),
+  avatarWidth:                    Joi.number().integer().min(100).max(1000).optional(),
+  avatarHeight:                   Joi.number().integer().min(100).max(1000).optional(),
+  maxPageSize:                    Joi.number().integer().min(5).max(100).optional(),
+  profilePageSize:                Joi.number().integer().min(5).max(50).optional(),
+  adminPageSize:                  Joi.number().integer().min(5).max(100).optional(),
+  adminReportsPageSize:           Joi.number().integer().min(5).max(100).optional(),
+
+  // ── القوائم الديناميكية ───────────────────────────────────
+  categories: Joi.array()
+    .items(Joi.string().min(2).max(50).trim())
+    .min(1).max(30).optional(),
+  reportReasons: Joi.array()
+    .items(Joi.string().min(2).max(100).trim())
+    .min(1).max(50).optional(),
+  universityEmailDomains: Joi.array()
+    .items(
+      Joi.string().trim().pattern(EMAIL_DOMAIN)
+        .message('كل نطاق يجب أن يبدأ بـ @ مثل: @ju.edu.jo')
+    )
+    .max(50).optional(),
+
+  // ── البلاغات والإشراف ────────────────────────────────────
+  autoReportBanThreshold:         Joi.number().integer().min(1).max(20).optional(),
+
+  // ── إعدادات النظام العامة ─────────────────────────────────
+  requireHubForBooking:           Joi.boolean().optional(),
+  maintenanceMode:                Joi.boolean().optional(),
+  platformName:                   Joi.string().min(2).max(100).trim().optional(),
+  contactEmail:                   Joi.string()
+                                    .email({ tlds: { allow: false } })
+                                    .trim().optional(),
+}).min(1).unknown(false),
 
   // ──────────── phone ────────────────────────────────────────────────────────
   sendOtp: Joi.object({

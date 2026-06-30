@@ -97,7 +97,7 @@ const systemSettingsSchema = new mongoose.Schema(
     quotaResetDayOfMonth: { type: Number,  default: 1,                min: 1, max: 28 },
     requireHubForBooking: { type: Boolean, default: false },
     maintenanceMode:      { type: Boolean, default: false },
-    platformName:         { type: String,  default: 'عون'             },
+    platformName: { type: String, default: process.env.PLATFORM_NAME ?? 'عون' },
     contactEmail:         { type: String,  default: 'support@aoun.jo' },
   },
   { timestamps: true }
