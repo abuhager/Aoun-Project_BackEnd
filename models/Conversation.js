@@ -57,7 +57,7 @@ conversationSchema.index({ participants: 1, lastActivity: -1 });
 
 // MED-05: تحديث lastActivity تلقائيًا عند كل save
 // MED-06: ترتيب participants تلقائيًا لضمان عمل الفهرس الفريد
-conversationSchema.pre('save', function (next) {
+conversationSchema.pre('save', async function () {
   if (this.isModified('participants')) {
     this.participants = this.participants
       .map(String)
@@ -65,7 +65,6 @@ conversationSchema.pre('save', function (next) {
       .map((id) => new mongoose.Types.ObjectId(id));
   }
   this.lastActivity = new Date();
-  next();
 });
 
 module.exports = mongoose.model('Conversation', conversationSchema);

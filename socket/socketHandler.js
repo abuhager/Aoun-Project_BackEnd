@@ -1,17 +1,14 @@
-// socket/socketHandler.js
 const { Server } = require('socket.io');
-const jwt = require('jsonwebtoken');
+const jwt          = require('jsonwebtoken');
 const Conversation = require('../models/Conversation');
-const Item = require('../models/Item');
+const Message      = require('../models/Message');
+const Item         = require('../models/Item');
 
 let io;
 
-// دالة جلب النطاقات المسموحة لـ CORS
 function getAllowedOrigins() {
   return (process.env.ALLOWED_ORIGINS || process.env.CLIENT_URL || '')
-    .split(',')
-    .map((o) => o.trim())
-    .filter(Boolean);
+    .split(',').map((o) => o.trim()).filter(Boolean);
 }
 
 const initSocket = (httpServer) => {
@@ -28,217 +25,199 @@ const initSocket = (httpServer) => {
     },
   });
 
-  // ─── 1. برمجية التحقق من الهوية (Authentication Middleware) ───
+  // ── 1. Auth Middleware ────────────────────────────────────────────────────
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
     if (!token) return next(new Error('AUTH_REQUIRED'));
-
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-      // ✅ [WARN-4 FIX] فحص exp صريح لتوضيح النية للفريق وإضافة طبقة دفاع
-      // jwt.verify يتحقق من exp تلقائياً لكن التحقق الصريح يمنع الـ clock skew edge cases
-      const nowSec = Math.floor(Date.now() / 1000);
-      if (!decoded.exp || decoded.exp < nowSec) {
-        return next(new Error('TOKEN_EXPIRED'));
-      }
-
+      const nowSec  = Math.floor(Date.now() / 1000);
+      if (!decoded.exp || decoded.exp < nowSec) return next(new Error('TOKEN_EXPIRED'));
       socket.userId   = decoded.user.id;
       socket.userName = decoded.user.name;
       socket.userRole = decoded.user.role || 'user';
-
       next();
     } catch (err) {
-      if (err.name === 'TokenExpiredError') return next(new Error('TOKEN_EXPIRED'));
-      return next(new Error('INVALID_TOKEN'));
+      return next(new Error(err.name === 'TokenExpiredError' ? 'TOKEN_EXPIRED' : 'INVALID_TOKEN'));
     }
   });
 
-  // ─── 2. أحداث الاتصال وإدارة الغرف والمحادثات ───
+  // ── 2. Connection ─────────────────────────────────────────────────────────
   io.on('connection', (socket) => {
-    
-    // ✅ تلقائياً: ينضم المستخدم لغرفته الخاصة الآمنة لتلقي الإشعارات الشخصية
+
+    // غرفة شخصية للإشعارات
     socket.join(`user_${socket.userId}`);
 
-    // حدث دخول محادثة خاصة بغرض معين
-    socket.on('joinConversation', async ({ itemId }) => {
-  try {
-    // ✅ SEC-02: تحقق أن الـ Item موجود وبحالة محجوز أو تم التسليم
-    const item = await Item.findById(itemId)
-      .select('donor bookedBy status');
-
-    if (!item)
-      return socket.emit('error', { msg: 'الغرض غير موجود' });
-
-    // ✅ SEC-02: لا محادثة إلا بعد وجود حجز فعلي
-    if (!item.bookedBy || !['محجوز', 'تم التسليم'].includes(item.status))
-      return socket.emit('error', { msg: 'لا يمكن فتح محادثة قبل وجود حجز نشط' });
-
-    const uid      = socket.userId.toString();
-    const isDonor  = item.donor.toString()    === uid;
-    const isBooker = item.bookedBy.toString() === uid;
-
-    if (!isDonor && !isBooker)
-      return socket.emit('error', { msg: 'غير مصرح لك بدخول هذه المحادثة 🚫' });
-
-    let conv = await Conversation.findOne(
-      { item: itemId },
-      { participants: 1, messages: { $slice: -50 } }
-    );
-
-    if (!conv) {
-      // ✅ SEC-02: نُنشئ المحادثة فقط إذا تحقق الشرطان أعلاه
-      conv = await Conversation.create({
-        item:         itemId,
-        participants: [item.donor, item.bookedBy],
-      });
-    }
-
-    socket.join(`conv_${conv._id}`);
-
-    const messages = (conv.messages || []).map((m) => ({
-      _id:       m._id,
-      sender:    m.sender,
-      text:      m.text,
-      read:      m.read,
-      createdAt: m.createdAt,
-    }));
-
-    socket.emit('conversationJoined', { convId: conv._id, messages });
-
-    await markRead(conv, socket.userId);
-    io.to(`conv_${conv._id}`).emit('messagesRead', { by: socket.userId });
-
-  } catch (err) {
-    console.error('[joinConversation]', err.message);
-    socket.emit('error', { msg: 'خطأ في السيرفر' });
-  }
-});
-
-    // حدث إرسال رسالة جديدة
-    socket.on('sendMessage', async ({ convId, text }) => {
-      if (!text?.trim() || text.length > 1000) {
-        return socket.emit('error', { msg: 'نص الرسالة غير صالح أو طويل جداً' });
-      }
-
+    // ── joinConversation ─────────────────────────────────────────────────
+    // يقبل { itemId } أو { convId } أو كليهما
+    socket.on('joinConversation', async ({ itemId, convId }) => {
       try {
-        const conv = await Conversation.findById(convId);
+        let conv;
+
+        if (convId) {
+          // إذا عنده convId مباشرة — أسرع
+          conv = await Conversation.findById(convId).select('participants item');
+        } else if (itemId) {
+          // تحقق من الـ Item أولاً
+          const item = await Item.findById(itemId).select('donor bookedBy status');
+          if (!item)
+            return socket.emit('error', { msg: 'الغرض غير موجود' });
+          if (!item.bookedBy || !['محجوز', 'تم التسليم'].includes(item.status))
+            return socket.emit('error', { msg: 'لا يمكن فتح محادثة قبل وجود حجز نشط' });
+
+          const uid      = socket.userId.toString();
+          const isDonor  = item.donor.toString()    === uid;
+          const isBooker = item.bookedBy.toString() === uid;
+          if (!isDonor && !isBooker)
+            return socket.emit('error', { msg: 'غير مصرح لك بدخول هذه المحادثة 🚫' });
+
+          conv = await Conversation.findOne({ item: itemId }).select('participants item');
+          if (!conv) {
+            conv = await Conversation.create({
+              item:         itemId,
+              participants: [item.donor, item.bookedBy],
+            });
+          }
+        } else {
+          return socket.emit('error', { msg: 'itemId أو convId مطلوب' });
+        }
+
         if (!conv) return socket.emit('error', { msg: 'المحادثة غير موجودة' });
 
-        // ✅ التحقق من أن المرسل هو جزء فعلي من أطراف المحادثة
+        // تحقق من الصلاحية
         const isParticipant = conv.participants
           .map((p) => p.toString())
           .includes(socket.userId.toString());
+        if (!isParticipant)
+          return socket.emit('error', { msg: 'غير مصرح لك بدخول هذه المحادثة 🚫' });
 
-        if (!isParticipant) {
+        socket.join(`conv_${conv._id}`);
+
+        // جلب آخر 50 رسالة من Message collection المنفصل
+        const messages = await Message.find({ conversation: conv._id })
+          .populate('sender', 'name avatar _id')
+          .sort({ createdAt: -1 })
+          .limit(50)
+          .lean()
+          .then((msgs) => msgs.reverse()); // الأقدم أولاً للعرض
+
+        socket.emit('conversationJoined', { convId: conv._id, messages });
+
+        // علّم الرسائل مقروءة
+        await markRead(conv._id, socket.userId);
+        io.to(`conv_${conv._id}`).emit('messagesRead', { by: socket.userId });
+
+      } catch (err) {
+        console.error('[joinConversation]', err.message);
+        socket.emit('error', { msg: 'خطأ في السيرفر' });
+      }
+    });
+
+    // ── sendMessage ──────────────────────────────────────────────────────
+    socket.on('sendMessage', async ({ convId, text }) => {
+      if (!text?.trim() || text.length > 1000)
+        return socket.emit('error', { msg: 'نص الرسالة غير صالح أو طويل جداً' });
+
+      try {
+        const conv = await Conversation.findById(convId).select('participants');
+        if (!conv) return socket.emit('error', { msg: 'المحادثة غير موجودة' });
+
+        const isParticipant = conv.participants
+          .map((p) => p.toString())
+          .includes(socket.userId.toString());
+        if (!isParticipant)
           return socket.emit('error', { msg: 'غير مصرح لك بالإرسال في هذه المحادثة 🚫' });
-        }
 
-        const message = {
-          sender: socket.userId, // ✅ الهوية من السيرفر وليست ممررة من الـ Client
-          text: text.trim(),
-          read: false,
-          createdAt: new Date(),
-        };
-
-        conv.messages.push(message);
-        conv.lastActivity = new Date();
-        await conv.save();
-
-        const savedMsg = conv.messages[conv.messages.length - 1];
-
-        // بث الرسالة لجميع المتواجدين داخل غرفة المحادثة الحالية
-        io.to(`conv_${convId}`).emit('newMessage', {
-          _id: savedMsg._id,
-          sender: socket.userId,
-          senderName: socket.userName,
-          text: savedMsg.text,
-          read: false,
-          createdAt: savedMsg.createdAt,
+        // ✅ حفظ في Message collection المنفصل (متوافق مع conversationRepository)
+        const newMessage = await Message.create({
+          conversation: convId,
+          sender:       socket.userId,
+          text:         text.trim(),
+          read:         false,
         });
 
-        // إرسال إشعار فوري (Notification) للطرف الآخر في غرفته الخاصة في حال كان خارج المحادثة
+        // تحديث lastMessage في Conversation
+        await Conversation.findByIdAndUpdate(convId, {
+          $set: { lastMessage: newMessage._id, lastActivity: new Date() },
+          $inc: { unreadCount: 1 },
+        });
+
+        const populated = await Message.findById(newMessage._id)
+          .populate('sender', 'name avatar _id')
+          .lean();
+
+        // ✅ اسم الحدث 'message:new' — متوافق مع useChat.ts
+        io.to(`conv_${convId}`).emit('message:new', {
+          conversationId: convId,
+          message: populated,
+        });
+
+        // إشعار للطرف الآخر في غرفته الشخصية
         const otherId = conv.participants.find(
           (p) => p.toString() !== socket.userId.toString()
         );
-
         if (otherId) {
           io.to(`user_${otherId}`).emit('notification', {
-            type: 'NEW_MESSAGE',
+            type:   'NEW_MESSAGE',
             convId,
-            text: text.trim().slice(0, 60),
+            text:   text.trim().slice(0, 60),
             sender: socket.userName,
           });
         }
+
       } catch (err) {
-        console.error('sendMessage Error:', err.message);
+        console.error('[sendMessage]', err.message);
         socket.emit('error', { msg: 'حدث خطأ أثناء إرسال الرسالة' });
       }
     });
 
-    // ─── أحداث الكتابة (Typing Indicators) ───
+    // ── Typing ───────────────────────────────────────────────────────────
     socket.on('typing', ({ convId }) => {
       socket.to(`conv_${convId}`).emit('userTyping', {
         userId: socket.userId,
-        name: socket.userName,
+        name:   socket.userName,
       });
     });
 
     socket.on('stopTyping', ({ convId }) => {
-      socket.to(`conv_${convId}`).emit('userStopTyping', {
-        userId: socket.userId,
-      });
+      socket.to(`conv_${convId}`).emit('userStopTyping', { userId: socket.userId });
     });
 
-    // حدث قراءة الرسائل اليدوي
+    // ── readMessages ─────────────────────────────────────────────────────
     socket.on('readMessages', async ({ convId }) => {
       try {
-        const conv = await Conversation.findById(convId);
-        if (!conv) return;
-
-        await markRead(conv, socket.userId);
+        await markRead(convId, socket.userId);
         io.to(`conv_${convId}`).emit('messagesRead', { by: socket.userId });
       } catch (err) {
-        console.error('readMessages Error:', err.message);
+        console.error('[readMessages]', err.message);
       }
     });
 
-    // ✅ الإصلاح: استخدام حدث disconnecting للوصول إلى الغرف قبل مغادرتها وتصفير مؤشر الكتابة
+    // ── leaveConversation ────────────────────────────────────────────────
+    socket.on('leaveConversation', ({ convId }) => {
+      if (convId) socket.leave(`conv_${convId}`);
+    });
+
+    // ── Cleanup on disconnect ────────────────────────────────────────────
     socket.on('disconnecting', () => {
-      try {
-        for (const room of socket.rooms) {
-          if (room.startsWith('conv_')) {
-            socket.to(room).emit('userStopTyping', { userId: socket.userId });
-          }
+      for (const room of socket.rooms) {
+        if (room.startsWith('conv_')) {
+          socket.to(room).emit('userStopTyping', { userId: socket.userId });
         }
-      } catch (err) {
-        console.error('Socket cleanup error on disconnect:', err.message);
       }
-    });
-
-    socket.on('disconnect', () => {
-      // تنظيف الغرف النهائي يتم تلقائياً بواسطة Socket.io
     });
   });
 
   return io;
 };
 
-// ─── دالة مساعدة لتحديث حالة القراءة ───
-const markRead = async (conv, userId) => {
-  let updated = false;
-
-  conv.messages.forEach((m) => {
-    // إذا لم تكن الرسالة من هذا المستخدم وكانت غير مقروءة، اجعلها مقروءة
-    if (m.sender.toString() !== userId.toString() && !m.read) {
-      m.read = true;
-      updated = true;
-    }
-  });
-
-  if (updated) {
-    await conv.save();
-  }
+// ── Helper: markRead ──────────────────────────────────────────────────────────
+const markRead = async (conversationId, userId) => {
+  await Message.updateMany(
+    { conversation: conversationId, sender: { $ne: userId }, read: false },
+    { $set: { read: true } }
+  );
+  await Conversation.findByIdAndUpdate(conversationId, { $set: { unreadCount: 0 } });
 };
 
 const getIO = () => {

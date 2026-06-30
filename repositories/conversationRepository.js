@@ -1,70 +1,113 @@
-// repositories/conversationRepository.js ✅ PATCHED FOR HISTORY FLOW
-// CRIT-01 ► appendMessage ذري | CRIT-02 ► markRead ذري | HIGH-03 ► $slice -50
-
-const mongoose     = require('mongoose');
 const Conversation = require('../models/Conversation');
+const Message      = require('../models/Message');
 
-exports.findConversationListByParticipant = (userId) =>
-  Conversation.find({ participants: userId })
-    .populate('item', 'title imageUrl status')
-    .populate('participants', 'name avatar')
-    .sort({ lastActivity: -1 })
-    .select('-messages')
-    .lean();
+// ─── الدوال الموجودة (بدون تغيير) ──────────────────────────────────────────
 
-exports.countUnreadForConversation = async (conversationId, userId) => {
-  const result = await Conversation.aggregate([
-    { $match: { _id: new mongoose.Types.ObjectId(conversationId) } },
-    { $unwind: '$messages' },
-    { $match: { 'messages.sender': { $ne: new mongoose.Types.ObjectId(userId) }, 'messages.read': false } },
-    { $count: 'count' },
-  ]);
-  return result[0]?.count ?? 0;
+exports.findExistingConversation = async (participants) => {
+  return Conversation.findOne({
+    participants: { $all: participants, $size: participants.length },
+    isActive: true,
+  }).lean();
 };
 
-exports.findConversationById = (id) => Conversation.findById(id);
+exports.createConversation = async (data) => {
+  const conv = new Conversation(data);
+  await conv.save();
+  return conv.toObject();
+};
 
-exports.findConversationByIdWithMessages = (id) =>
-  Conversation.findById(id, { messages: { $slice: -50 } })
-    .populate('messages.sender', 'name avatar');
+exports.findConversationById = async (conversationId) => {
+  return Conversation.findById(conversationId)
+    .populate('participants', 'name avatar _id')
+    .populate('lastMessage')
+    .lean();
+};
 
-exports.findConversationByItemAndParticipants = (itemId, donorId, bookedById) =>
-  Conversation.findOne({ item: itemId, participants: { $all: [donorId, bookedById] } });
+exports.findConversationsByUser = async (userId) => {
+  return Conversation.find({
+    participants: userId,
+    isActive: true,
+  })
+    .populate('participants', 'name avatar _id')
+    .populate('lastMessage')
+    .sort({ updatedAt: -1 })
+    .lean();
+};
 
-// ✅ [إضافة حرجية]: البحث عن المحادثة التاريخية بين الطرفين فقط لتجنب ضياع السجل عند تغير الـ itemId
-exports.findConversationByParticipantsOnly = (userIdA, userIdB) =>
-  Conversation.findOne({
-    participants: { $all: [new mongoose.Types.ObjectId(userIdA), new mongoose.Types.ObjectId(userIdB)] }
+// ─── [جديد] findOrCreateByItem ─────────────────────────────────────────────
+/**
+ * ابحث عن محادثة مرتبطة بـ item معين، أو أنشئها إذا لم تكن موجودة.
+ * يستخدم upsert لتجنب race condition ومشكلة الـ 409.
+ *
+ * @param {string} itemId
+ * @param {string[]} participants — مُرتَّبة مسبقاً
+ * @returns {Promise<object>}
+ */
+exports.findOrCreateByItem = async (itemId, participants) => {
+  const conv = await Conversation.findOneAndUpdate(
+    { item: itemId },
+    { $setOnInsert: { item: itemId, participants } },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  )
+    .populate('participants', 'name avatar _id')
+    .lean();
+  return conv;
+};
+
+// ─── الدوال المُصلَحة / الجديدة ────────────────────────────────────────────
+
+exports.appendMessage = async (conversationId, messageData) => {
+  const newMessage = await Message.create({
+    conversation: conversationId,
+    sender: messageData.sender,
+    text:   messageData.text,
   });
 
-// ✅ [إضافة حرجية]: تحديث حقل الـ item داخل المحادثة ليرتبط بالغرض المحجوز الجديد
-exports.updateConversationItem = (conversationId, newItemId) =>
-  Conversation.findByIdAndUpdate(
-    conversationId,
-    { $set: { item: newItemId } },
-    { new: true }
-  );
+  await Conversation.findByIdAndUpdate(conversationId, {
+    $set: { lastMessage: newMessage._id },
+    $inc: { unreadCount: 1 },
+  });
 
-exports.createConversation = ({ item, participants }) =>
-  Conversation.create({ item, participants, messages: [], lastActivity: new Date() });
-
-// CRIT-01 ► تحقق من المشارك + إضافة رسالة في عملية ذرية واحدة
-exports.appendMessage = (conversationIdOrDoc, message, senderId) => {
-  const convId = conversationIdOrDoc?._id ?? conversationIdOrDoc;
-  return Conversation.findOneAndUpdate(
-    { _id: convId, participants: new mongoose.Types.ObjectId(senderId || message.sender) },
-    { $push: { messages: message }, $set: { lastActivity: new Date() } },
-    { new: true }
-  );
+  return newMessage.toObject();
 };
 
-// CRIT-02 ► arrayFilters في updateOne — ذري تماماً
-exports.markIncomingMessagesRead = async (conversationOrId, userId) => {
-  const convId = conversationOrId?._id ?? conversationOrId;
-  const result = await Conversation.updateOne(
-    { _id: convId },
-    { $set: { 'messages.$[elem].read': true } },
-    { arrayFilters: [{ 'elem.sender': { $ne: new mongoose.Types.ObjectId(userId) }, 'elem.read': false }] }
+exports.findMessagesByConversation = async (conversationId, { page = 1, limit = 30 } = {}) => {
+  const skip = (page - 1) * limit;
+  return Message.find({ conversation: conversationId })
+    .populate('sender', 'name avatar _id')
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limit)
+    .lean();
+};
+
+exports.countUnreadForConversation = async (conversationId, userId) => {
+  return Message.countDocuments({
+    conversation: conversationId,
+    sender: { $ne: userId },
+    read: false,
+  });
+};
+
+exports.markMessagesAsRead = async (conversationId, userId) => {
+  await Message.updateMany(
+    {
+      conversation: conversationId,
+      sender: { $ne: userId },
+      read: false,
+    },
+    { $set: { read: true } }
   );
-  return result.modifiedCount > 0;
+
+  await Conversation.findByIdAndUpdate(conversationId, {
+    $set: { unreadCount: 0 },
+  });
+};
+
+exports.closeConversation = async (conversationId) => {
+  return Conversation.findByIdAndUpdate(
+    conversationId,
+    { $set: { isActive: false } },
+    { new: true }
+  ).lean();
 };
