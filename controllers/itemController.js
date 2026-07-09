@@ -1,7 +1,8 @@
-// controllers/itemController.js
+// controllers/itemController.js — ✅ CLEANED & FIXED FROM OLD SOCKET PATH
 const itemService  = require('../services/itemService');
 const asyncHandler = require('../utils/asyncHandler');
-const { getIO }    = require('../socket/socketHandler');
+
+// 💡 تم حذف سطر getIO القديم بالكامل لأنه استُبدل بـ الـ Middleware الموحد في server.js
 
 exports.getItems = asyncHandler(async (req, res) => {
   const result = await itemService.getItemsLogic(req.query);

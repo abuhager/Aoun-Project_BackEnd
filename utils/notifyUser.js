@@ -1,6 +1,7 @@
+// utils/notifyUser.js — ✅ FIXED WITH NEW SOCKET MODULE IMPORT
 const Notification   = require('../models/Notification');
 const AppError       = require('./AppError');
-const SystemSettings = require('../models/SystemSettings'); // ✅ إضافة
+const SystemSettings = require('../models/SystemSettings');
 
 // ✅ جلب platformName من DB مع Cache
 const getPlatformName = async () => {
@@ -37,9 +38,10 @@ async function notifyUser(userId, payload) {
     },
   });
 
-  // ── 2. Socket.io real-time emit ──────────────────────────────
+  // ── 2. Socket.io real-time emit — مُعدّل للمسار الجديد ──────────────
   try {
-    const { getIO } = require('../socket/socketHandler');
+    // 💡 تعديل الشات البنيوي: الاستدعاء الجديد من مجلد socket مباشرة
+    const { getIO } = require('../socket');
     const io = getIO();
 
     if (io) {
@@ -66,7 +68,7 @@ async function notifyUser(userId, payload) {
   if (CRITICAL_NOTIFICATION_TYPES.includes(payload.type)) {
     if (userEmail) {
       try {
-        const platformName = await getPlatformName(); // ✅ من DB
+        const platformName = await getPlatformName();
         const { fireSendEmail } = require('./sendEmail');
 
         fireSendEmail({
@@ -80,13 +82,13 @@ async function notifyUser(userId, payload) {
                 ? `<a href="${payload.actionUrl}"
                       style="display:inline-block;padding:10px 20px;background:#01696f;
                              color:#fff;border-radius:8px;text-decoration:none;font-weight:bold;">
-                       الانتقال للتطبيق
+                       Anputation Application
                      </a>`
                 : ''
               }
               <hr style="border:none;border-top:1px solid #edeeef;margin:20px 0;" />
               <p style="font-size:11px;color:#747775;">
-                هذا إشعار إداري رسمي من منصة ${platformName}. <!-- ✅ ديناميكي -->
+                هذا إشعار إداري رسمي من منصة ${platformName}.
               </p>
             </div>
           `,

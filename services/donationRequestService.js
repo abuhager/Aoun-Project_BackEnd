@@ -1,4 +1,4 @@
-// services/donationRequestService.js — ✅ PATCHED [LOGIC-03 | ARCH-01]
+// services/donationRequestService.js — ✅ PATCHED [LOGIC-03 | ARCH-01] WITH NEW SOCKET WRITING
 
 const SystemSettings             = require('../models/SystemSettings');
 const User                       = require('../models/User');
@@ -11,9 +11,10 @@ const notifyUser                 = require('../utils/notifyUser');
 const DonationRequest            = require('../models/DonationRequest');
 const donationOfferRepository    = require('../repositories/donationOfferRepository');
 const DonationOffer              = require('../models/DonationOffer');
-
-// ✅ ARCH-01: استيراد مشترك للتحقق من الصور بدل تكرار الشروط محلياً
 const { validateImageFile }      = require('../utils/imageValidation');
+
+// 💡 تعديل الشات البنيوي: الاستدعاء الجديد من مجلد socket مباشرة
+const { getIO }                  = require('../socket');
 
 const getMinTrustLevel            = (s) => s.minTrustLevelForRequests  ?? 2;
 
@@ -158,7 +159,6 @@ exports.cancelRequestLogic = async (requestId, userId) => {
     if (cancelledOffers.length > 0) {
       setImmediate(async () => {
         try {
-          const { getIO } = require('../socket/socketHandler');
           const io = getIO();
           await Promise.allSettled(
             cancelledOffers.map(async (offer) => {
@@ -213,7 +213,7 @@ exports.getMyRequestsLogic = async (userId) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 5. المتبرع يقدّم عرضاً (تم تطبيق LOGIC-03 و ARCH-01 بنجاح)
+// 5. المتبرع يقدّم عرضاً
 // ─────────────────────────────────────────────────────────────────────────────
 exports.submitOfferLogic = async (requestId, donorId, body, file) => {
   const [request, donor, settings] = await Promise.all([
@@ -225,7 +225,6 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
   if (!request)
     throw new AppError('الطلب غير موجود أو غير نشط', 404, 'REQUEST_NOT_FOUND');
 
-  // ✅ LOGIC-03: التحقق الصارم من وجود المتبرع أولاً لمنع انهيار السيرفر عند استدعاء الحقول
   if (!donor)
     throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
 
@@ -237,14 +236,13 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
 
   const minLevel = settings.minTrustLevelForDonating ?? 1;
   
-  // ✅ LOGIC-03: فحص مستوى الثقة بعد التأكد التام من الكائن donor
   if (donor.trustLevel < minLevel)
     throw new AppError(`يلزم Level ${minLevel} على الأقل للتبرع`, 403, 'INSUFFICIENT_TRUST_LEVEL');
 
   const [alreadyOffered, safeHub, pendingOffersCount] = await Promise.all([
     donationOfferRepository.existsByRequestAndDonor(requestId, donorId),
     SafeHub.findOne({ _id: body.safeHub, isActive: true }).lean(),
-    donationOfferRepository.countPendingOffersByDonor(donorId), // تم التحديث للدالة المستودعية المخصصة
+    donationOfferRepository.countPendingOffersByDonor(donorId),
   ]);
 
   if (alreadyOffered)
@@ -263,7 +261,6 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
 
   let imageUrl = null, cloudinaryId = null;
   if (file) {
-    // ✅ ARCH-01: استبدال التحقق المحلي بالدالة المركزية الموحدة للمشروع
     validateImageFile(file);
     const uploaded = await uploadToCloudinary(file.buffer);
     imageUrl     = uploaded.secure_url;
@@ -283,7 +280,6 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
 
   setImmediate(async () => {
     try {
-      const { getIO } = require('../socket');
       getIO().to(`user_${request.requester._id}`).emit('request:new_offer', {
         type:      'NEW_OFFER',
         requestId: request._id,
@@ -395,7 +391,6 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
 
     setImmediate(async () => {
       try {
-        const { getIO } = require('../socket/socketHandler');
         const io = getIO();
 
         io.to(`user_${offer.donor._id}`).emit('offer:accepted', {

@@ -1,103 +1,163 @@
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
 
-exports.createOrGetConversation = async ({ item, owner, requester }) => {
-  const update = {
-    $setOnInsert: {
-      item,
-      owner,
-      requester,
-      participants: [owner, requester],
-      unreadCount: 0,
-      lastMessage: "",
-      lastMessageAt: null,
-    },
-  };
+const POPULATE_ITEM = "title images imageUrl";
+const POPULATE_USER = "name avatar";
 
+exports.findOrCreateConversation = async ({ itemId, owner, requester }) => {
+  const participants = [owner, requester].sort();
   const conversation = await Conversation.findOneAndUpdate(
-    { item, owner, requester },
-    update,
+    { item: itemId, owner, requester },
     {
-      new: true,
-      upsert: true,
-      setDefaultsOnInsert: true,
-    }
+      $setOnInsert: {
+        item: itemId,
+        owner,
+        requester,
+        participants,
+        lastMessage: "",
+        lastMessageAt: null,
+      },
+    },
+    { new: true, upsert: true, setDefaultsOnInsert: true }
   )
-    .populate("item", "title images")
-    .populate("owner", "name avatar")
-    .populate("requester", "name avatar");
+  .populate("item", POPULATE_ITEM)
+  .populate("owner", POPULATE_USER)
+  .populate("requester", POPULATE_USER);
 
   return conversation;
 };
 
-exports.findUserConversations = async (userId) => {
-  return Conversation.find({ participants: userId })
-    .populate("item", "title images")
-    .populate("owner", "name avatar")
-    .populate("requester", "name avatar")
-    .sort({ updatedAt: -1 });
-};
-
 exports.findConversationById = async (conversationId) => {
-  return Conversation.findById(conversationId)
-    .populate("item", "title images")
-    .populate("owner", "name avatar")
-    .populate("requester", "name avatar");
+  const conversation = await Conversation.findById(conversationId)
+    .populate("item", POPULATE_ITEM)
+    .populate("owner", POPULATE_USER)
+    .populate("requester", POPULATE_USER)
+    .populate("participants", POPULATE_USER); // 👈 حقن الـ populate للمشاركين
+    
+  return conversation;
 };
 
-exports.appendMessage = async ({ conversationId, sender, text }) => {
+exports.findUserConversations = async (userId) => {
+  const mongoose = require("mongoose");
+  let oUserId;
+  try { oUserId = new mongoose.Types.ObjectId(userId); } catch(e) { oUserId = userId; }
+
+  return Conversation.find({
+    $or: [
+      { participants: oUserId },
+      { owner: oUserId },
+      { requester: oUserId }
+    ]
+  })
+  .populate("item", POPULATE_ITEM)
+  .populate("owner", POPULATE_USER)
+  .populate("requester", POPULATE_USER)
+  .populate("participants", POPULATE_USER) // 👈 حل العقدة: جلب بيانات أسماء المشاركين بالكامل
+  .sort({ updatedAt: -1 })
+  .lean();
+};
+
+exports.isParticipant = (conversation, userId) =>
+  (conversation.participants || []).some(
+    (p) => (p._id ? p._id : p).toString() === userId.toString()
+  );
+
+// الإصلاح الوقائي: دعم كلا المسميين لقطع الطريق تماماً على الـ undefined
+exports.createMessage = async ({ conversationId, senderId, sender, text }) => {
+  const finalSenderId = senderId || sender; 
+
   const message = await Message.create({
     conversation: conversationId,
-    sender,
+    sender: finalSenderId,
     text,
+    read: false,
   });
 
   await Conversation.findByIdAndUpdate(conversationId, {
     $set: {
-      lastMessage: text,
+      lastMessage: text.slice(0, 100),
       lastMessageAt: new Date(),
     },
-    $inc: { unreadCount: 1 },
   });
 
-  return Message.findById(message._id).populate("sender", "name avatar");
+  return Message.findById(message._id).populate("sender", `${POPULATE_USER} _id`).lean();
 };
 
-exports.findMessagesByConversation = async (conversationId, { page = 1, limit = 20 } = {}) => {
-  const skip = (page - 1) * limit;
+exports.findMessagesPage = async (conversationId, { page = 1, limit = 30 } = {}) => {
+  const safeLimit = Math.min(Math.max(Number(limit) || 30, 1), 100);
+  const safePage = Math.max(Number(page) || 1, 1);
+  const skip = (safePage - 1) * safeLimit;
 
   const [messages, total] = await Promise.all([
     Message.find({ conversation: conversationId })
-      .populate("sender", "name avatar")
-      .sort({ createdAt: 1 })
+      .populate("sender", `${POPULATE_USER} _id`)
+      .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limit),
+      .limit(safeLimit)
+      .lean(),
     Message.countDocuments({ conversation: conversationId }),
   ]);
 
   return {
-    messages,
+    messages: messages.reverse(),
     total,
-    page,
-    totalPages: Math.ceil(total / limit),
+    page: safePage,
+    totalPages: Math.ceil(total / safeLimit),
   };
 };
 
-exports.markMessagesAsRead = async ({ conversationId, userId }) => {
+exports.findRecentMessages = async (conversationId, limit = 50) => {
+  const messages = await Message.find({ conversation: conversationId })
+    .populate("sender", `${POPULATE_USER} _id`)
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
+  return messages.reverse();
+};
+
+exports.markMessagesRead = async (conversationId, userId) => {
   await Message.updateMany(
     { conversation: conversationId, sender: { $ne: userId }, read: false },
     { $set: { read: true } }
   );
+};
 
-  await Conversation.findByIdAndUpdate(conversationId, {
-    $set: { unreadCount: 0 },
+exports.countUnreadForUser = async (conversationId, userId) => {
+  const mongoose = require("mongoose");
+  let oUserId;
+  try { oUserId = new mongoose.Types.ObjectId(userId); } catch(e) { oUserId = userId; }
+
+  return Message.countDocuments({
+    conversation: conversationId,
+    sender: { $ne: oUserId }, // 👈 التعديل الحاسم: إجبار المقارنة بـ ObjectId حقيقي
+    read: false,
   });
 };
 
-exports.countUnreadForConversation = async ({ conversationId, userId }) => {
-  return Message.countDocuments({
-    conversation: conversationId,
-    sender: { $ne: userId },
-    read: false,
+/** حساب العداد لمجموعة محادثات (Batch) المعتمد عليه في القائمة الجانبية والـ Navbar */
+exports.countUnreadForUserBatch = async (conversationIds, userId) => {
+  const mongoose = require("mongoose");
+  let oUserId;
+  try { oUserId = new mongoose.Types.ObjectId(userId); } catch(e) { oUserId = userId; }
+
+  // تحويل مصفوفة المعرفات أيضاً لضمان دقة الـ Aggregation
+  const oConversationIds = (conversationIds || []).map(id => {
+    try { return new mongoose.Types.ObjectId(id); } catch(e) { return id; }
   });
+
+  const rows = await Message.aggregate([
+    {
+      $match: {
+        conversation: { $in: oConversationIds },
+        sender: { $ne: oUserId }, // 👈 نضمن استبعاد رسائلك الشخصية غصباً عن أي اختلاف أنواع
+        read: false,
+      },
+    },
+    { $group: { _id: "$conversation", count: { $sum: 1 } } },
+  ]);
+
+  return rows.reduce((map, r) => {
+    map[r._id.toString()] = r.count;
+    return map;
+  }, {});
 };

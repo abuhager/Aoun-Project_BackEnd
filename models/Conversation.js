@@ -1,5 +1,14 @@
 const mongoose = require("mongoose");
 
+/**
+ * NOTE on unreadCount:
+ * We deliberately do NOT store a single `unreadCount` number on the
+ * conversation. A 2-participant conversation needs a PER-USER unread
+ * count ("unread for me" vs "unread for them") — a single shared field
+ * can never represent that correctly and was a source of bugs in the
+ * old schema. Unread counts are computed on read (see
+ * conversationRepository.countUnreadForUser) from the Message.read flag.
+ */
 const conversationSchema = new mongoose.Schema(
   {
     item: {
@@ -34,10 +43,6 @@ const conversationSchema = new mongoose.Schema(
     lastMessageAt: {
       type: Date,
       default: null,
-    },
-    unreadCount: {
-      type: Number,
-      default: 0,
     },
   },
   { timestamps: true }

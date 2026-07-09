@@ -11,10 +11,11 @@ router
   .get(controller.listConversations)
   .post(controller.openConversation);
 
+// Read-only history endpoint. There is intentionally no POST here —
+// sending a message goes through the "send_message" socket event only.
 router
   .route("/:conversationId/messages")
-  .get(controller.getMessages)
-  .post(controller.sendMessage);
+  .get(controller.getMessages);
 
 router
   .route("/:conversationId/read")

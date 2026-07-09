@@ -1,4 +1,4 @@
-// services/itemService.js — ✅ PATCHED & FIXED
+// services/itemService.js — ✅ PATCHED & FIXED WITH NEW SOCKET WRITING
 const mongoose         = require('mongoose');
 const Item             = require('../models/Item');
 const User             = require('../models/User');
@@ -14,7 +14,9 @@ const { fireSendEmail }        = require('../utils/sendEmail');
 const { uploadToCloudinary }   = require('../utils/uploadToCloudinary');
 const notifyUser               = require('../utils/notifyUser');
 const { toPublicItem }         = require('../dtos/itemDto');
-const { getIO }                = require('../socket/socketHandler');
+
+// 💡 تعديل الشات البنيوي: الاستدعاء الجديد من مجلد socket مباشرة
+const { getIO }                = require('../socket');
 
 // ── ✅ ARCH-01: مصدر واحد للحقيقة — مشتركة مع middleware/upload.js ──────────
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -49,7 +51,7 @@ exports.getItemsLogic = async (query) => {
 
   // ✅ SEC-01: كل regex مقيّد بـ escapeRegex
   if (query.location) filter.location = new RegExp(escapeRegex(query.location), 'i');
-  if (query.search)   filter.title    = new RegExp(escapeRegex(query.search),   'i');
+  if (query.search)   filter.title    = new RegExp(escapeRegex(query.search),    'i');
   if (query.category && query.category !== 'all') filter.category = query.category;
 
   const [items, total] = await Promise.all([
@@ -237,7 +239,6 @@ exports.bookItemLogic = async (itemId, userId) => {
     );
 
   // ✅ RACE-01: Atomic — الشرط والتحديث في عملية واحدة
-  // تم تحويل الخيار إلى returnDocument لمنع التحذيرات المهجورة
   const item = await Item.findOneAndUpdate(
     {
       _id:      itemId,
@@ -374,23 +375,20 @@ exports.cancelBookingLogic = async (itemId, userId) => {
 // 7. تأكيد التسليم المزدوج — ✅ RACE-02 + LOGIC-01: Atomic بالكامل
 // ─────────────────────────────────────────────────────────────────────────────
 exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
-  // ✅ فحص الحماية الأولية
   if (!userId) throw new AppError('المستخدم غير معرّف', 401, 'UNAUTHORIZED');
 
   const mongoose = require('mongoose');
   
-  // ✅ توحيد أنواع البيانات: تحويل لـ ObjectId للاستعلامات الذرية ولـ String للمقارنات التشخيصية
   const userObjectId = typeof userId === 'string' ? new mongoose.Types.ObjectId(userId) : userId;
   const userIdStr    = userId.toString();
 
   // ── تأكيد المستلم ──────────────────────────────────────────────────────────
   if (confirmationType === 'recipient_confirm') {
-    // ✅ RACE-02: تحديث ذري آمن باستخدام الـ userObjectId الصحيح
     const item = await Item.findOneAndUpdate(
       {
         _id:                itemId,
         status:             'محجوز',
-        bookedBy:           userObjectId, // يُطابق الـ ObjectId في الـ Database بدقة
+        bookedBy:           userObjectId, 
         recipientConfirmed: false,
       },
       {
@@ -399,11 +397,10 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
           recipientConfirmedAt: new Date(),
         },
       },
-      { returnDocument: 'after' } // منع التحذيرات المهجورة لـ Mongoose
+      { returnDocument: 'after' }
     ).populate('donor', 'name email');
 
     if (!item) {
-      // تشخيص دقيق وأمين لسبب الفشل لمنع تداخل الأخطاء
       const exists = await Item.findById(itemId)
         .select('status bookedBy recipientConfirmed').lean();
         
@@ -419,7 +416,6 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
       throw new AppError('تعذر تأكيد الاستلام', 400, 'CONFIRM_FAILED');
     }
 
-    // إشعار المتبرع (non-blocking)
     setImmediate(() => {
       try {
         getIO()
@@ -446,14 +442,12 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
 
   // ── تأكيد المتبرع ──────────────────────────────────────────────────────────
   if (confirmationType === 'donor_confirm') {
-    // ✅ RACE-01: عزل كامل للعملية داخل كائن Transaction موحد
     const session = await mongoose.startSession();
     session.startTransaction();
 
     let deliveredItem;
 
     try {
-      // الخطوة 1: تحديث الـ Item وثيقاً داخل الـ Transaction
       deliveredItem = await Item.findOneAndUpdate(
         {
           _id:                itemId,
@@ -470,11 +464,10 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
             deliveredAt:      new Date(),
           },
         },
-        { returnDocument: 'after', session } // متوافق مع خيارات التحديث الحديثة
+        { returnDocument: 'after', session }
       ).populate('donor bookedBy', 'name email trustScore gamification');
 
       if (!deliveredItem) {
-        // تشخيص دقيق للفشل
         const exists = await Item.findById(itemId)
           .select('status donor recipientConfirmed donorConfirmed bookedBy')
           .lean();
@@ -490,7 +483,6 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
         throw new AppError('تعذر تأكيد التسليم', 400, 'CONFIRM_FAILED');
       }
 
-      // ✅ RACE-01: الخطوة 2: تحديث نقاط الـ Gamification داخل نفس الـ Transaction
       await Promise.all([
         User.findByIdAndUpdate(
           deliveredItem.donor._id,
@@ -513,7 +505,6 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
       throw err;
     }
 
-    // ── إشعارات خارج الـ Transaction (non-blocking) ─────────────────────────
     setImmediate(async () => {
       try {
         const io = getIO();
@@ -530,7 +521,6 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
           message:   '🎉 تمت عملية التسليم بنجاح!',
         });
 
-        // تحديث قائمة الصدارة الفورية
         io.to('leaderboard_subscribers').emit('leaderboard:update');
 
       } catch (_) {}
@@ -545,6 +535,7 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
 
   throw new AppError('نوع التأكيد غير صحيح', 400, 'INVALID_CONFIRMATION_TYPE');
 };
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 8. تعديل غرض
 // ─────────────────────────────────────────────────────────────────────────────

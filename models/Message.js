@@ -23,11 +23,14 @@ const messageSchema = new mongoose.Schema(
     read: {
       type: Boolean,
       default: false,
+      index: true,
     },
   },
   { timestamps: true }
 );
 
 messageSchema.index({ conversation: 1, createdAt: 1 });
+// Speeds up unread-count queries (conversation + sender + read)
+messageSchema.index({ conversation: 1, sender: 1, read: 1 });
 
 module.exports = mongoose.model("Message", messageSchema);

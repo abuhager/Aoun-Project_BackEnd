@@ -79,7 +79,7 @@ exports.sendWhatsAppOtp = async (phone, otp) => {
   const cleanPhone = String(phone).replace(/^\\+|^00|\\s|-/g, '');
   const jid = `${cleanPhone}@s.whatsapp.net`;
 
-  await sock.sendMessage(jid, {
+  await sock.send_message(jid, {
     text: `🔐 رمز التحقق في منصة *${PLATFORM_NAME}*: *${otp}*\n⏱️ صالح 10 دقائق فقط.\n⚠️ لا تشاركه مع أحد.`,
   });
 };

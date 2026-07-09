@@ -1,9 +1,10 @@
-// server.js — Flow 1 FINAL FIXED WITH ADVANCED GRACEFUL SHUTDOWN
+// server.js — Flow 1 FINAL FIXED WITH ADVANCED GRACEFUL SHUTDOWN & CHAT REWRITE
 // ✅ FIX-01: connectRedis() قبل connectDB() وقبل server.listen — يضمن Redis جاهز عند أول طلب
 // ✅ FIX-02: io.close() يتم استدعاؤه فقط إذا كان السيرفر يعمل فعلياً لحماية العملية من ERR_SERVER_NOT_RUNNING
 // ✅ FIX-03: uncaughtException يميّز بين Operational errors و Programmer errors
 // ✅ FIX-04: unhandledRejection يستدعي gracefulShutdown 
 // ✅ FIX-05: دالة cleanupResources ذكية ومحمية بـ try/catch داخلي لكل مورد
+// ✅ CHAT-FIX: تحديث مسار استدعاء السوكيت وتمريره عبر Middleware للمتحكمات المتبقية لقراءة الشات
 
 require('dotenv').config();
 
@@ -32,13 +33,20 @@ const http             = require('http');
 const app              = require('./app');
 const connectDB        = require('./config/db');
 const { initCronJobs } = require('./jobs/cronJobs');
-const { initSocket }   = require('./socket/socketHandler');
+
+// 💡 تعديل الشات: استدعاء الهيكل الجديد من مجلد socket مباشرة (يستهدف index.js الجديد)
+const { initSocket }   = require('./socket');
 
 const PORT   = process.env.PORT || 5000;
 const server = http.createServer(app);
 
 const io = initSocket(server);
-app.set('io', io);
+
+// 💡 تعديل الشات: تمرير الـ io عبر الـ middleware حتى تتمكن الـ REST controllers من الإرسال (فتح/قراءة الغرف)
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
 
 // ── دالة مساعدة لتنظيف الموارد التابعة (Sockets & DB) ──────────
 const cleanupResources = async (isHttpListening) => {
