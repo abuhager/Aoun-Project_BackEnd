@@ -7,6 +7,7 @@
 // ✅ FIX [PERF-PROF-02]    : حذف .select().lean() المكرر فوق findPublicProfile
 // ✅ FIX [SEC-PROF-03]     : توحيد صيغة الهاتف +962 قبل الحفظ في updateMeLogic
 // ✅ FIX [STUDENT-UPGRADE] : إصلاح مشكلة الترقية التلقائية للطلاب عند تأكيد الحساب
+// ✅ FIX [PHONE-TRUST-02]  : إعادة ضبط phoneVerified و trustLevel عند تغيير الرقم في updateMeLogic
 
 const bcrypt       = require('bcryptjs');
 const crypto       = require('crypto');
@@ -56,8 +57,8 @@ const buildSafeUser = (user) => ({
   _id:               user._id,
   name:              user.name,
   email:             user.email,
-  phone:             user.phone        ?? null,   
-  phoneVerified:     user.phoneVerified ?? false, 
+  phone:             user.phone        ?? null,
+  phoneVerified:     user.phoneVerified ?? false,
   avatar:            user.avatar,
   role:              user.role,
   trustScore:        user.trustScore,
@@ -70,7 +71,7 @@ const buildSafeUser = (user) => ({
   gamification:      buildGamificationProfile(user.trustScore, user.totalDonations),
 });
 
-// ✅ FIX [DUP-PROF-01]: دالة مشتركة لـ pagination — تحذف التكرار في getMeLogic و getPublicProfileLogic
+// ✅ FIX [DUP-PROF-01]: دالة مشتركة لـ pagination
 const _getProfilePageParams = async (page) => {
   const settings = await SystemSettings.getCached();
   const pageSize = settings?.profilePageSize ?? 10;
@@ -150,7 +151,7 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
       verificationOtpExpiry: otpExpiry,
       otpAttempts:           0,
       isVerifiedStudent:     isStudent,
-      trustLevel:            isStudent ? studentTrustLevel : 1, 
+      trustLevel:            isStudent ? studentTrustLevel : 1,
       quota:                 isStudent ? (settings?.studentQuota ?? 5) : defaultQuota,
     });
 
@@ -172,7 +173,7 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
     verificationOtpExpiry: otpExpiry,
     otpAttempts:           0,
     isVerifiedStudent:     isStudent,
-    trustLevel:            isStudent ? studentTrustLevel : 1, 
+    trustLevel:            isStudent ? studentTrustLevel : 1,
     quota:                 isStudent ? (settings?.studentQuota ?? 5) : defaultQuota,
   });
 
@@ -540,6 +541,8 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, mimetype) => {
 
   if (updates.name) user.name = updates.name.trim();
 
+  // ✅ FIX [PHONE-TRUST-02]: إعادة ضبط phoneVerified و trustLevel عند تغيير الرقم
+  let phoneChanged = false;
   if (updates.phone) {
     let phone = updates.phone.replace(/[\s\-]/g, '');
     phone     = phone.replace(/^(00962|\+962|0)/, '');
@@ -549,7 +552,12 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, mimetype) => {
     if (phoneExists) {
       return { statusCode: 409, body: { msg: 'رقم الهاتف مستخدم من قِبَل حساب آخر ❌', code: 'PHONE_ALREADY_EXISTS' } };
     }
-    user.phone = normalizedPhone;
+
+    // تحقق هل الرقم تغيّر فعلاً
+    if (user.phone !== normalizedPhone) {
+      phoneChanged  = true;
+      user.phone    = normalizedPhone;
+    }
   }
 
   if (fileBuffer) {
@@ -578,13 +586,32 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, mimetype) => {
     }
   }
 
-  const updatedUser = await userRepository.updateUser(userId, {
+  // بناء حقول التحديث
+  const updateFields = {
     name:   user.name,
     phone:  user.phone,
     avatar: user.avatar,
-  });
+  };
 
-  return { statusCode: 200, body: { msg: 'تم تحديث الملف الشخصي بنجاح ✅', user: buildSafeUser(updatedUser) } };
+  // ✅ FIX [PHONE-TRUST-02]: إذا تغيّر الرقم — اسحب الثقة حتى يُعاد التحقق
+  if (phoneChanged) {
+    updateFields.phoneVerified = false;
+    // إذا لم يكن طالباً موثقاً — يرجع المستوى لـ 1
+    if (!user.isVerifiedStudent) {
+      updateFields.trustLevel = 1;
+    }
+  }
+
+  const updatedUser = await userRepository.updateUser(userId, updateFields);
+
+  return {
+    statusCode: 200,
+    body: {
+      msg:          'تم تحديث الملف الشخصي بنجاح ✅',
+      user:         buildSafeUser(updatedUser),
+      phoneChanged, // يُعلم الـ Frontend إن كان لازم يطلب تحقق الرقم
+    },
+  };
 };
 
 // ─── updatePasswordLogic ──────────────────────────────────────
