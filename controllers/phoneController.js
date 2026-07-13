@@ -3,13 +3,14 @@
 // لا منطق هنا — فقط validate → service → respond
 
 const { createPhoneOtp, verifyPhoneOtp } = require('../services/phoneService');
-const { sendOtpWhatsApp } = require('../integrations/whatsappService');
+// ✅ تعديل: whatsappService → smsService (تويليو Verify)
+const { sendOtpWhatsApp } = require('../integrations/smsService');
 
-// ─── Helpers ──────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────
 // تحقق بسيط من صيغة رقم الهاتف الأردني
 const PHONE_REGEX = /^(\+962|00962|0)?7[789]\d{7}$/;
 
-// ─── POST /api/phone/send-otp ─────────────────────────────────
+// ─── POST /api/phone/send-otp ───────────────────────────────
 // يتطلب: requireAuth (Level 1 كافٍ)
 // Body: { phone: "0791234567" }
 exports.sendOtp = async (req, res) => {
@@ -38,12 +39,12 @@ exports.sendOtp = async (req, res) => {
       phone.trim()
     );
 
-    // ✅ أرسل عبر WhatsApp — whatsappService يتعامل مع dev/prod
+    // ✅ أرسل عبر Twilio Verify SMS
     await sendOtpWhatsApp(formattedPhone, otp);
 
     // ✅ لا نُعيد الـ OTP في الـ Response أبداً
     return res.status(200).json({
-      msg: 'تم إرسال رمز التحقق إلى WhatsApp الخاص بك 📲',
+      msg: 'تم إرسال رمز التحقق إلى هاتفك عبر الرسائل النصية 📲',
     });
 
   } catch (err) {
@@ -83,8 +84,8 @@ exports.verifyOtp = async (req, res) => {
     // ✅ النجاح — trustLevel أصبح 2 في DB
     // ⚠️ المستخدم يحتاج refresh للـ Access Token ليرى trustLevel=2 في الـ JWT
     return res.status(200).json({
-      msg:              'تم التحقق بنجاح 🎉 يمكنك الآن حجز العناصر',
-      requiresRefresh:  true,  // ← إشارة للـ Frontend لاستدعاء /refresh-token
+      msg:             'تم التحقق بنجاح 🎉 يمكنك الآن حجز العناصر',
+      requiresRefresh: true,  // ← إشارة للـ Frontend لاستدعاء /refresh-token
     });
 
   } catch (err) {
