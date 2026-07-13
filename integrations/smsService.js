@@ -5,20 +5,17 @@
 //
 // ─── آلية العمل الجديدة ──────────────────────────────────────
 // 1. Frontend: يستخدم Firebase Client SDK لإرسال OTP مباشرة للمستخدم
-//    (firebase.auth().signInWithPhoneNumber(phone, recaptchaVerifier))
 // 2. Frontend: بعد إدخال المستخدم للرمز، يحصل على idToken من Firebase
-//    (result.confirm(otp) → user.getIdToken())
-// 3. Frontend: يرسل idToken للـ Backend عبر /api/phone/verify-otp
+// 3. Frontend: يرسل idToken للـ Backend عبر /api/phone/verify-token
 // 4. Backend (هنا): يتحقق من idToken باستخدام Firebase Admin SDK
 //    ويستخرج رقم الهاتف المؤكد منه مباشرة
 
-const admin = require('firebase-admin');
+const { initializeApp, getApps, cert } = require('firebase-admin/app');
+const { getAuth }                       = require('firebase-admin/auth');
 
 // ─── تهيئة Firebase Admin (مرة واحدة فقط) ───────────────────
-let _initialized = false;
-
 const initFirebase = () => {
-  if (_initialized || admin.apps.length > 0) return;
+  if (getApps().length > 0) return;
 
   const projectId   = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
@@ -30,20 +27,18 @@ const initFirebase = () => {
     );
   }
 
-  admin.initializeApp({
-    credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
+  initializeApp({
+    credential: cert({ projectId, clientEmail, privateKey }),
   });
-
-  _initialized = true;
 };
 
 // ─── التحقق من idToken وإرجاع رقم الهاتف ─────────────────────
 // idToken: يأتي من Firebase Client SDK بعد تأكيد OTP
-// يُرجع: رقم الهاتف بصيغة E.164 (مثل +96279xxxxxxx) أو null إذا فشل
+// يُرجع: رقم الهاتف بصيغة E.164 (مثل +96279xxxxxxx)
 exports.verifyFirebasePhoneToken = async (idToken) => {
   initFirebase();
 
-  const decoded = await admin.auth().verifyIdToken(idToken);
+  const decoded = await getAuth().verifyIdToken(idToken);
 
   // decoded.phone_number موجود فقط إذا تم التوثيق عبر Phone Auth
   if (!decoded.phone_number) {
