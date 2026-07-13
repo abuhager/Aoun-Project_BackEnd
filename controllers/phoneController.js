@@ -1,6 +1,8 @@
 // controllers/phoneController.js
 // المسؤولية: استقبال طلبات التحقق من الهاتف وتفويضها للـ services
-// ✅ إصلاح: createPhoneOtp لا يُعيد otp بعد الآن — Twilio يدير الرمز
+// ✅ إصلاح: الشرط على phoneVerified لا trustLevel
+//    السبب: مستخدم Level 2 قد يغيّر رقمه → رقمه الجديد phoneVerified=false
+//    ويحتاج إعادة التحقق دون أن يخسر trustLevel الحالي
 
 const { createPhoneOtp, verifyPhoneOtp } = require('../services/phoneService');
 const { sendOtpWhatsApp }               = require('../integrations/smsService');
@@ -25,8 +27,10 @@ exports.sendOtp = async (req, res) => {
       });
     }
 
-    if (req.user.trustLevel >= 2) {
-      return res.status(400).json({ msg: 'حسابك محقق بالفعل ✅', code: 'ALREADY_VERIFIED' });
+    // ✅ الشرط الصحيح: phoneVerified وليس trustLevel
+    // السبب: مستخدم Level 2 قد يغيّر رقمه → يحتاج إعادة تحقق
+    if (req.user.phoneVerified) {
+      return res.status(400).json({ msg: 'رقمك محقق بالفعل ✅', code: 'ALREADY_VERIFIED' });
     }
 
     // جهّز Rate Limit + احفظ الرقم في DB
@@ -56,8 +60,9 @@ exports.verifyOtp = async (req, res) => {
       return res.status(400).json({ msg: 'الرمز يجب أن يتكون من 6 أرقام', code: 'INVALID_OTP_FORMAT' });
     }
 
-    if (req.user.trustLevel >= 2) {
-      return res.status(400).json({ msg: 'حسابك محقق بالفعل ✅', code: 'ALREADY_VERIFIED' });
+    // ✅ الشرط الصحيح: phoneVerified وليس trustLevel
+    if (req.user.phoneVerified) {
+      return res.status(400).json({ msg: 'رقمك محقق بالفعل ✅', code: 'ALREADY_VERIFIED' });
     }
 
     await verifyPhoneOtp(req.user.id, otp);
