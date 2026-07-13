@@ -1,4 +1,5 @@
 // services/donationRequestService.js — ✅ PATCHED [LOGIC-03 | ARCH-01] WITH NEW SOCKET WRITING
+// ✅ FIX [PHONE-TRUST-01]: إضافة فحص phoneVerified في createRequestLogic و submitOfferLogic
 
 const SystemSettings             = require('../models/SystemSettings');
 const User                       = require('../models/User');
@@ -23,12 +24,20 @@ const getMinTrustLevel            = (s) => s.minTrustLevelForRequests  ?? 2;
 // ─────────────────────────────────────────────────────────────────────────────
 exports.createRequestLogic = async (body, userId) => {
   const [user, settings] = await Promise.all([
-    User.findById(userId).select('trustLevel isVerified').lean(),
+    User.findById(userId).select('trustLevel isVerified phoneVerified').lean(),
     SystemSettings.getCached(),
   ]);
 
   if (!user?.isVerified)
     throw new AppError('يجب تفعيل حسابك أولاً ✅', 403, 'ACCOUNT_NOT_VERIFIED');
+
+  // ✅ FIX [PHONE-TRUST-01]: يجب أن يكون الهاتف محققاً للوصول لـ trustLevel >= 2
+  if (!user.phoneVerified)
+    throw new AppError(
+      'يجب التحقق من رقم هاتفك أولاً للوصول لهذه الميزة 📱',
+      403,
+      'PHONE_NOT_VERIFIED'
+    );
 
   const minTrustLevel = getMinTrustLevel(settings);
   if ((user.trustLevel ?? 1) < minTrustLevel)
@@ -218,7 +227,7 @@ exports.getMyRequestsLogic = async (userId) => {
 exports.submitOfferLogic = async (requestId, donorId, body, file) => {
   const [request, donor, settings] = await Promise.all([
     donationRequestRepository.findActiveRequestById(requestId),
-    User.findById(donorId).select('isVerified trustLevel name').lean(),
+    User.findById(donorId).select('isVerified trustLevel phoneVerified name').lean(),
     SystemSettings.getCached(),
   ]);
 
@@ -233,6 +242,14 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
 
   if (!donor.isVerified)
     throw new AppError('يجب تفعيل حسابك أولاً ✅', 403, 'ACCOUNT_NOT_VERIFIED');
+
+  // ✅ FIX [PHONE-TRUST-01]: يجب أن يكون الهاتف محققاً للتبرع
+  if (!donor.phoneVerified)
+    throw new AppError(
+      'يجب التحقق من رقم هاتفك أولاً للتبرع 📱',
+      403,
+      'PHONE_NOT_VERIFIED'
+    );
 
   const minLevel = settings.minTrustLevelForDonating ?? 1;
   

@@ -1,4 +1,5 @@
 // services/itemService.js — ✅ PATCHED & FIXED WITH NEW SOCKET WRITING
+// ✅ FIX [PHONE-TRUST-01]: إضافة فحص phoneVerified في bookItemLogic
 const mongoose         = require('mongoose');
 const Item             = require('../models/Item');
 const User             = require('../models/User');
@@ -214,12 +215,20 @@ exports.createItemLogic = async (body, userId, file) => {
 // ─────────────────────────────────────────────────────────────────────────────
 exports.bookItemLogic = async (itemId, userId) => {
   const [user, settings] = await Promise.all([
-    User.findById(userId).select('trustLevel quota bookingCount').lean(),
+    User.findById(userId).select('trustLevel quota bookingCount phoneVerified').lean(),
     SystemSettings.getCached(),
   ]);
 
   if (!user)
     throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
+
+  // ✅ FIX [PHONE-TRUST-01]: لا يُسمح بالحجز إلا إذا كان الهاتف محققاً
+  if (!user.phoneVerified)
+    throw new AppError(
+      'يجب التحقق من رقم هاتفك أولاً للحجز 📱',
+      403,
+      'PHONE_NOT_VERIFIED'
+    );
 
   const maxBookings =
     user.trustLevel >= 3
