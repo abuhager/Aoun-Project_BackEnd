@@ -1,6 +1,7 @@
 // services/phoneService.js
 // المسؤولية: التحقق من الهاتف عبر Twilio Verify (بدون تخزين OTP في DB)
 // ✅ إصلاح: Twilio يدير الرمز — نحن نطلب الإرسال ونتحقق من الصحة فقط
+// ✅ إصلاح [TRUST-PHONE-01]: إعادة احتساب trustLevel عند تغيير الرقم
 
 const User               = require('../models/User');
 const { checkOtpWhatsApp } = require('../integrations/smsService');
@@ -38,11 +39,24 @@ async function createPhoneOtp(userId, phone) {
     }
   }
 
-  // احفظ الرقم + وقت الإرسال في DB (لكن لا OTP — Twilio يحتفظ به)
-  await User.findByIdAndUpdate(userId, {
+  // ✅ [TRUST-PHONE-01]: عند تغيير الرقم — إعادة ضبط phoneVerified
+  // وإعادة احتساب trustLevel بناءً على مصادر الثقة المتبقية
+  const phoneChanged = user.phone !== phone.trim();
+  const updateFields = {
     phone,
     phoneOtpSentAt: new Date(),
-  });
+  };
+
+  if (phoneChanged) {
+    updateFields.phoneVerified = false;
+    // إذا لم يكن هناك توثيق طالب صالح → يرجع إلى Level 1
+    // إذا كان هناك توثيق طالب → يبقى على مستواه الحالي
+    if (!user.isVerifiedStudent) {
+      updateFields.trustLevel = 1;
+    }
+  }
+
+  await User.findByIdAndUpdate(userId, updateFields);
 
   // أعد phone فقط — الـ controller يمرره لـ smsService
   return { phone };
@@ -50,7 +64,7 @@ async function createPhoneOtp(userId, phone) {
 
 // ─── التحقق من OTP عبر Twilio ─────────────────────────────────
 async function verifyPhoneOtp(userId, inputOtp) {
-  const user = await User.findById(userId).select('phone');
+  const user = await User.findById(userId).select('phone isVerifiedStudent');
 
   if (!user) throw Object.assign(new Error('المستخدم غير موجود'), { status: 404 });
   if (!user.phone) throw Object.assign(new Error('لم يتم إرسال رمز لهذا الحساب'), { status: 400 });
@@ -65,7 +79,7 @@ async function verifyPhoneOtp(userId, inputOtp) {
     );
   }
 
-  // نجح — ارفع trustLevel
+  // ✅ نجح — ارفع trustLevel إلى 2 دائماً عند التحقق الناجح
   await User.findByIdAndUpdate(userId, {
     phoneVerified:  true,
     trustLevel:     2,
