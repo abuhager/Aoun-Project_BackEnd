@@ -1,38 +1,25 @@
 // services/phoneService.js
-// المسؤولية: توليد OTP + حفظه في DB + التحقق منه
-// لا يتعامل مع الإرسال — هذا مسؤولية whatsappService.js
+// المسؤولية: التحقق من الهاتف عبر Twilio Verify (بدون تخزين OTP في DB)
+// ✅ إصلاح: Twilio يدير الرمز — نحن نطلب الإرسال ونتحقق من الصحة فقط
 
-const crypto = require('crypto');
-const User   = require('../models/User');
+const User               = require('../models/User');
+const { checkOtpWhatsApp } = require('../integrations/smsService');
 
 // ─── الثوابت ──────────────────────────────────────────────────
-const OTP_LENGTH_BYTES = 3;          // 3 bytes = 6 أرقام hex → نحولها لـ 6 أرقام decimal
-const OTP_TTL_MINUTES  = 10;         // ينتهي بعد 10 دقائق
-const OTP_RATE_LIMIT   = 60 * 1000; // دقيقة واحدة بين كل طلب وآخر (بالـ ms)
+const OTP_RATE_LIMIT_MS = 60 * 1000; // دقيقة واحدة بين كل طلب
 
-// ─── توليد OTP عشوائي 6 أرقام ────────────────────────────────
-function generateOtp() {
-  // crypto.randomInt: آمن تشفيرياً، يولّد رقماً بين 100000 و999999
-  return crypto.randomInt(100_000, 999_999).toString();
-}
-
-// ─── حفظ OTP في DB وإعادته للـ caller ────────────────────────
-// يُعيد: { otp, phone } — الـ otp يُمرَّر لـ whatsappService للإرسال
-// لا يُعيده للـ client أبداً
+// ─── التحضير لإرسال OTP: Rate Limit + تحقق من التكرار ────────
 async function createPhoneOtp(userId, phone) {
-  const user = await User.findById(userId).select('+phoneOtp +phoneOtpExpiry');
+  const user = await User.findById(userId).select('+phoneOtpSentAt');
 
-  if (!user) {
-    throw Object.assign(new Error('المستخدم غير موجود'), { status: 404 });
-  }
+  if (!user) throw Object.assign(new Error('المستخدم غير موجود'), { status: 404 });
 
-  // ✅ إضافة هنا — قبل Rate Limit
+  // تحقق أن الرقم غير مستخدم لحساب آخر
   const existingPhone = await User.findOne({
     phone:         phone.trim(),
     phoneVerified: true,
     _id:           { $ne: userId },
   });
-
   if (existingPhone) {
     throw Object.assign(
       new Error('هذا الرقم مسجّل لدى حساب آخر بالفعل ❌'),
@@ -40,10 +27,10 @@ async function createPhoneOtp(userId, phone) {
     );
   }
 
-  // تحقق من Rate Limit: هل الـ OTP الحالي لم يمر عليه دقيقة بعد؟
-  if (user.phoneOtpExpiry) {
-    const issuedAt = user.phoneOtpExpiry.getTime() - OTP_TTL_MINUTES * 60 * 1000;
-    if (Date.now() - issuedAt < OTP_RATE_LIMIT) {
+  // Rate Limit
+  if (user.phoneOtpSentAt) {
+    const elapsed = Date.now() - user.phoneOtpSentAt.getTime();
+    if (elapsed < OTP_RATE_LIMIT_MS) {
       throw Object.assign(
         new Error('انتظر دقيقة واحدة قبل طلب رمز جديد ⏳'),
         { status: 429, code: 'OTP_RATE_LIMITED' }
@@ -51,42 +38,38 @@ async function createPhoneOtp(userId, phone) {
     }
   }
 
-  const otp    = generateOtp();
-  const expiry = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
-
+  // احفظ الرقم + وقت الإرسال في DB (لكن لا OTP — Twilio يحتفظ به)
   await User.findByIdAndUpdate(userId, {
     phone,
-    phoneOtp:       otp,
-    phoneOtpExpiry: expiry,
+    phoneOtpSentAt: new Date(),
   });
 
-  return { otp, phone };
+  // أعد phone فقط — الـ controller يمرره لـ smsService
+  return { phone };
 }
-// ─── التحقق من OTP المُدخَل ───────────────────────────────────
+
+// ─── التحقق من OTP عبر Twilio ─────────────────────────────────
 async function verifyPhoneOtp(userId, inputOtp) {
-  const user = await User.findById(userId).select('+phoneOtp +phoneOtpExpiry');
+  const user = await User.findById(userId).select('phone');
 
-  if (!user) {
-    throw Object.assign(new Error('المستخدم غير موجود'), { status: 404 });
-  }
+  if (!user) throw Object.assign(new Error('المستخدم غير موجود'), { status: 404 });
+  if (!user.phone) throw Object.assign(new Error('لم يتم إرسال رمز لهذا الحساب'), { status: 400 });
 
-  // ✅ تحقق من الصلاحية أولاً — لا تكشف عن سبب الفشل بالتفصيل
-  const isExpired = !user.phoneOtpExpiry || user.phoneOtpExpiry < new Date();
-  const isMatch   = user.phoneOtp === inputOtp;
+  // اسأل Twilio عن صحة الرمز
+  const approved = await checkOtpWhatsApp(user.phone, inputOtp);
 
-  if (isExpired || !isMatch) {
+  if (!approved) {
     throw Object.assign(
       new Error('رمز التحقق غير صحيح أو انتهت صلاحيته ❌'),
       { status: 400, code: 'INVALID_OTP' }
     );
   }
 
-  // ✅ نجح التحقق — امسح الـ OTP فوراً (single-use) وارفع trustLevel
+  // نجح — ارفع trustLevel
   await User.findByIdAndUpdate(userId, {
     phoneVerified:  true,
     trustLevel:     2,
-    phoneOtp:       null,
-    phoneOtpExpiry: null,
+    phoneOtpSentAt: null,
   });
 
   return true;

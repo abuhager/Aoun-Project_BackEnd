@@ -1,54 +1,40 @@
 // controllers/phoneController.js
 // المسؤولية: استقبال طلبات التحقق من الهاتف وتفويضها للـ services
-// لا منطق هنا — فقط validate → service → respond
+// ✅ إصلاح: createPhoneOtp لا يُعيد otp بعد الآن — Twilio يدير الرمز
 
 const { createPhoneOtp, verifyPhoneOtp } = require('../services/phoneService');
-// ✅ تعديل: whatsappService → smsService (تويليو Verify)
-const { sendOtpWhatsApp } = require('../integrations/smsService');
+const { sendOtpWhatsApp }               = require('../integrations/smsService');
 
-// ─── Helpers ────────────────────────────────────────────────
-// ⚠️ DEV ONLY: يقبل أي رقم دولي للتجربة — غيّره لأردني فقط في Production
+// ─── Helpers ─────────────────────────────────────────────────
+// ⚠️ DEV: يقبل أي رقم دولي — غيّره لأردني فقط في Production
 // PROD: /^(\+962|00962|0)?7[789]\d{7}$/
-const IS_DEV       = process.env.NODE_ENV !== 'production';
-const PHONE_REGEX  = IS_DEV
-  ? /^[\+]?[\d\s\-().]{7,15}$/          // ← DEV: يقبل أي رقم دولي
-  : /^(\+962|00962|0)?7[789]\d{7}$/;   // ← PROD: أردني فقط
+const IS_DEV      = process.env.NODE_ENV !== 'production';
+const PHONE_REGEX = IS_DEV
+  ? /^[+]?[\d\s\-().]{7,15}$/
+  : /^(\+962|00962|0)?7[789]\d{7}$/;
 
-// ─── POST /api/phone/send-otp ───────────────────────────────
-// يتطلب: requireAuth (Level 1 كافٍ)
-// Body: { phone: "0791234567" }
+// ─── POST /api/phone/send-otp ─────────────────────────────────
 exports.sendOtp = async (req, res) => {
   try {
     const { phone } = req.body;
 
-    // ✅ Validate
     if (!phone || !PHONE_REGEX.test(phone.trim())) {
       return res.status(400).json({
-        msg:  IS_DEV
-          ? 'رقم الهاتف غير صالح — أدخل رقماً صحيحاً'
-          : 'رقم الهاتف غير صالح — يجب أن يكون رقماً أردنياً (07x)',
+        msg:  IS_DEV ? 'رقم الهاتف غير صالح' : 'رقم الهاتف غير صالح — يجب أن يكون رقماً أردنياً (07x)',
         code: 'INVALID_PHONE',
       });
     }
 
-    // ✅ لا نسمح لمن تحقق بالفعل بإعادة الطلب
     if (req.user.trustLevel >= 2) {
-      return res.status(400).json({
-        msg:  'حسابك محقق بالفعل ✅',
-        code: 'ALREADY_VERIFIED',
-      });
+      return res.status(400).json({ msg: 'حسابك محقق بالفعل ✅', code: 'ALREADY_VERIFIED' });
     }
 
-    // ✅ أنشئ OTP واحفظه — phoneService يتحقق من Rate Limit داخلياً
-    const { otp, phone: formattedPhone } = await createPhoneOtp(
-      req.user.id,
-      phone.trim()
-    );
+    // جهّز Rate Limit + احفظ الرقم في DB
+    const { phone: formattedPhone } = await createPhoneOtp(req.user.id, phone.trim());
 
-    // ✅ أرسل عبر Twilio Verify SMS
-    await sendOtpWhatsApp(formattedPhone, otp);
+    // أرسل عبر Twilio Verify (هو يولّد الرمز)
+    await sendOtpWhatsApp(formattedPhone);
 
-    // ✅ لا نُعيد الـ OTP في الـ Response أبداً
     return res.status(200).json({
       msg: 'تم إرسال رمز التحقق إلى هاتفك عبر الرسائل النصية 📲',
     });
@@ -62,33 +48,20 @@ exports.sendOtp = async (req, res) => {
 };
 
 // ─── POST /api/phone/verify-otp ──────────────────────────────
-// يتطلب: requireAuth (Level 1)
-// Body: { otp: "123456" }
 exports.verifyOtp = async (req, res) => {
   try {
     const { otp } = req.body;
 
-    // ✅ Validate
     if (!otp || !/^\d{6}$/.test(otp)) {
-      return res.status(400).json({
-        msg:  'الرمز يجب أن يتكون من 6 أرقام',
-        code: 'INVALID_OTP_FORMAT',
-      });
+      return res.status(400).json({ msg: 'الرمز يجب أن يتكون من 6 أرقام', code: 'INVALID_OTP_FORMAT' });
     }
 
-    // ✅ لا نسمح لمن تحقق بالفعل
     if (req.user.trustLevel >= 2) {
-      return res.status(400).json({
-        msg:  'حسابك محقق بالفعل ✅',
-        code: 'ALREADY_VERIFIED',
-      });
+      return res.status(400).json({ msg: 'حسابك محقق بالفعل ✅', code: 'ALREADY_VERIFIED' });
     }
 
-    // ✅ تحقق من الـ OTP — phoneService يمسحه فوراً بعد النجاح (single-use)
     await verifyPhoneOtp(req.user.id, otp);
 
-    // ✅ النجاح — trustLevel أصبح 2 في DB
-    // ⚠️ المستخدم يحتاج refresh للـ Access Token ليرى trustLevel=2 في الـ JWT
     return res.status(200).json({
       msg:             'تم التحقق بنجاح 🎉 يمكنك الآن حجز العناصر',
       requiresRefresh: true,
