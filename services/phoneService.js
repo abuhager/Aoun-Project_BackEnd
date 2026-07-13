@@ -1,26 +1,33 @@
 // services/phoneService.js
-// المسؤولية: التحقق من الهاتف عبر Twilio Verify (بدون تخزين OTP في DB)
-// ✅ إصلاح: Twilio يدير الرمز — نحن نطلب الإرسال ونتحقق من الصحة فقط
-// ✅ إصلاح [TRUST-PHONE-01]: إعادة احتساب trustLevel عند تغيير الرقم
+// المسؤولية: التحقق من الهاتف عبر Firebase Phone Auth
+// ✅ تم استبدال Twilio بـ Firebase Admin SDK
+//    Firebase مجاني (10,000 تحقق/شهر) ويدعم +962 بشكل كامل
+//
+// ─── تدفق التحقق الجديد ──────────────────────────────────────
+// 1. Frontend يرسل OTP مباشرة عبر Firebase Client SDK
+// 2. بعد التأكيد، Firebase يعطي idToken
+// 3. Frontend يرسل idToken لـ POST /api/phone/verify-otp
+// 4. Backend يتحقق من idToken ويستخرج رقم الهاتف منه
+// 5. Backend يحدّث phoneVerified=true و trustLevel=2
 
-const User               = require('../models/User');
-const { checkOtpWhatsApp } = require('../integrations/smsService');
+const User = require('../models/User');
+const { verifyFirebasePhoneToken } = require('../integrations/smsService');
 
-// ─── الثوابت ──────────────────────────────────────────────────
-const OTP_RATE_LIMIT_MS = 60 * 1000; // دقيقة واحدة بين كل طلب
+const OTP_RATE_LIMIT_MS = 60 * 1000;
 
-// ─── التحضير لإرسال OTP: Rate Limit + تحقق من التكرار ────────
-async function createPhoneOtp(userId, phone) {
-  const user = await User.findById(userId).select('+phoneOtpSentAt');
+// ─── التحقق من الرقم عبر Firebase idToken ────────────────────
+// idToken: صادر من Firebase بعد تأكيد المستخدم للـ OTP على الـ Frontend
+exports.verifyPhoneWithFirebase = async (userId, idToken) => {
+  // 1. تحقق من الـ token واستخرج الرقم
+  const firebasePhone = await verifyFirebasePhoneToken(idToken);
 
-  if (!user) throw Object.assign(new Error('المستخدم غير موجود'), { status: 404 });
-
-  // تحقق أن الرقم غير مستخدم لحساب آخر
+  // 2. تأكد أن الرقم غير مستخدم من حساب آخر مؤكد
   const existingPhone = await User.findOne({
-    phone:         phone.trim(),
+    phone:         firebasePhone,
     phoneVerified: true,
     _id:           { $ne: userId },
   });
+
   if (existingPhone) {
     throw Object.assign(
       new Error('هذا الرقم مسجّل لدى حساب آخر بالفعل ❌'),
@@ -28,65 +35,46 @@ async function createPhoneOtp(userId, phone) {
     );
   }
 
-  // Rate Limit
+  // 3. تحقق Rate Limit للرقم الحالي للمستخدم
+  const user = await User.findById(userId).select('+phoneOtpSentAt phone isVerifiedStudent');
+  if (!user) throw Object.assign(new Error('المستخدم غير موجود'), { status: 404 });
+
   if (user.phoneOtpSentAt) {
     const elapsed = Date.now() - user.phoneOtpSentAt.getTime();
     if (elapsed < OTP_RATE_LIMIT_MS) {
       throw Object.assign(
-        new Error('انتظر دقيقة واحدة قبل طلب رمز جديد ⏳'),
+        new Error('انتظر دقيقة واحدة قبل محاولة التحقق مجدداً ⏳'),
         { status: 429, code: 'OTP_RATE_LIMITED' }
       );
     }
   }
 
-  // ✅ [TRUST-PHONE-01]: عند تغيير الرقم — إعادة ضبط phoneVerified
-  // وإعادة احتساب trustLevel بناءً على مصادر الثقة المتبقية
-  const phoneChanged = user.phone !== phone.trim();
-  const updateFields = {
-    phone,
-    phoneOtpSentAt: new Date(),
-  };
+  // 4. تحديث: phoneVerified=true، trustLevel=2، احفظ الرقم من Firebase
+  const phoneChanged = user.phone !== firebasePhone;
 
-  if (phoneChanged) {
-    updateFields.phoneVerified = false;
-    // إذا لم يكن هناك توثيق طالب صالح → يرجع إلى Level 1
-    // إذا كان هناك توثيق طالب → يبقى على مستواه الحالي
-    if (!user.isVerifiedStudent) {
-      updateFields.trustLevel = 1;
-    }
-  }
-
-  await User.findByIdAndUpdate(userId, updateFields);
-
-  // أعد phone فقط — الـ controller يمرره لـ smsService
-  return { phone };
-}
-
-// ─── التحقق من OTP عبر Twilio ─────────────────────────────────
-async function verifyPhoneOtp(userId, inputOtp) {
-  const user = await User.findById(userId).select('phone isVerifiedStudent');
-
-  if (!user) throw Object.assign(new Error('المستخدم غير موجود'), { status: 404 });
-  if (!user.phone) throw Object.assign(new Error('لم يتم إرسال رمز لهذا الحساب'), { status: 400 });
-
-  // اسأل Twilio عن صحة الرمز
-  const approved = await checkOtpWhatsApp(user.phone, inputOtp);
-
-  if (!approved) {
-    throw Object.assign(
-      new Error('رمز التحقق غير صحيح أو انتهت صلاحيته ❌'),
-      { status: 400, code: 'INVALID_OTP' }
-    );
-  }
-
-  // ✅ نجح — ارفع trustLevel إلى 2 دائماً عند التحقق الناجح
   await User.findByIdAndUpdate(userId, {
+    phone:          firebasePhone,
     phoneVerified:  true,
     trustLevel:     2,
-    phoneOtpSentAt: null,
+    phoneOtpSentAt: new Date(),
+    // إذا تغير الرقم وليس طالباً محققاً — trustLevel يرتفع لـ 2 عند التحقق الناجح
+    ...(phoneChanged && !user.isVerifiedStudent ? {} : {}),
   });
 
-  return true;
-}
+  return { phone: firebasePhone };
+};
 
-module.exports = { createPhoneOtp, verifyPhoneOtp };
+// ─── للتوافق مع الاستخدام القديم (deprecated) ─────────────────
+// سيُحذف في النسخة القادمة بعد تحديث الـ Frontend
+exports.createPhoneOtp  = async () => {
+  throw Object.assign(
+    new Error('createPhoneOtp محذوف — الرجاء استخدام Firebase Phone Auth في الـ Frontend'),
+    { status: 501, code: 'USE_FIREBASE_CLIENT' }
+  );
+};
+exports.verifyPhoneOtp  = async () => {
+  throw Object.assign(
+    new Error('verifyPhoneOtp محذوف — الرجاء إرسال idToken من Firebase عبر verify-token'),
+    { status: 501, code: 'USE_FIREBASE_CLIENT' }
+  );
+};

@@ -1,56 +1,57 @@
 // integrations/smsService.js
-// المسؤولية: إرسال OTP عبر Twilio Verify API
-// ✅ إصلاح: حذف customCode (غير مدعوم في Trial)
-//    Twilio يولّد الرمز لحاله ويتحقق منه داخلياً عبر verificationChecks
+// المسؤولية: التحقق من رموز OTP عبر Firebase Admin SDK
+// ✅ تم استبدال Twilio بـ Firebase Phone Auth
+//    السبب: Firebase مجاني (10,000 تحقق/شهر) ويدعم الأرقام الأردنية بشكل كامل
+//
+// ─── آلية العمل الجديدة ──────────────────────────────────────
+// 1. Frontend: يستخدم Firebase Client SDK لإرسال OTP مباشرة للمستخدم
+//    (firebase.auth().signInWithPhoneNumber(phone, recaptchaVerifier))
+// 2. Frontend: بعد إدخال المستخدم للرمز، يحصل على idToken من Firebase
+//    (result.confirm(otp) → user.getIdToken())
+// 3. Frontend: يرسل idToken للـ Backend عبر /api/phone/verify-otp
+// 4. Backend (هنا): يتحقق من idToken باستخدام Firebase Admin SDK
+//    ويستخرج رقم الهاتف المؤكد منه مباشرة
 
-const twilio = require('twilio');
+const admin = require('firebase-admin');
 
-// ─── Client ────────────────────────────────────────────────────
-const getClient = () => {
-  const sid   = process.env.TWILIO_ACCOUNT_SID;
-  const token = process.env.TWILIO_AUTH_TOKEN;
-  if (!sid || !token) throw new Error('TWILIO_ACCOUNT_SID أو TWILIO_AUTH_TOKEN غير مضبوط في .env');
-  return twilio(sid, token);
+// ─── تهيئة Firebase Admin (مرة واحدة فقط) ───────────────────
+let _initialized = false;
+
+const initFirebase = () => {
+  if (_initialized || admin.apps.length > 0) return;
+
+  const projectId   = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKey  = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+
+  if (!projectId || !clientEmail || !privateKey) {
+    throw new Error(
+      'Firebase غير مضبوط — تأكد من وجود FIREBASE_PROJECT_ID و FIREBASE_CLIENT_EMAIL و FIREBASE_PRIVATE_KEY في .env'
+    );
+  }
+
+  admin.initializeApp({
+    credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
+  });
+
+  _initialized = true;
 };
 
-// ─── Helper: تحويل الرقم إلى E.164 ───────────────────────────
-const toE164 = (phone) => {
-  let p = String(phone).replace(/[\s\-().]/g, '').trim();
-  p = p.replace(/^\+|^00/, '');
-  // 07x → 9627x (أرقام أردنية)
-  if (/^07\d{8}$/.test(p)) p = '962' + p.slice(1);
-  return '+' + p;
-};
+// ─── التحقق من idToken وإرجاع رقم الهاتف ─────────────────────
+// idToken: يأتي من Firebase Client SDK بعد تأكيد OTP
+// يُرجع: رقم الهاتف بصيغة E.164 (مثل +96279xxxxxxx) أو null إذا فشل
+exports.verifyFirebasePhoneToken = async (idToken) => {
+  initFirebase();
 
-// ─── إرسال OTP عبر Twilio Verify ──────────────────────────────
-// Twilio يولّد الرمز لحاله — لا نمرر customCode
-exports.sendOtpWhatsApp = async (phone) => {
-  const serviceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
-  if (!serviceSid) throw new Error('TWILIO_VERIFY_SERVICE_SID غير مضبوط في .env');
+  const decoded = await admin.auth().verifyIdToken(idToken);
 
-  const client = getClient();
-  const to     = toE164(phone);
+  // decoded.phone_number موجود فقط إذا تم التوثيق عبر Phone Auth
+  if (!decoded.phone_number) {
+    throw Object.assign(
+      new Error('الـ Token لا يحتوي على رقم هاتف — تأكد من استخدام Firebase Phone Auth'),
+      { status: 400, code: 'NO_PHONE_IN_TOKEN' }
+    );
+  }
 
-  await client.verify.v2
-    .services(serviceSid)
-    .verifications.create({ to, channel: 'sms' });
-
-  return { success: true, to };
-};
-
-// ─── التحقق من OTP عبر Twilio (بدل DB) ───────────────────────
-// Twilio يحتفظ بالرمز داخلياً — نسأله عن صحة الكود
-exports.checkOtpWhatsApp = async (phone, code) => {
-  const serviceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
-  if (!serviceSid) throw new Error('TWILIO_VERIFY_SERVICE_SID غير مضبوط في .env');
-
-  const client = getClient();
-  const to     = toE164(phone);
-
-  const check = await client.verify.v2
-    .services(serviceSid)
-    .verificationChecks.create({ to, code: String(code) });
-
-  // check.status === 'approved' يعني الرمز صحيح
-  return check.status === 'approved';
+  return decoded.phone_number; // مثال: "+96279xxxxxxx"
 };

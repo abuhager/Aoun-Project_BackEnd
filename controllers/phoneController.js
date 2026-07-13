@@ -1,74 +1,50 @@
 // controllers/phoneController.js
-// المسؤولية: استقبال طلبات التحقق من الهاتف وتفويضها للـ services
-// ✅ إصلاح: الشرط على phoneVerified لا trustLevel
-//    السبب: مستخدم Level 2 قد يغيّر رقمه → رقمه الجديد phoneVerified=false
-//    ويحتاج إعادة التحقق دون أن يخسر trustLevel الحالي
+// المسؤولية: استقبال طلبات التحقق من الهاتف عبر Firebase Phone Auth
+// ✅ تم استبدال Twilio بـ Firebase
+//
+// ─── الـ Endpoints المتاحة ────────────────────────────────────
+// POST /api/phone/verify-token  ← الجديد (Firebase idToken)
+//
+// ─── الـ Endpoints المحذوفة ───────────────────────────────────
+// POST /api/phone/send-otp    ← محذوف (كان لـ Twilio)
+// POST /api/phone/verify-otp  ← محذوف (كان لـ Twilio)
+//
+// ─── آلية عمل Frontend الجديدة ───────────────────────────────
+// 1. أضف Firebase Client SDK للـ Frontend
+// 2. استخدم signInWithPhoneNumber(auth, phone, recaptchaVerifier)
+// 3. بعد تأكيد المستخدم للرمز: result.confirm(otp)
+// 4. احصل على idToken: await result.user.getIdToken()
+// 5. أرسل idToken لـ POST /api/phone/verify-token
 
-const { createPhoneOtp, verifyPhoneOtp } = require('../services/phoneService');
-const { sendOtpWhatsApp }               = require('../integrations/smsService');
+const { verifyPhoneWithFirebase } = require('../services/phoneService');
 
-// ─── Helpers ─────────────────────────────────────────────────
-// ⚠️ DEV: يقبل أي رقم دولي — غيّره لأردني فقط في Production
-// PROD: /^(\+962|00962|0)?7[789]\d{7}$/
-const IS_DEV      = process.env.NODE_ENV !== 'production';
-const PHONE_REGEX = IS_DEV
-  ? /^[+]?[\d\s\-().]{7,15}$/
-  : /^(\+962|00962|0)?7[789]\d{7}$/;
-
-// ─── POST /api/phone/send-otp ─────────────────────────────────
-exports.sendOtp = async (req, res) => {
+// ─── POST /api/phone/verify-token ────────────────────────────
+// Body: { idToken: string }  ← صادر من Firebase Client SDK
+exports.verifyToken = async (req, res) => {
   try {
-    const { phone } = req.body;
+    const { idToken } = req.body;
 
-    if (!phone || !PHONE_REGEX.test(phone.trim())) {
+    if (!idToken || typeof idToken !== 'string') {
       return res.status(400).json({
-        msg:  IS_DEV ? 'رقم الهاتف غير صالح' : 'رقم الهاتف غير صالح — يجب أن يكون رقماً أردنياً (07x)',
-        code: 'INVALID_PHONE',
+        msg:  'idToken مطلوب — أرسله من Firebase بعد تأكيد OTP',
+        code: 'MISSING_ID_TOKEN',
       });
     }
 
     // ✅ الشرط الصحيح: phoneVerified وليس trustLevel
-    // السبب: مستخدم Level 2 قد يغيّر رقمه → يحتاج إعادة تحقق
+    // مستخدم Level 2 قد يغيّر رقمه → يحتاج إعادة تحقق
     if (req.user.phoneVerified) {
-      return res.status(400).json({ msg: 'رقمك محقق بالفعل ✅', code: 'ALREADY_VERIFIED' });
+      return res.status(400).json({
+        msg:  'رقمك محقق بالفعل ✅',
+        code: 'ALREADY_VERIFIED',
+      });
     }
 
-    // جهّز Rate Limit + احفظ الرقم في DB
-    const { phone: formattedPhone } = await createPhoneOtp(req.user.id, phone.trim());
-
-    // أرسل عبر Twilio Verify (هو يولّد الرمز)
-    await sendOtpWhatsApp(formattedPhone);
-
-    return res.status(200).json({
-      msg: 'تم إرسال رمز التحقق إلى هاتفك عبر الرسائل النصية 📲',
-    });
-
-  } catch (err) {
-    return res.status(err.status ?? 500).json({
-      msg:  err.message ?? 'خطأ في الخادم',
-      code: err.code    ?? 'SERVER_ERROR',
-    });
-  }
-};
-
-// ─── POST /api/phone/verify-otp ──────────────────────────────
-exports.verifyOtp = async (req, res) => {
-  try {
-    const { otp } = req.body;
-
-    if (!otp || !/^\d{6}$/.test(otp)) {
-      return res.status(400).json({ msg: 'الرمز يجب أن يتكون من 6 أرقام', code: 'INVALID_OTP_FORMAT' });
-    }
-
-    // ✅ الشرط الصحيح: phoneVerified وليس trustLevel
-    if (req.user.phoneVerified) {
-      return res.status(400).json({ msg: 'رقمك محقق بالفعل ✅', code: 'ALREADY_VERIFIED' });
-    }
-
-    await verifyPhoneOtp(req.user.id, otp);
+    const { phone } = await verifyPhoneWithFirebase(req.user.id, idToken);
 
     return res.status(200).json({
       msg:             'تم التحقق بنجاح 🎉 يمكنك الآن حجز العناصر',
+      phone,
       requiresRefresh: true,
     });
 
@@ -79,3 +55,18 @@ exports.verifyOtp = async (req, res) => {
     });
   }
 };
+
+// ─── Deprecated: send-otp و verify-otp (كانا لـ Twilio) ──────
+exports.sendOtp = (_req, res) =>
+  res.status(410).json({
+    msg:  'هذا الـ endpoint محذوف — الرجاء استخدام Firebase Phone Auth في الـ Frontend ثم أرسل idToken لـ /api/phone/verify-token',
+    code: 'ENDPOINT_REMOVED',
+    docs: 'https://firebase.google.com/docs/auth/web/phone-auth',
+  });
+
+exports.verifyOtp = (_req, res) =>
+  res.status(410).json({
+    msg:  'هذا الـ endpoint محذوف — الرجاء استخدام Firebase Phone Auth في الـ Frontend ثم أرسل idToken لـ /api/phone/verify-token',
+    code: 'ENDPOINT_REMOVED',
+    docs: 'https://firebase.google.com/docs/auth/web/phone-auth',
+  });
