@@ -7,8 +7,12 @@ const { createPhoneOtp, verifyPhoneOtp } = require('../services/phoneService');
 const { sendOtpWhatsApp } = require('../integrations/smsService');
 
 // ─── Helpers ────────────────────────────────────────────────
-// تحقق بسيط من صيغة رقم الهاتف الأردني
-const PHONE_REGEX = /^(\+962|00962|0)?7[789]\d{7}$/;
+// ⚠️ DEV ONLY: يقبل أي رقم دولي للتجربة — غيّره لأردني فقط في Production
+// PROD: /^(\+962|00962|0)?7[789]\d{7}$/
+const IS_DEV       = process.env.NODE_ENV !== 'production';
+const PHONE_REGEX  = IS_DEV
+  ? /^[\+]?[\d\s\-().]{7,15}$/          // ← DEV: يقبل أي رقم دولي
+  : /^(\+962|00962|0)?7[789]\d{7}$/;   // ← PROD: أردني فقط
 
 // ─── POST /api/phone/send-otp ───────────────────────────────
 // يتطلب: requireAuth (Level 1 كافٍ)
@@ -20,7 +24,9 @@ exports.sendOtp = async (req, res) => {
     // ✅ Validate
     if (!phone || !PHONE_REGEX.test(phone.trim())) {
       return res.status(400).json({
-        msg:  'رقم الهاتف غير صالح — يجب أن يكون رقماً أردنياً (07x)',
+        msg:  IS_DEV
+          ? 'رقم الهاتف غير صالح — أدخل رقماً صحيحاً'
+          : 'رقم الهاتف غير صالح — يجب أن يكون رقماً أردنياً (07x)',
         code: 'INVALID_PHONE',
       });
     }
@@ -85,7 +91,7 @@ exports.verifyOtp = async (req, res) => {
     // ⚠️ المستخدم يحتاج refresh للـ Access Token ليرى trustLevel=2 في الـ JWT
     return res.status(200).json({
       msg:             'تم التحقق بنجاح 🎉 يمكنك الآن حجز العناصر',
-      requiresRefresh: true,  // ← إشارة للـ Frontend لاستدعاء /refresh-token
+      requiresRefresh: true,
     });
 
   } catch (err) {
