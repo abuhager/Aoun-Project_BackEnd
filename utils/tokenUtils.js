@@ -1,5 +1,7 @@
 // utils/tokenUtils.js
-// ✅ FIX [SEC-02]: إضافة parseExpireToMs لمزامنة maxAge مع JWT_REFRESH_EXPIRE من env
+// ✅ FIX [SEC-02]        : parseExpireToMs تزامن maxAge مع JWT_REFRESH_EXPIRE
+// ✅ FIX [ARCH-CTRL-01]  : SESSION_ACTIVE_OPTIONS + CLEAR_SESSION_ACTIVE_OPTIONS
+//                          نُقلتا من authController إلى هنا — كل Cookie logic في ملف واحد
 
 const jwt           = require('jsonwebtoken');
 const { hashToken } = require('./cryptoUtils');
@@ -18,10 +20,7 @@ if (!JWT_SECRET || !JWT_REFRESH_SECRET || !JWT_ACCESS_EXPIRE || !JWT_REFRESH_EXP
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// ✅ FIX [SEC-02]: تحويل قيمة مثل "7d" أو "30m" أو "1h" إلى milliseconds
-// يضمن أن maxAge للـ Cookie يتزامن دائماً مع JWT_REFRESH_EXPIRE في .env
-// ─────────────────────────────────────────────────────────────
+// ✅ FIX [SEC-02]: تحويل "7d" / "30m" / "1h" → milliseconds
 const parseExpireToMs = (expStr) => {
   const match = String(expStr ?? '7d').match(/^(\d+)([smhd])$/);
   if (!match) {
@@ -33,8 +32,7 @@ const parseExpireToMs = (expStr) => {
   return parseInt(num, 10) * unitMap[unit];
 };
 
-// ── ثوابت الـ Cookie ──────────────────────────────────────────
-// ✅ FIX [SEC-02]: maxAge مشتق من JWT_REFRESH_EXPIRE — لا magic numbers
+// ── Refresh Token Cookie ─────────────────────────────────────
 const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
   secure:   isProduction,
@@ -50,7 +48,24 @@ const CLEAR_REFRESH_COOKIE_OPTIONS = {
   path:     '/',
 };
 
-// ── استخرج فقط الحقول الضرورية كـ plain object ──────────────
+// ✅ [ARCH-CTRL-01] session_active كوكي غير حساس يُقرأ بـ JS (httpOnly: false مقصود)
+// نُقل من authController ليكون كل Cookie config في مكان واحد
+const SESSION_ACTIVE_OPTIONS = {
+  httpOnly: false,
+  secure:   isProduction,
+  sameSite: isProduction ? 'none' : 'lax',
+  maxAge:   parseExpireToMs(JWT_REFRESH_EXPIRE),
+  path:     '/',
+};
+
+const CLEAR_SESSION_ACTIVE_OPTIONS = {
+  httpOnly: false,
+  secure:   isProduction,
+  sameSite: isProduction ? 'none' : 'lax',
+  path:     '/',
+};
+
+// ── Payload ──────────────────────────────────────────────────
 const _extractPayload = (user) => ({
   user: {
     id:         (user._id ?? user.id)?.toString(),
@@ -62,14 +77,10 @@ const _extractPayload = (user) => ({
 });
 
 const generateAccessToken = (user) =>
-  jwt.sign(_extractPayload(user), JWT_SECRET, {
-    expiresIn: JWT_ACCESS_EXPIRE,
-  });
+  jwt.sign(_extractPayload(user), JWT_SECRET, { expiresIn: JWT_ACCESS_EXPIRE });
 
 const generateRefreshToken = (user) => {
-  const token  = jwt.sign(_extractPayload(user), JWT_REFRESH_SECRET, {
-    expiresIn: JWT_REFRESH_EXPIRE,
-  });
+  const token  = jwt.sign(_extractPayload(user), JWT_REFRESH_SECRET, { expiresIn: JWT_REFRESH_EXPIRE });
   const hashed = hashToken(token);
   return { token, hashed };
 };
@@ -84,5 +95,7 @@ module.exports = {
   verifyRefreshToken,
   REFRESH_COOKIE_OPTIONS,
   CLEAR_REFRESH_COOKIE_OPTIONS,
-  parseExpireToMs,           // ✅ FIX [SEC-02]: مُصدَّر للاستخدام في authController
+  SESSION_ACTIVE_OPTIONS,         // ✅ [ARCH-CTRL-01] مُصدَّر
+  CLEAR_SESSION_ACTIVE_OPTIONS,   // ✅ [ARCH-CTRL-01] مُصدَّر
+  parseExpireToMs,
 };

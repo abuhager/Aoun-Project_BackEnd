@@ -1,6 +1,7 @@
 // middlewares/auth.js
-// ✅ FIX [PERF-AUTH-01]: sessionCache يُلغي DB query في كل طلب لجلب sessionIssuedAt فقط
-//    الآن: DB يُستدعى مرة واحدة كل 60 ثانية لكل مستخدم بدلاً من كل طلب
+// ✅ BUG-AUTH-CRIT: requireSuperAdmin يستخدم الآن ROLES.SUPER_ADMIN بدل 'superadmin' المخطوء
+// ✅ PERF-AUTH-01: sessionCache يُلغي DB query في كل طلب لجلب sessionIssuedAt فقط
+// ✅ BUG-AUTH-01:  ROLES ثابت موحَّد — مصدر حقيقة واحد لكل role checks
 
 const AppError              = require('../utils/AppError');
 const { verifyAccessToken } = require('../utils/tokenUtils');
@@ -11,15 +12,16 @@ const User                  = require('../models/User');
 // ─────────────────────────────────────────────────────────────
 // ثوابت الـ Roles — مصدر حقيقة واحد لمنع التناقض
 // ─────────────────────────────────────────────────────────────
-// 🔴 FIX [BUG-AUTH-01]: كان في تناقض بين 'super_admin' و 'superadmin'
-//    في requireAdmin و requireSuperAdmin — الآن موحّد من مكان واحد
 const ROLES = {
   ADMIN:       'admin',
   SUPER_ADMIN: 'super_admin', // ✅ القيمة الموحّدة المعتمدة في DB
 };
 
+// يُصدَّر لاستخدامه في أي controller يحتاج فحص الـ role
+exports.ROLES = ROLES;
+
 // ─────────────────────────────────────────────────────────────
-// 1. requireAuth — إلزامي
+// 1. requireAuth — إلزامي لكل route محمية
 // ─────────────────────────────────────────────────────────────
 exports.requireAuth = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -101,8 +103,6 @@ exports.requireAuth = async (req, res, next) => {
 // ─────────────────────────────────────────────────────────────
 // 2. requireAdmin — يُستدعى دائماً بعد requireAuth
 // ─────────────────────────────────────────────────────────────
-// 🟡 FIX [CLEAN-AUTH-02]: حُذف فحص req.user اليدوي — requireAuth يضمن وجوده دائماً
-//    إذا احتجت استخدامه standalone أعد الفحص
 exports.requireAdmin = (req, res, next) => {
   if (req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.SUPER_ADMIN) {
     return next(new AppError('هذه المنطقة للمشرفين فقط 🛡️', 403, 'FORBIDDEN_ADMIN_ONLY'));
@@ -111,10 +111,26 @@ exports.requireAdmin = (req, res, next) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// 3. requireLevel2 — المستوى الثاني: طلاب محققون أو مُعزَّزون من الآدمن
+// 3. requireSuperAdmin
 // ─────────────────────────────────────────────────────────────
-// 🔴 FIX [BUG-AUTH-03]: كان يتحطم إذا req.user غير موجود (استدعاء خاطئ بدون requireAuth)
-// 🟡 FIX [UX-AUTH-04]:  رسالة الخطأ كانت '...' — استُبدلت برسالة واضحة
+// ✅ BUG-AUTH-CRIT FIX: الكود القديم كان يستخدم 'superadmin' (بدون underscore)
+//    بينما ROLES.SUPER_ADMIN = 'super_admin' (مع underscore) وكذلك DB
+//    النتيجة: أي super_admin حقيقي كان يُرفض دائماً بـ 403!
+//    الإصلاح: استخدام ROLES.SUPER_ADMIN من الـ constant الموحَّد فقط
+exports.requireSuperAdmin = (req, res, next) => {
+  if (!req.user) {
+    return next(new AppError('غير مصرح — يجب تسجيل الدخول أولاً 🔒', 401, 'UNAUTHORIZED'));
+  }
+  // ✅ ROLES.SUPER_ADMIN بدل 'superadmin' المخطوء — متوافق مع DB وتوكن الـ JWT
+  if (req.user.role !== ROLES.SUPER_ADMIN) {
+    return next(new AppError('هذه العملية تتطلب صلاحيات مشرف أعلى 🛡️', 403, 'FORBIDDEN_SUPER_ADMIN_ONLY'));
+  }
+  next();
+};
+
+// ─────────────────────────────────────────────────────────────
+// 4. requireLevel2
+// ─────────────────────────────────────────────────────────────
 exports.requireLevel2 = (req, res, next) => {
   if (!req.user) {
     return next(new AppError('غير مصرح — يجب تسجيل الدخول أولاً 🔒', 401, 'UNAUTHORIZED'));
@@ -130,7 +146,7 @@ exports.requireLevel2 = (req, res, next) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// 4. optionalAuth — اختياري (لا يرفض الطلب إذا لم يكن هناك توكن)
+// 5. optionalAuth — اختياري
 // ─────────────────────────────────────────────────────────────
 exports.optionalAuth = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -188,12 +204,5 @@ exports.optionalAuth = async (req, res, next) => {
     req.user = null;
   }
 
-  next();
-};
-
-exports.requireSuperAdmin = (req, res, next) => {
-  if (!req.user || (req.user.role !== 'superadmin' && req.user.role !== 'admin')) {
-    return next(new AppError('هذه العملية تتطلب صلاحيات مشرف أعلى 🛡️', 403));
-  }
   next();
 };

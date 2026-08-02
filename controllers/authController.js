@@ -1,32 +1,29 @@
 // controllers/authController.js
-// ✅ FIX [SEC-03]: SESSION_ACTIVE_OPTIONS.maxAge الآن ديناميكي من env عبر parseExpireToMs
+// ✅ FIX [SEC-03]       : SESSION_ACTIVE_OPTIONS.maxAge ديناميكي من env
+// ✅ FIX [SEC-CTRL-01]  : resetPassword يستخدم req.params.token لا req.body.token
+// ✅ FIX [PERF-CTRL-01] : parsePage مع حد أقصى + حماية من skip سالب
+// ✅ FIX [DUP-CTRL-01]  : parsePage دالة مشتركة تحذف التكرار
+// ✅ FIX [ARCH-CTRL-01] : SESSION_ACTIVE_OPTIONS مستورد من tokenUtils — لا تعريف محلي
+// ✅ FIX [LOGIC-CTRL-01]: phone validation بـ regex قبل تمريره للـ Service
 
-const authService      = require('../services/authService');
-const asyncHandler     = require('../utils/asyncHandler');
+const authService = require('../services/authService');
+const asyncHandler = require('../utils/asyncHandler');
 
 const {
   REFRESH_COOKIE_OPTIONS,
   CLEAR_REFRESH_COOKIE_OPTIONS,
-  parseExpireToMs,                          // ✅ FIX [SEC-03]: استيراد الدالة الجديدة
+  SESSION_ACTIVE_OPTIONS,        // ✅ [ARCH-CTRL-01] مستورد من tokenUtils
+  CLEAR_SESSION_ACTIVE_OPTIONS,  // ✅ [ARCH-CTRL-01] مستورد من tokenUtils
 } = require('../utils/tokenUtils');
 
-const isProduction = process.env.NODE_ENV === 'production';
+// ✅ [LOGIC-CTRL-01] regex للأرقام الأردنية — +9627[5|7|8|9]XXXXXXX
+const PHONE_REGEX = /^\+9627[5789]\d{7}$/;
 
-// ✅ FIX [SEC-03]: maxAge الآن مشتق من JWT_REFRESH_EXPIRE — لا hardcoded values
-// session_active كوكي غير حساس يُقرأ بـ JS (httpOnly: false مقصود للـ Frontend)
-const SESSION_ACTIVE_OPTIONS = {
-  httpOnly: false,
-  secure:   isProduction,
-  sameSite: isProduction ? 'none' : 'lax',
-  maxAge:   parseExpireToMs(process.env.JWT_REFRESH_EXPIRE),
-  path:     '/',
-};
-
-const CLEAR_SESSION_ACTIVE_OPTIONS = {
-  httpOnly: false,
-  secure:   isProduction,
-  sameSite: isProduction ? 'none' : 'lax',
-  path:     '/',
+// ✅ [PERF-CTRL-01] + [DUP-CTRL-01] دالة مشتركة لتحليل رقم الصفحة بأمان
+// تمنع: page سالب، page=0، page=NaN، page عالٍ جداً
+const parsePage = (raw) => {
+  const p = parseInt(raw, 10);
+  return (!p || p < 1) ? 1 : Math.min(p, 500);
 };
 
 // ─── 1. التسجيل ────────────────────────────────────────────────
@@ -47,7 +44,7 @@ exports.verifyEmail = asyncHandler(async (req, res) => {
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 2b. إعادة إرسال OTP ─────────────────────────────────────
+// ─── 2b. إعادة إرسال OTP ──────────────────────────────────────
 exports.resendOtp = asyncHandler(async (req, res) => {
   const result = await authService.resendOtpLogic({ email: req.body.email });
   return res.status(result.statusCode).json(result.body);
@@ -67,20 +64,22 @@ exports.login = asyncHandler(async (req, res) => {
 
 // ─── 4. بروفايل المستخدم الخاص ────────────────────────────────
 exports.getUserProfile = asyncHandler(async (req, res) => {
-  const page = parseInt(req.query.page, 10) || 1;
+  // ✅ [PERF-CTRL-01] parsePage تمنع skip سالب أو عالٍ جداً
+  const page   = parsePage(req.query.page);
   const result = await authService.getMeLogic(req.user.id, page);
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 5. GET /me ──────────────────────────────────────────────
+// ─── 5. GET /me ───────────────────────────────────────────────
 exports.getMe = asyncHandler(async (req, res) => {
   const result = await authService.getCurrentUserLogic(req.user.id);
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 6. بروفايل عام ────────────────────────────────────────────
+// ─── 6. بروفايل عام ───────────────────────────────────────────
 exports.getPublicProfile = asyncHandler(async (req, res) => {
-  const page = parseInt(req.query.page, 10) || 1;
+  // ✅ [PERF-CTRL-01] نفس الحماية على الـ public profile
+  const page   = parsePage(req.query.page);
   const result = await authService.getPublicProfileLogic(req.params.id, page);
   return res.status(result.statusCode).json(result.body);
 });
@@ -91,22 +90,25 @@ exports.forgotPassword = asyncHandler(async (req, res) => {
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 8. إعادة تعيين كلمة المرور ────────────────────────────────
+// ─── 8. إعادة تعيين كلمة المرور ───────────────────────────────
 exports.resetPassword = asyncHandler(async (req, res) => {
+  // ✅ [SEC-CTRL-01] req.params.token بدل req.body.token
+  // المسار /reset-password/:token — الـ token في URL Path لا في الـ body
+  // منع تسريبه في Server Logs أو Proxy Logs التي تُسجّل الـ body
   const result = await authService.resetPasswordLogic(
-    req.body.token,
+    req.params.token,
     req.body.password
   );
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 9. تجديد الـ Token ────────────────────────────────────────
+// ─── 9. تجديد الـ Token ───────────────────────────────────────
 exports.refreshToken = asyncHandler(async (req, res) => {
   const clientIp = req.ip ?? req.socket?.remoteAddress ?? 'unknown';
 
   const result = await authService.refreshLogic(
     req.cookies?.refreshToken,
-    clientIp  // ✅ FIX [SEC-AUTH-02]: تمرير IP للتسجيل عند اكتشاف الاختراق
+    clientIp
   );
 
   if (result.clearCookie) {
@@ -130,11 +132,26 @@ exports.logout = asyncHandler(async (req, res) => {
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 11. تعديل البروفايل ───────────────────────────────────────
+// ─── 11. تعديل البروفايل ──────────────────────────────────────
 exports.updateMe = asyncHandler(async (req, res) => {
   const updates = {};
-  if (req.body?.name?.trim())  updates.name  = req.body.name.trim();
-  if (req.body?.phone?.trim()) updates.phone = req.body.phone.trim();
+
+  if (req.body?.name?.trim()) {
+    updates.name = req.body.name.trim();
+  }
+
+  if (req.body?.phone?.trim()) {
+    const phone = req.body.phone.trim();
+    // ✅ [LOGIC-CTRL-01] التحقق من صيغة الهاتف الأردني قبل تمريره للـ Service
+    // يمنع إدخال أرقام مشوهة أو دولية غير مدعومة تصل إلى DB
+    if (!PHONE_REGEX.test(phone)) {
+      return res.status(400).json({
+        msg:  'صيغة رقم الهاتف غير صحيحة ❌ — يجب أن يكون بصيغة +9627XXXXXXXX',
+        code: 'INVALID_PHONE_FORMAT',
+      });
+    }
+    updates.phone = phone;
+  }
 
   const result = await authService.updateMeLogic(
     req.user.id,

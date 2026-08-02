@@ -1,16 +1,20 @@
 // routes/auth.js
-// ✅ FIX [ARCH-01]: حذف resendLimiter الـ Inline — استخدام resendOtpLimiter من rateLimiter.js
-// ✅ FIX [SEC-AUTH-01]: resend-otp يستخدم schema 'resendOtp' المستقلة (لا تطلب otp)
-// ✅ FIX [SEC-04]: إضافة :token إلى مسار إعادة تعيين كلمة المرور
-// ✅ FIX [SEC-05]: إضافة meLimiter لحماية مسارات /me
+// ✅ [SEC-NEW-04] meLimiter يُطبَّق قبل requireAuth — يمنع DB queries قبل Rate Limit
+// ═══════════════════════════════════════════════════════════════
+// إصلاحات الجولات السابقة المحفوظة:
+// ✅ [ARCH-01]     حذف resendLimiter الـ Inline
+// ✅ [SEC-AUTH-01] resend-otp يستخدم schema 'resendOtp'
+// ✅ [SEC-04]      token في URL Path
+// ✅ [SEC-05]      meLimiter على مسارات /me
+// ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
 const router  = express.Router();
 
-const { requireAuth } = require('../middlewares/auth');
-const authController  = require('../controllers/authController');
-const validateObjectId = require('../middlewares/validateObjectId');
-const validateBody     = require('../middlewares/validateBody');
+const { requireAuth }       = require('../middlewares/auth');
+const authController        = require('../controllers/authController');
+const validateObjectId      = require('../middlewares/validateObjectId');
+const validateBody          = require('../middlewares/validateBody');
 const { upload, verifyImageBuffer } = require('../middlewares/upload');
 
 const {
@@ -20,7 +24,7 @@ const {
   forgotPasswordLimiter,
   otpLimiter,
   resendOtpLimiter,
-  meLimiter, // ✅ استيراد meLimiter
+  meLimiter,
 } = require('../middlewares/rateLimiter');
 
 const conditionalUpload = (req, res, next) => {
@@ -52,8 +56,6 @@ router.post('/verify-email',
   authController.verifyEmail
 );
 
-// ✅ FIX [SEC-AUTH-01]: كانت validateBody('verifyEmail') — تطلب otp وتكسر المسار
-// الآن: validateBody('resendOtp') — تقبل email فقط كما هو المتوقع
 router.post('/resend-otp',
   resendOtpLimiter,
   validateBody('resendOtp'),
@@ -72,7 +74,6 @@ router.post('/forgot-password',
   authController.forgotPassword
 );
 
-// ✅ FIX [SEC-04]: إضافة Parameter التوكن في الرابط لتجنب تسريبه في الـ Body
 router.post('/reset-password/:token',
   forgotPasswordLimiter,
   validateBody('resetPassword'),
@@ -93,17 +94,18 @@ router.get('/profile/:id',
 // Protected Routes
 // ══════════════════════════════════════════════
 
-// ✅ FIX [SEC-05]: تطبيق meLimiter لحماية المسار من الـ Flooding
+// ✅ [SEC-NEW-04] meLimiter أولاً — يمنع المهاجم من إرهاق DB عبر requireAuth
+// الترتيب الخاطئ: requireAuth → meLimiter (يُنفَّذ DB query قبل الفلترة)
+// الترتيب الصحيح: meLimiter → requireAuth (يُوقف الطلب قبل أي عمل)
 router.get('/me',
-  requireAuth,
-  meLimiter, 
+  meLimiter,     // ← أولاً: فلترة بالسرعة
+  requireAuth,   // ← ثانياً: التحقق من الهوية
   authController.getMe
 );
 
-// من الأفضل والأكثر أماناً تطبيق نفس الـ Rate Limit هنا أيضاً
 router.get('/me/profile',
+  meLimiter,
   requireAuth,
-  meLimiter, 
   authController.getUserProfile
 );
 
