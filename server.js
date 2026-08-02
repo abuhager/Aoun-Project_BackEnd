@@ -1,13 +1,13 @@
-// server.js — Flow 1 FINAL FIXED WITH ADVANCED GRACEFUL SHUTDOWN & CHAT REWRITE
-// ✅ FIX-01: connectRedis() قبل connectDB() وقبل server.listen — يضمن Redis جاهز عند أول طلب
-// ✅ FIX-02: io.close() يتم استدعاؤه فقط إذا كان السيرفر يعمل فعلياً لحماية العملية من ERR_SERVER_NOT_RUNNING
-// ✅ FIX-03: uncaughtException يميّز بين Operational errors و Programmer errors
-// ✅ FIX-04: unhandledRejection يستدعي gracefulShutdown 
-// ✅ FIX-05: دالة cleanupResources ذكية ومحمية بـ try/catch داخلي لكل مورد
-// ✅ CHAT-FIX: تحديث مسار استدعاء السوكيت وتمريره عبر Middleware للمتحكمات المتبقية لقراءة الشات
+// server.js — FULLY PATCHED (Flow-1 Audit)
+// ✅ VULN-03:  app.set('io', io) بدل middleware — io متاح في كل controller دون الاعتماد على ترتيب التسجيل
+// ✅ LOGIC-01: إضافة COOKIE_SECRET و NODE_ENV لقائمة REQUIRED_ENV
+// ✅ محافظة كاملة على: connectRedis-first · gracefulShutdown · uncaughtException · unhandledRejection
 
 require('dotenv').config();
 
+// ✅ LOGIC-01: COOKIE_SECRET و NODE_ENV إلزاميان
+// COOKIE_SECRET: يُستخدم في cookieParser لتوقيع الكوكيز — بدونه الكوكيز غير محمية
+// NODE_ENV:      يتحكم في منطق production/dev في helmet · errorHandler · rateLimiter · CORS
 const REQUIRED_ENV = [
   'MONGO_URI',
   'JWT_SECRET',
@@ -18,6 +18,8 @@ const REQUIRED_ENV = [
   'CLOUDINARY_CLOUD_NAME',
   'CLOUDINARY_API_KEY',
   'CLOUDINARY_API_SECRET',
+  'COOKIE_SECRET',
+  'NODE_ENV',
 ];
 
 const missingEnv = REQUIRED_ENV.filter((k) => !process.env[k]);
@@ -33,25 +35,31 @@ const http             = require('http');
 const app              = require('./app');
 const connectDB        = require('./config/db');
 const { initCronJobs } = require('./jobs/cronJobs');
-
-// 💡 تعديل الشات: استدعاء الهيكل الجديد من مجلد socket مباشرة (يستهدف index.js الجديد)
 const { initSocket }   = require('./socket');
 
 const PORT   = process.env.PORT || 5000;
 const server = http.createServer(app);
 
+// ✅ VULN-03: initSocket أولاً للحصول على instance
 const io = initSocket(server);
 
-// 💡 تعديل الشات: تمرير الـ io عبر الـ middleware حتى تتمكن الـ REST controllers من الإرسال (فتح/قراءة الغرف)
-app.use((req, res, next) => {
-  req.io = io;
-  next();
-});
+// ✅ VULN-03: app.set('io', io) — الطريقة الصحيحة معمارياً لتمرير التبعيات في Express
+//
+// المشكلة مع الطريقة القديمة (middleware):
+//   app.use((req, res, next) => { req.io = io; next(); });
+//   هذا الـ middleware يُسجَّل في server.js بعد أن سُجِّلت المسارات في app.js
+//   Express ينفِّذ middlewares بترتيب تسجيلها → req.io = undefined في الـ controllers
+//
+// الحل مع app.set:
+//   يُخزِّن io على مستوى الـ app instance مباشرةً — متاح دائماً عبر req.app.get('io')
+//   بغض النظر عن ترتيب تسجيل المسارات أو الـ middlewares
+//
+// ⚠️  تذكير للـ Controllers: استبدل req.io بـ req.app.get('io')
+app.set('io', io);
 
-// ── دالة مساعدة لتنظيف الموارد التابعة (Sockets & DB) ──────────
+// ── دالة تنظيف الموارد ────────────────────────────────────────
 const cleanupResources = async (isHttpListening) => {
   try {
-    // 1. إغلاق الـ Socket.io بأمان فقط إذا كان سيرفر الـ HTTP يعمل
     if (io && isHttpListening) {
       try {
         await new Promise((resolve, reject) =>
@@ -62,12 +70,10 @@ const cleanupResources = async (isHttpListening) => {
         console.warn('⚠️ تنبيه أثناء إغلاق Socket.io (تم التجاوز):', socketErr.message);
       }
     } else if (io) {
-      // إذا انهار السيرفر قبل الـ listen، نقوم فقط بفصل جِلسات المشتركين دون قفل المفسر الشبكي داخلياً
       io.disconnectSockets(true);
-      console.log('✅ تم فصل جلسات Socket.io النشطة لتأمين الخروج الحفاظي');
+      console.log('✅ تم فصل جلسات Socket.io النشطة');
     }
 
-    // 2. إغلاق الـ MongoDB بأمان
     const mongoose = require('mongoose');
     if (mongoose && mongoose.connection.readyState !== 0) {
       await mongoose.connection.close(false);
@@ -76,7 +82,7 @@ const cleanupResources = async (isHttpListening) => {
 
     process.exit(0);
   } catch (shutdownErr) {
-    console.error('❌ خطأ فادح أثناء تنظيف الموارد وعملية الـ Cleanup:', shutdownErr);
+    console.error('❌ خطأ فادح أثناء الـ Cleanup:', shutdownErr);
     process.exit(1);
   }
 };
@@ -89,53 +95,48 @@ const gracefulShutdown = (signal) => {
 
   if (isListening) {
     server.close(async (err) => {
-      if (err) {
-        console.error('❌ خطأ أثناء إغلاق HTTP server:', err);
-      } else {
-        console.log('🛑 تم إغلاق خادم HTTP بنجاح.');
-      }
+      if (err) console.error('❌ خطأ أثناء إغلاق HTTP server:', err);
+      else     console.log('🛑 تم إغلاق خادم HTTP بنجاح.');
       await cleanupResources(true);
     });
   } else {
-    console.log('ℹ️ خادم HTTP لم يكن في حالة تشغيل نشطة (تم تخطي أمر Close الحمائي).');
+    console.log('ℹ️ خادم HTTP لم يكن في حالة تشغيل نشطة.');
     cleanupResources(false);
   }
 
-  // إغلاق قسري بعد 15 ثانية إذا لم ينتهِ الـ graceful shutdown
   setTimeout(() => {
-    console.error('⚠️ الإغلاق تجاوز المهلة المحددة (15 ثانية) — إغلاق قسري فوراً');
+    console.error('⚠️ الإغلاق تجاوز المهلة (15 ثانية) — إغلاق قسري');
     process.exit(1);
   }, 15_000).unref();
 };
 
-// ── uncaughtException — تمييز Operational vs Programmer errors ──
+// ── Process Event Handlers ─────────────────────────────────────
 process.on('uncaughtException', (err) => {
   if (err.isOperational) {
-    console.error('⚠️ [uncaughtException] خطأ عملي تشغيلي وصل للـ global handler (لا إغلاق):', {
+    console.error('⚠️ [uncaughtException] خطأ تشغيلي (لا إغلاق):', {
       message: err.message,
       code:    err.code,
     });
-    return; 
+    return;
   }
-  console.error('💥 [uncaughtException] خطأ برمجي بنيوي — إغلاق آمن فوري:', err);
+  console.error('💥 [uncaughtException] خطأ برمجي — إغلاق فوري:', err);
   gracefulShutdown('uncaughtException');
 });
 
-// unhandledRejection يستدعي gracefulShutdown
 process.on('unhandledRejection', (reason) => {
-  console.error('❌ [unhandledRejection] — Promise رُفض دون catch مخصص:', reason);
+  console.error('❌ [unhandledRejection]:', reason);
   gracefulShutdown('unhandledRejection');
 });
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
 
-// ── ترتيب التهيئة الصحيح والمحمي ──────────────────────────────
+// ── ترتيب التهيئة الصحيح ──────────────────────────────────────
 const { connectRedis } = require('./middlewares/rateLimiter');
 
 (async () => {
   try {
-    // 1) Redis أولاً — rateLimiter يحتاجه عند أول طلب لمنع ثغرات الـ Memory Fallback المفاجئة
+    // 1) Redis أولاً — rateLimiter يحتاجه قبل أول طلب
     await connectRedis();
 
     // 2) MongoDB
@@ -144,20 +145,18 @@ const { connectRedis } = require('./middlewares/rateLimiter');
 
     // 3) HTTP Server
     server.listen(PORT, () => {
-      console.log(
-        `🚀 الخادم على المنفذ ${PORT} — البيئة التشغيلية: ${process.env.NODE_ENV || 'development'}`
-      );
+      console.log(`🚀 الخادم على المنفذ ${PORT} — البيئة: ${process.env.NODE_ENV}`);
 
-      // 4) Cron Jobs — فشلها لا يوقف الخادم الأساسي
+      // 4) Cron Jobs — فشلها لا يوقف الخادم
       try {
         initCronJobs();
         console.log('⏰ Cron Jobs تعمل بنجاح');
       } catch (cronErr) {
-        console.error('❌ فشل تشغيل الـ Cron Jobs التلقائية (الخادم مستمر بوضعه الطبيعي):', cronErr);
+        console.error('❌ فشل Cron Jobs (الخادم مستمر):', cronErr);
       }
     });
   } catch (err) {
-    console.error('❌ فشل حرج أثناء مرحلة الـ Startup البنيوية:', err);
+    console.error('❌ فشل حرج في الـ Startup:', err);
     gracefulShutdown('STARTUP_FAILURE');
   }
 })();
