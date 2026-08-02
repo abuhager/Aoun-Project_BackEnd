@@ -4,7 +4,7 @@ const Joi = require('joi');
 
 // ─── Regex Patterns ────────────────────────────────────────────────
 const ARABIC_NAME    = /^[\u0600-\u06FFa-zA-Z0-9\s.'-]{2,60}$/;
-const PHONE_REGEX    = /^\+?[0-9]{7,15}$/;
+const { JORDAN_PHONE_REGEX: PHONE_REGEX } = require('../utils/phoneUtils');
 const OTP_REGEX      = /^\d{6}$/;
 const EMAIL_DOMAIN   = /^@[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+$/;
 

@@ -471,6 +471,10 @@ exports.forgotPasswordLogic = async ({ email }) => {
 };
 
 // ─── resetPasswordLogic ───────────────────────────────────────────
+// ✅ [FLOW2-FIX-02] sessionIssuedAt تُحدَّث بـ new Date() بدل الحذف
+// السبب: invalidateUserSession يعمل $unset → sessionIssuedAt = null
+//         وهذا يجعل فحص decoded.iat < sessionIssuedAt لا يُفعَّل أبداً
+//         لأن null لا تُقارَن بـ timestamp → access tokens تظل صالحة!
 exports.resetPasswordLogic = async (token, newPassword) => {
   if (!token || !newPassword) {
     return { statusCode: 400, body: { msg: 'التوكن وكلمة المرور الجديدة مطلوبان' } };
@@ -485,16 +489,24 @@ exports.resetPasswordLogic = async (token, newPassword) => {
 
   const hashed = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
 
+  // ✅ [FLOW2-FIX-02] updateUser بـ sessionIssuedAt: new Date() بدل invalidateUserSession المنفصل
+  // هذا يضمن: كل access tokens صادرة قبل هذه اللحظة تصبح غير صالحة فوراً
+  // لأن requireAuth يفحص: decoded.iat < sessionIssuedAt
   await userRepository.updateUser(user._id, {
-    password:            hashed,
-    $unset: { resetPasswordToken: 1, resetPasswordExpire: 1 },
+    password:        hashed,
+    sessionIssuedAt: new Date(), // ← يُبطل كل access tokens السابقة على كل الأجهزة
+    $unset: {
+      resetPasswordToken:  1,
+      resetPasswordExpire: 1,
+      refreshToken:        1, // حذف refreshToken لإجبار إعادة تسجيل دخول كامل
+    },
   });
 
-  await userRepository.invalidateUserSession(user._id);
   sessionCache.invalidate(user._id.toString());
 
   return { statusCode: 200, body: { msg: 'تم تغيير كلمة المرور بنجاح ✅ — أعد تسجيل الدخول' } };
 };
+
 
 // ─── updateMeLogic ────────────────────────────────────────────────
 exports.updateMeLogic = async (userId, updates, fileBuffer, fileMimeType) => {
@@ -539,6 +551,7 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, fileMimeType) => {
 };
 
 // ─── updatePasswordLogic ──────────────────────────────────────────
+// ✅ [FLOW2-FIX-03] sessionIssuedAt تُحدَّث بـ new Date() — نفس منطق resetPassword
 exports.updatePasswordLogic = async (userId, { currentPassword, newPassword }) => {
   const user = await userRepository.findByIdWithPassword(userId);
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
@@ -548,28 +561,46 @@ exports.updatePasswordLogic = async (userId, { currentPassword, newPassword }) =
 
   const hashed = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
 
-  await userRepository.updateUser(userId, { password: hashed });
-  await userRepository.invalidateUserSession(userId);
+  // ✅ [FLOW2-FIX-03] دمج في استدعاء واحد + sessionIssuedAt يُبطل tokens القديمة
+  // المشكلة القديمة: updateUser(password) ثم invalidateUserSession يحذف sessionIssuedAt
+  //                  فيترك access tokens نشطة على أجهزة أخرى حتى انتهاء TTL
+  await userRepository.updateUser(userId, {
+    password:        hashed,
+    sessionIssuedAt: new Date(), // ← يُبطل access tokens على جميع الأجهزة فوراً
+    $unset: { refreshToken: 1 }, // إجبار إعادة تسجيل دخول على كل الأجهزة
+  });
+
   sessionCache.invalidate(userId.toString());
 
-  return { statusCode: 200, body: { msg: 'تم تغيير كلمة المرور بنجاح ✅ — ستحتاج إعادة تسجيل الدخول على الأجهزة الأخرى' } };
+  return {
+    statusCode: 200,
+    body: { msg: 'تم تغيير كلمة المرور بنجاح ✅ — ستحتاج إعادة تسجيل الدخول على الأجهزة الأخرى' },
+  };
 };
 
 // ─── getMeLogic ───────────────────────────────────────────────────
+// ✅ [FLOW2-FIX-04] إضافة countDocuments في Promise.all لدعم pagination كامل
 exports.getMeLogic = async (userId, page) => {
   const { pageSize, skip } = await _getProfilePageParams(page);
 
-  const [user, donationsResult, receivedResult] = await Promise.all([
-    userRepository.findById(userId),
-    Item.find({ donor: userId, status: { $ne: 'draft' } })
-      .sort({ createdAt: -1 }).skip(skip).limit(pageSize)
-      .select('title category status images createdAt').lean(),
-    Item.find({ recipient: userId, status: 'delivered' })
-      .sort({ deliveredAt: -1 }).skip(skip).limit(pageSize)
-      .select('title category images deliveredAt').lean(),
-  ]);
+  const [user, donationsResult, receivedResult, donationsTotal, receivedTotal] =
+    await Promise.all([
+      userRepository.findById(userId),
+      Item.find({ donor: userId, status: { $ne: 'draft' } })
+        .sort({ createdAt: -1 }).skip(skip).limit(pageSize)
+        .select('title category status images createdAt').lean(),
+      Item.find({ recipient: userId, status: 'delivered' })
+        .sort({ deliveredAt: -1 }).skip(skip).limit(pageSize)
+        .select('title category images deliveredAt').lean(),
+      // ✅ [FLOW2-FIX-04] countDocuments متوازيان — لا overhead إضافي يُذكر
+      Item.countDocuments({ donor: userId, status: { $ne: 'draft' } }),
+      Item.countDocuments({ recipient: userId, status: 'delivered' }),
+    ]);
 
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
+
+  const totalDonationPages = Math.ceil(donationsTotal / pageSize);
+  const totalReceivedPages = Math.ceil(receivedTotal  / pageSize);
 
   return {
     statusCode: 200,
@@ -579,6 +610,13 @@ exports.getMeLogic = async (userId, page) => {
       received:  receivedResult,
       page,
       pageSize,
+      // ✅ [FLOW2-FIX-04] بيانات pagination كاملة — الـ Frontend يعرف الآن كم صفحة متبقية
+      donationsTotal,
+      receivedTotal,
+      hasMoreDonations: page < totalDonationPages,
+      hasMoreReceived:  page < totalReceivedPages,
+      totalDonationPages,
+      totalReceivedPages,
     },
   };
 };

@@ -1,21 +1,17 @@
 // dtos/phoneDto.js
-// يُنظّم بيانات التحقق من رقم الهاتف
-
-const PHONE_REGEX = /^(\+962|00962|0)?7[789]\d{7}$/;
+// ✅ [FLOW2-FIX-08] يستورد من phoneUtils بدل تعريف PHONE_REGEX محلياً
+const {
+  JORDAN_PHONE_REGEX,
+  normalizeJordanPhone,
+} = require('../utils/phoneUtils');
 
 /** تنسيق رقم الهاتف لصيغة دولية (+962xxxxxxxx) */
-exports.normalizePhone = (raw) => {
-  const cleaned = raw.trim().replace(/\s+/g, '');
-  if (cleaned.startsWith('+962')) return cleaned;
-  if (cleaned.startsWith('00962')) return '+962' + cleaned.slice(5);
-  if (cleaned.startsWith('0'))     return '+962' + cleaned.slice(1);
-  return '+962' + cleaned;
-};
+exports.normalizePhone = (raw) => normalizeJordanPhone(raw);
 
 /** التحقق من صحة رقم هاتف أردني */
 exports.validatePhone = (phone) => {
-  if (!phone || !PHONE_REGEX.test(phone.trim())) {
-    return { valid: false, msg: 'رقم الهاتف غير صالح — يجب أن يكون رقماً أردنياً (07x)' };
+  if (!phone || !JORDAN_PHONE_REGEX.test(phone.trim())) {
+    return { valid: false, msg: 'رقم الهاتف غير صالح — يجب أن يكون رقماً أردنياً (+9627XXXXXXX)' };
   }
   return { valid: true };
 };

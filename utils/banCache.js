@@ -1,57 +1,65 @@
-// utils/banCache.js — النسخة المصحّحة (Flow-1 Audit)
-// ✅ إصلاح BUG-02: lazy require داخل isUserBanned لحل Circular Dependency مع User model
-// ✅ إصلاح PERF-01: TTL تلقائي كل 5 دقائق لإجبار refresh من DB في بيئة multi-instance
+// utils/banCache.js
+// ✅ [FLOW2-FIX-01] إضافة isUserFrozen — يحل مشكلة مستخدم مجمَّد يتجاوز requireAuth
+// ✅ BUG-02: lazy require داخل isUserBanned/isUserFrozen لحل Circular Dependency
+// ✅ PERF-01: TTL تلقائي كل 5 دقائق (قابل للضبط من env)
 
 const bannedIds = new Set();
+const frozenIds = new Set(); // ← [FLOW2-FIX-01] جديد
 
-// ─────────────────────────────────────────────────────────────
-// ✅ PERF-01: TTL — كل 5 دقائق يُفرَّغ الكاش المحلي ليُعاد بناؤه من DB
-// هذا حل مؤقت آمن يضمن أن الحظر ينعكس على جميع instances خلال ≤5 دقائق
-// الحل الدائم: استبدل هذا الـ Set بـ Redis عند الانتقال إلى multi-instance
-// ⚠️ TODO-PROD: npm install ioredis ثم نقل المنطق إلى config/redis.js
-// ─────────────────────────────────────────────────────────────
 const BAN_CACHE_TTL_MS = parseInt(process.env.BAN_CACHE_TTL_MS || String(5 * 60 * 1000));
 setInterval(() => {
   bannedIds.clear();
-}, BAN_CACHE_TTL_MS).unref(); // .unref() يمنع الـ interval من إبقاء العملية حيّة
+  frozenIds.clear(); // ← [FLOW2-FIX-01] يُفرَّغ مع bannedIds
+}, BAN_CACHE_TTL_MS).unref();
 
 module.exports = {
-  // ── CRUD ──────────────────────────────────────────────────
+  // ── Banned ────────────────────────────────────────────────
   add:    (userId) => bannedIds.add(String(userId)),
   delete: (userId) => bannedIds.delete(String(userId)),
   clear:  ()       => bannedIds.clear(),
+  has:    (userId) => bannedIds.has(String(userId)),
 
-  // ── فحص سريع متزامن (O(1)) — للاستخدام الداخلي فقط ──────
-  has: (userId) => bannedIds.has(String(userId)),
+  // ── [FLOW2-FIX-01] Frozen ─────────────────────────────────
+  addFrozen:    (userId) => frozenIds.add(String(userId)),
+  deleteFrozen: (userId) => frozenIds.delete(String(userId)),
+  hasFrozen:    (userId) => frozenIds.has(String(userId)),
 
-  // ─────────────────────────────────────────────────────────
-  // isUserBanned: الدالة الرئيسية التي يستدعيها auth middleware
-  // ✅ BUG-02: lazy require — يحل مشكلة Circular Dependency
-  //    banCache ← auth.js ← routes ← models/User
-  //    لو استوردنا User في أعلى الملف، قد يُحمَّل قبل اكتمال تهيئة Mongoose
-  // ─────────────────────────────────────────────────────────
+  // ── isUserBanned: فحص شامل (cache + DB) ──────────────────
   isUserBanned: async (userId) => {
     const idStr = String(userId);
-
-    // 1) فحص الكاش المحلي أولاً — استجابة فورية O(1) بدون DB
     if (bannedIds.has(idStr)) return true;
-
-    // 2) إذا غاب من الكاش (بعد TTL أو Restart أو instance جديد) → راجع DB
     try {
-      // ✅ BUG-02: lazy require بدل top-level import
-      const User = require('../models/User');
+      const User = require('../models/User'); // lazy require — يحل Circular Dependency
       const user = await User.findById(idStr).select('isBanned').lean();
-
       if (user?.isBanned) {
-        bannedIds.add(idStr); // أعد إضافته للكاش لتسريع الطلبات القادمة لهذا المستخدم
+        bannedIds.add(idStr);
         return true;
       }
     } catch (error) {
-      // لا نوقف التطبيق — نسجّل ونتجاهل (fail-open: المستخدم يمر في حالة خطأ DB)
-      // هذا مقبول لأن الحظر من DB سيُطبَّق في أول طلب ناجح
       console.error(`[BanCache] خطأ أثناء فحص حظر المستخدم ${idStr}:`, error.message);
     }
+    return false;
+  },
 
+  // ── [FLOW2-FIX-01] isUserFrozen: نفس منطق isUserBanned تماماً ──
+  isUserFrozen: async (userId) => {
+    const idStr = String(userId);
+
+    // 1) فحص cache المحلي أولاً — O(1)
+    if (frozenIds.has(idStr)) return true;
+
+    // 2) cache miss → فحص DB
+    try {
+      const User = require('../models/User'); // lazy require
+      const user = await User.findById(idStr).select('isFrozen').lean();
+      if (user?.isFrozen) {
+        frozenIds.add(idStr); // أعد تخزينه
+        return true;
+      }
+    } catch (error) {
+      // fail-open: يمر المستخدم في حالة خطأ DB — سيُطبَّق التجميد في أول طلب ناجح
+      console.error(`[BanCache] خطأ أثناء فحص تجميد المستخدم ${idStr}:`, error.message);
+    }
     return false;
   },
 };

@@ -1,7 +1,8 @@
 // middlewares/auth.js
-// ✅ BUG-AUTH-CRIT: requireSuperAdmin يستخدم الآن ROLES.SUPER_ADMIN بدل 'superadmin' المخطوء
-// ✅ PERF-AUTH-01: sessionCache يُلغي DB query في كل طلب لجلب sessionIssuedAt فقط
-// ✅ BUG-AUTH-01:  ROLES ثابت موحَّد — مصدر حقيقة واحد لكل role checks
+// ✅ [FLOW2-FIX-01] requireAuth يفحص isFrozen الآن — مستخدم مجمَّد لا يمر مهما كان توكنه
+// ✅ [FLOW2-FIX-09] optionalAuth — isBanned يدمج cache + token بشكل موثوق
+// ✅ BUG-AUTH-CRIT: requireSuperAdmin يستخدم ROLES.SUPER_ADMIN الصحيح
+// ✅ PERF-AUTH-01:  sessionCache يُلغي DB query في كل طلب
 
 const AppError              = require('../utils/AppError');
 const { verifyAccessToken } = require('../utils/tokenUtils');
@@ -9,19 +10,14 @@ const banCache              = require('../utils/banCache');
 const sessionCache          = require('../utils/sessionCache');
 const User                  = require('../models/User');
 
-// ─────────────────────────────────────────────────────────────
-// ثوابت الـ Roles — مصدر حقيقة واحد لمنع التناقض
-// ─────────────────────────────────────────────────────────────
 const ROLES = {
   ADMIN:       'admin',
-  SUPER_ADMIN: 'super_admin', // ✅ القيمة الموحّدة المعتمدة في DB
+  SUPER_ADMIN: 'super_admin',
 };
-
-// يُصدَّر لاستخدامه في أي controller يحتاج فحص الـ role
 exports.ROLES = ROLES;
 
 // ─────────────────────────────────────────────────────────────
-// 1. requireAuth — إلزامي لكل route محمية
+// 1. requireAuth
 // ─────────────────────────────────────────────────────────────
 exports.requireAuth = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -35,23 +31,32 @@ exports.requireAuth = async (req, res, next) => {
   try {
     const decoded = verifyAccessToken(token);
 
-    // ── 1) فحص الحظر السريع من الـ Cache (بدون DB) ──────────────────────
+    // ── 1) فحص الحظر السريع ───────────────────────────────────
     const isBannedInCache = await banCache.isUserBanned(decoded.user.id);
     if (decoded.user.isBanned || isBannedInCache) {
       return next(new AppError('حسابك محظور 🚫', 403, 'USER_BANNED'));
     }
 
-    // ── 2) التحقق من تفعيل البريد ────────────────────────────────────────
+    // ── [FLOW2-FIX-01] فحص التجميد ──────────────────────────
+    // المشكلة القديمة: مستخدم مجمَّد + access token صالح = وصول حر 15 دقيقة
+    // الحل: نفحص isFrozen هنا قبل أي منطق آخر
+    const isFrozenInCache = await banCache.isUserFrozen(decoded.user.id);
+    if (isFrozenInCache) {
+      return next(new AppError('حسابك مجمَّد مؤقتاً 🧊', 403, 'ACCOUNT_FROZEN'));
+    }
+
+    // ── 2) فحص تفعيل البريد ──────────────────────────────────
     if (!decoded.user.isVerified) {
       return next(new AppError('يجب تفعيل حسابك أولاً 📧', 403, 'EMAIL_NOT_VERIFIED'));
     }
 
-    // ── 3) sessionIssuedAt من الـ Cache أولاً — DB فقط عند cache miss ────
+    // ── 3) sessionIssuedAt من Cache → DB عند miss ─────────────
     let sessionIssuedAt = sessionCache.get(decoded.user.id);
 
     if (sessionIssuedAt === undefined) {
+      // [FLOW2-FIX-01] أضف isFrozen لهذا الـ select
       const user = await User.findById(decoded.user.id)
-        .select('sessionIssuedAt isBanned')
+        .select('sessionIssuedAt isBanned isFrozen')
         .lean();
 
       if (!user) {
@@ -59,15 +64,23 @@ exports.requireAuth = async (req, res, next) => {
       }
 
       if (user.isBanned) {
+        banCache.add(decoded.user.id);
         sessionCache.invalidate(decoded.user.id);
         return next(new AppError('حسابك محظور 🚫', 403, 'USER_BANNED'));
+      }
+
+      // [FLOW2-FIX-01] فحص isFrozen من DB أيضاً
+      if (user.isFrozen) {
+        banCache.addFrozen(decoded.user.id); // خزّنه في cache لتسريع الطلبات التالية
+        sessionCache.invalidate(decoded.user.id);
+        return next(new AppError('حسابك مجمَّد مؤقتاً 🧊', 403, 'ACCOUNT_FROZEN'));
       }
 
       sessionIssuedAt = user.sessionIssuedAt ?? null;
       sessionCache.set(decoded.user.id, sessionIssuedAt);
     }
 
-    // ── 4) فحص صلاحية الجلسة ─────────────────────────────────────────────
+    // ── 4) فحص صلاحية الجلسة ─────────────────────────────────
     if (
       sessionIssuedAt &&
       decoded.iat < Math.floor(new Date(sessionIssuedAt).getTime() / 1000)
@@ -85,6 +98,7 @@ exports.requireAuth = async (req, res, next) => {
       role:       decoded.user.role,
       trustLevel: decoded.user.trustLevel ?? 1,
       isBanned:   false,
+      isFrozen:   false, // وصل لهنا = مؤكد ليس مجمَّداً
       isVerified: true,
     };
 
@@ -101,7 +115,7 @@ exports.requireAuth = async (req, res, next) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// 2. requireAdmin — يُستدعى دائماً بعد requireAuth
+// 2. requireAdmin
 // ─────────────────────────────────────────────────────────────
 exports.requireAdmin = (req, res, next) => {
   if (req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.SUPER_ADMIN) {
@@ -113,15 +127,10 @@ exports.requireAdmin = (req, res, next) => {
 // ─────────────────────────────────────────────────────────────
 // 3. requireSuperAdmin
 // ─────────────────────────────────────────────────────────────
-// ✅ BUG-AUTH-CRIT FIX: الكود القديم كان يستخدم 'superadmin' (بدون underscore)
-//    بينما ROLES.SUPER_ADMIN = 'super_admin' (مع underscore) وكذلك DB
-//    النتيجة: أي super_admin حقيقي كان يُرفض دائماً بـ 403!
-//    الإصلاح: استخدام ROLES.SUPER_ADMIN من الـ constant الموحَّد فقط
 exports.requireSuperAdmin = (req, res, next) => {
   if (!req.user) {
     return next(new AppError('غير مصرح — يجب تسجيل الدخول أولاً 🔒', 401, 'UNAUTHORIZED'));
   }
-  // ✅ ROLES.SUPER_ADMIN بدل 'superadmin' المخطوء — متوافق مع DB وتوكن الـ JWT
   if (req.user.role !== ROLES.SUPER_ADMIN) {
     return next(new AppError('هذه العملية تتطلب صلاحيات مشرف أعلى 🛡️', 403, 'FORBIDDEN_SUPER_ADMIN_ONLY'));
   }
@@ -146,7 +155,7 @@ exports.requireLevel2 = (req, res, next) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// 5. optionalAuth — اختياري
+// 5. optionalAuth
 // ─────────────────────────────────────────────────────────────
 exports.optionalAuth = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -162,7 +171,16 @@ exports.optionalAuth = async (req, res, next) => {
     const decoded = verifyAccessToken(token);
 
     const isBannedInCache = await banCache.isUserBanned(decoded.user.id);
+
+    // [FLOW2-FIX-09] يدمج cache + token لضمان الموثوقية
     if (decoded.user.isBanned || isBannedInCache) {
+      req.user = null;
+      return next();
+    }
+
+    // [FLOW2-FIX-01] فحص التجميد في optionalAuth أيضاً
+    const isFrozenInCache = await banCache.isUserFrozen(decoded.user.id);
+    if (isFrozenInCache) {
       req.user = null;
       return next();
     }
@@ -171,10 +189,17 @@ exports.optionalAuth = async (req, res, next) => {
 
     if (sessionIssuedAt === undefined) {
       const user = await User.findById(decoded.user.id)
-        .select('sessionIssuedAt isBanned')
+        .select('sessionIssuedAt isBanned isFrozen') // [FLOW2-FIX-01] أضيف isFrozen
         .lean();
 
       if (!user || user.isBanned) {
+        req.user = null;
+        return next();
+      }
+
+      // [FLOW2-FIX-01]
+      if (user.isFrozen) {
+        banCache.addFrozen(decoded.user.id);
         req.user = null;
         return next();
       }
@@ -196,7 +221,9 @@ exports.optionalAuth = async (req, res, next) => {
       id:         decoded.user.id,
       role:       decoded.user.role,
       trustLevel: decoded.user.trustLevel ?? 1,
-      isBanned:   false,
+      // [FLOW2-FIX-09] يدمج cache + token بدل false ثابت
+      isBanned:   isBannedInCache || decoded.user.isBanned || false,
+      isFrozen:   false,
       isVerified: decoded.user.isVerified ?? false,
     };
 
