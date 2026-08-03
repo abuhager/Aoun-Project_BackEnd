@@ -111,25 +111,29 @@ exports.getItemByIdLogic = async (itemId, requesterId) => {
   const obj      = item.toObject ? item.toObject() : { ...item };
 
   obj.expiryHours   = settings.bookingExpiryHours ?? 72;
-  obj.waitlistCount = obj.waitlist?.length ?? 0;
+  obj.waitlistCount = obj.waitlist?.length ?? 0; // ✅ احسب قبل الحذف
 
   const isOwner     = requesterId && obj.donor?._id?.toString() === requesterId.toString();
   const isBookerReq = requesterId && obj.bookedBy?._id?.toString() === requesterId.toString();
 
-  // ✅ FIX [UX-02]: مرّر requesterId للـ DTO ليحسب isInWaitlist
-  // المتبرع يرى waitlist كاملة — باقي الجمهور يرى isInWaitlist فقط
   if (isOwner) {
-    return toDonorItem(obj, requesterId);
+    // ✅ المتبرع يرى waitlistCount لكن ليس محتوى الـ array
+    const result = toDonorItem(obj, requesterId);
+    delete result.waitlist; // ✅ احذف بعد الـ DTO لا قبله
+    return result;
   }
 
   if (isBookerReq) {
-    delete obj.waitlist;
-    return toReceiverItem(obj, requesterId);
+    // ✅ الحاجز يرى isInWaitlist = false دائماً (هو الحاجز مش في الطابور)
+    const result = toReceiverItem(obj, requesterId);
+    delete result.waitlist;
+    return result;
   }
 
-  // زائر عادي أو مستخدم في الطابور
-  delete obj.waitlist;
-  return toPublicItem(obj, requesterId);
+  // ✅ زائر / مستخدم في الطابور — isInWaitlist يُحسب من الـ DTO
+  const result = toPublicItem(obj, requesterId);
+  delete result.waitlist;
+  return result;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
