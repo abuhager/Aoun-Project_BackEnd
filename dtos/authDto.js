@@ -1,3 +1,4 @@
+// dtos/authDto.js
 const Joi = require('joi');
 
 // ─── سياسة كلمة المرور الموحدة ─────────────────────────────────
@@ -11,18 +12,22 @@ const strongPassword = Joi.string()
     'any.required': 'كلمة المرور مطلوبة',
   });
 
+// ✅ FIX: Regex موحَّد مع الـ Frontend — يقبل 9 أرقام تبدأ بـ 77/78/79 فقط
+const jordanPhone = Joi.string()
+  .pattern(/^(77|78|79)\d{7}$/)
+  .optional()
+  .messages({
+    'string.pattern.base':
+      'رقم الهاتف يجب أن يكون 9 أرقام ويبدأ بـ 77 أو 78 أو 79 (مثال: 791234567)',
+  });
+
 // ─── validateRegister ──────────────────────────────────────────
 exports.validateRegister = (body) => {
   const schema = Joi.object({
-    name: Joi.string().min(3).max(50).required(),
-    email: Joi.string().email().required(),
-    password: strongPassword, // ✅ تطبيق كلمة المرور القوية
-    phone: Joi.string()       // ✅ تطبيق التحقق من رقم الهاتف
-      .pattern(/^[0-9]{9,15}$/)
-      .optional()
-      .messages({ 
-        'string.pattern.base': 'رقم الهاتف يجب أن يحتوي على أرقام فقط (9-15 رقم)' 
-      })
+    name:     Joi.string().min(3).max(50).required(),
+    email:    Joi.string().email().required(),
+    password: strongPassword,
+    phone:    jordanPhone, // ✅ موحَّد الآن مع الـ Frontend
   });
 
   return schema.validate(body);
@@ -32,7 +37,7 @@ exports.validateRegister = (body) => {
 exports.validateVerifyEmail = (body) => {
   const schema = Joi.object({
     email: Joi.string().email().required(),
-    otp: Joi.string().length(6).required()  // ✅ 6 أرقام
+    otp:   Joi.string().length(6).required(),
   });
 
   return schema.validate(body);
@@ -41,10 +46,8 @@ exports.validateVerifyEmail = (body) => {
 // ─── validateLogin ─────────────────────────────────────────────
 exports.validateLogin = (body) => {
   const schema = Joi.object({
-    email: Joi.string().email().required(),
-    // في تسجيل الدخول، نكتفي بالتحقق من وجود النص دون القيود الصارمة 
-    // للسماح للمستخدمين القدامى (إن وُجدوا بكلمات ضعيفة) بتسجيل الدخول وتحديثها
-    password: Joi.string().required()
+    email:    Joi.string().email().required(),
+    password: Joi.string().required(),
   });
 
   return schema.validate(body);
@@ -53,7 +56,7 @@ exports.validateLogin = (body) => {
 // ─── validateForgotPassword ────────────────────────────────────
 exports.validateForgotPassword = (body) => {
   const schema = Joi.object({
-    email: Joi.string().email().required()
+    email: Joi.string().email().required(),
   });
 
   return schema.validate(body);
@@ -62,7 +65,7 @@ exports.validateForgotPassword = (body) => {
 // ─── validateResetPassword ─────────────────────────────────────
 exports.validateResetPassword = (body) => {
   const schema = Joi.object({
-    password: strongPassword // ✅ تطبيق كلمة المرور القوية
+    password: strongPassword,
   });
 
   return schema.validate(body);
@@ -72,22 +75,23 @@ exports.validateResetPassword = (body) => {
 exports.validateUpdateMe = (data) =>
   Joi.object({
     name:  Joi.string().min(2).max(60).optional(),
-    phone: Joi.string().pattern(/^[0-9]{9,15}$/).optional().allow(''),
+    phone: jordanPhone.allow(''), // ✅ نفس الـ Regex الموحَّد
   }).validate(data);
 
 // ─── validateUpdatePassword ────────────────────────────────────
 exports.validateUpdatePassword = (data) =>
   Joi.object({
-    currentPassword: Joi.string().required().messages({ 
-      'any.required': 'كلمة المرور الحالية مطلوبة' 
+    currentPassword: Joi.string().required().messages({
+      'any.required': 'كلمة المرور الحالية مطلوبة',
     }),
-    newPassword: strongPassword // ✅ تطبيق كلمة المرور القوية
+    newPassword: strongPassword,
   }).validate(data);
 
-  exports.validateResendOtp = (data) =>
+// ─── validateResendOtp ─────────────────────────────────────────
+exports.validateResendOtp = (data) =>
   Joi.object({
     email: Joi.string().email().required().messages({
-      'string.email':   'يرجى إدخال بريد إلكتروني صالح',
-      'any.required':   'البريد الإلكتروني مطلوب',
+      'string.email': 'يرجى إدخال بريد إلكتروني صالح',
+      'any.required': 'البريد الإلكتروني مطلوب',
     }),
   }).validate(data);
