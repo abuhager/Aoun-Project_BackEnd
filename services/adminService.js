@@ -1,12 +1,14 @@
 // services/adminService.js
-const adminRepo      = require('../repositories/adminRepository');
-const userRepository = require('../repositories/userRepository');
-const AdminLog       = require('../models/AdminLog');
-const User           = require('../models/User');
-const SystemSettings = require('../models/SystemSettings');
-const notifyUser     = require('../utils/notifyUser');
-const AppError       = require('../utils/AppError');
-const sessionCache   = require('../utils/sessionCache');
+const adminRepo        = require('../repositories/adminRepository');
+const reportRepository = require('../repositories/reportRepository');
+const userRepository   = require('../repositories/userRepository');
+const AdminLog         = require('../models/AdminLog');
+const User             = require('../models/User');
+const Item             = require('../models/Item');
+const SystemSettings   = require('../models/SystemSettings');
+const notifyUser       = require('../utils/notifyUser');
+const AppError         = require('../utils/AppError');
+const sessionCache     = require('../utils/sessionCache');
 
 // ─── Stats ────────────────────────────────────────────────────
 exports.getStats = () => adminRepo.getDashboardStats();
@@ -14,7 +16,6 @@ exports.getStats = () => adminRepo.getDashboardStats();
 // ─── Users ────────────────────────────────────────────────────
 exports.listUsers = async ({ page = 1, search = '', banned = '' }) => {
   const normalizedPage = Math.max(1, +page || 1);
-  // ✅ FIX [HC-ADMIN-01]: adminPageSize ديناميكي بدل 20 ثابت
   const settings  = await SystemSettings.getCached();
   const PAGE_SIZE = settings?.adminPageSize ?? 20;
 
@@ -57,7 +58,6 @@ exports.unbanUser = async (userId, adminId, adminNote = null) => {
 // ─── Items ────────────────────────────────────────────────────
 exports.listItems = async ({ page = 1 }) => {
   const normalizedPage = Math.max(1, +page || 1);
-  // ✅ FIX [HC-ADMIN-01]: adminPageSize ديناميكي بدل 20 ثابت
   const settings  = await SystemSettings.getCached();
   const PAGE_SIZE = settings?.adminPageSize ?? 20;
 
@@ -69,13 +69,22 @@ exports.listItems = async ({ page = 1 }) => {
 };
 
 exports.deleteItem = async (itemId, adminId, adminNote) => {
-  const Item = require('../models/Item');
   const item = await Item.findById(itemId).populate('donor', 'name email');
   if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
 
   const donorName  = item.donor?.name  ?? null;
   const donorEmail = item.donor?.email ?? null;
   const itemTitle  = item.title        ?? 'غرض محذوف';
+
+  // ✅ FIX [ADMIN-02]: إشعار المستلم إذا كان الغرض محجوزاً عند حذفه
+  if (item.status === 'محجوز' && item.bookedBy) {
+    await notifyUser(item.bookedBy, {
+      type:   'item_deleted_by_admin',
+      title:  'تم حذف غرض محجوز',
+      body:   `❌ الغرض "${itemTitle}" الذي حجزته تم حذفه من قِبل الإدارة.`,
+      itemId: null,
+    });
+  }
 
   await Item.deleteOne({ _id: itemId });
 
@@ -92,14 +101,16 @@ exports.deleteItem = async (itemId, adminId, adminNote) => {
 // ─── Reports ──────────────────────────────────────────────────
 exports.listReports = async ({ page = 1, status = null } = {}) => {
   const normalizedPage = Math.max(1, +page || 1);
-  // ✅ FIX [HC-ADMIN-02]: adminReportsPageSize ديناميكي بدل LIMIT = 10 ثابت
   const settings = await SystemSettings.getCached();
   const LIMIT    = settings?.adminReportsPageSize ?? 10;
 
+  // ✅ FIX [ADMIN-REPORT-02]: تعقيم status — string فارغة → null
+  const cleanStatus = status || null;
+
   const { reports, total } = await adminRepo.findPendingReportsWithCounts({
-    page: normalizedPage,
-    limit: LIMIT,
-    status,
+    page:   normalizedPage,
+    limit:  LIMIT,
+    status: cleanStatus,
   });
 
   return {
@@ -109,22 +120,17 @@ exports.listReports = async ({ page = 1, status = null } = {}) => {
     totalPages: Math.ceil(total / LIMIT),
   };
 };
-exports.resolveReport = async (reportId, adminId, status, adminNote = null) => {
-  // ✅ FIX BUG-01: قبول status مباشرة بدلاً من action
-  const allowedStatuses = ['actioned', 'reviewed', 'dismissed'];
-  if (!allowedStatuses.includes(status)) {
-    throw new AppError('حالة غير صالحة للبلاغ', 400, 'INVALID_REPORT_STATUS');
-  }
 
-  // ✅ FIX BUG-04: تمرير adminNote ليُحفَظ في الـ document
+exports.resolveReport = async (reportId, adminId, status, adminNote = null) => {
+  const allowedStatuses = ['actioned', 'reviewed', 'dismissed'];
+  if (!allowedStatuses.includes(status))
+    throw new AppError('حالة غير صالحة للبلاغ', 400, 'INVALID_REPORT_STATUS');
+
   const report = await adminRepo.resolveReport(reportId, adminId, status, adminNote);
   if (!report) throw new AppError('البلاغ غير موجود', 404, 'REPORT_NOT_FOUND');
 
-  const Report     = require('../models/Report');
-  const fullReport = await Report.findById(reportId)
-    .populate('reportedUser', 'name email isBanned')
-    .populate('reporter',     'name email')
-    .populate('relatedItem',  'title');
+  // ✅ FIX [ADMIN-01]: استخدام reportRepository.findByIdPopulated بدل require داخل الدالة
+  const fullReport = await reportRepository.findByIdPopulated(reportId);
 
   const statusLabel = {
     actioned:  'تم الإجراء',
@@ -148,7 +154,6 @@ exports.resolveReport = async (reportId, adminId, status, adminNote = null) => {
     },
   });
 
-  // ✅ إشعار فقط عند "actioned" — هو الوحيد ذو أثر على المستخدم
   if (status === 'actioned' && report.reportedUser) {
     await notifyUser(report.reportedUser, {
       type:   'admin_warning',
@@ -164,7 +169,6 @@ exports.resolveReport = async (reportId, adminId, status, adminNote = null) => {
 // ─── Audit Logs ───────────────────────────────────────────────
 exports.listAuditLogs = async ({ page = 1 }) => {
   const normalizedPage = Math.max(1, +page || 1);
-  // ✅ FIX [HC-ADMIN-01]: adminPageSize ديناميكي بدل 20 ثابت
   const settings  = await SystemSettings.getCached();
   const PAGE_SIZE = settings?.adminPageSize ?? 20;
 

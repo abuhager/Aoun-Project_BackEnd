@@ -1,67 +1,60 @@
-// services/reportService.js — النسخة المُصلَحة الكاملة
+// services/reportService.js
 const reportRepository = require('../repositories/reportRepository');
-const notifyUser       = require('../utils/notifyUser');
 const AppError         = require('../utils/AppError');
-const { toReportResponse } = require('../dtos/reportDto');
+const notifyUser       = require('../utils/notifyUser');
+const SystemSettings   = require('../models/SystemSettings');
 
-// ✅ مدة نافذة الطعن: 72 ساعة (ثابتة هنا — يمكن نقلها لـ SystemSettings في Flow 10)
-const APPEAL_WINDOW_MS = 72 * 60 * 60 * 1000;
+// ─── إنشاء بلاغ ───────────────────────────────────────────────
+exports.createReport = async (reporterId, { reportedUserId, itemId, reason, details }) => {
+  if (reporterId.toString() === reportedUserId.toString())
+    throw new AppError('لا يمكنك الإبلاغ عن نفسك', 400, 'SELF_REPORT');
 
-exports.createReport = async ({ reporterId, reportedUserId, itemId, reason, details }) => {
-  // ✅ منع الإبلاغ عن النفس
-  if (reporterId.toString() === reportedUserId.toString()) {
-    throw new AppError('لا يمكن الإبلاغ عن نفسك', 400, 'SELF_REPORT');
-  }
+  // ✅ FIX [REPORT-01]: guard صريح بدل الاعتماد على unique index
+  const dup = await reportRepository.findExistingPending(
+    reporterId, reportedUserId, itemId ?? null
+  );
+  if (dup)
+    throw new AppError(
+      'لديك بلاغ مفتوح مسبقاً على هذا المستخدم',
+      409,
+      'DUPLICATE_REPORT'
+    );
 
-  // ✅ BUG-02: حفظ appealDeadline عند الإنشاء — adminRepository.buildPendingFilter يعتمد عليها
-  const appealDeadline = new Date(Date.now() + APPEAL_WINDOW_MS);
+  const settings      = await SystemSettings.getCached();
+  const appealWindow  = settings?.appealWindowHours ?? 72;
+  const appealDeadline = new Date(Date.now() + appealWindow * 60 * 60 * 1000);
 
   const report = await reportRepository.createReport({
-    reporter:     reporterId,
-    reportedUser: reportedUserId,
-    relatedItem:  itemId ?? null,
+    reporter:       reporterId,
+    reportedUser:   reportedUserId,
+    relatedItem:    itemId ?? null,
     reason,
-    details,
+    details:        details ?? '',
     status:         'pending',
-    appealDeadline,             // ✅ الإصلاح الجوهري
+    appealDeadline,
   });
 
-  // إشعار المُبلَّغ عنه
-  await notifyUser(reportedUserId, {
-    type:   'report_created',
-    title:  'تم تقديم بلاغ بحقك',
-    body:   `سبب البلاغ: ${reason} — لديك 72 ساعة للطعن`,
-    itemId: itemId ?? null,
-  });
-
-  return toReportResponse(report);
+  return report;
 };
 
-exports.submitAppeal = async ({ reportId, donorId, appealText }) => {
+// ─── استئناف / طعن ────────────────────────────────────────────
+exports.submitAppeal = async (reportId, userId, { appealText }) => {
   const report = await reportRepository.findById(reportId);
-
-  if (!report) {
+  if (!report)
     throw new AppError('البلاغ غير موجود', 404, 'REPORT_NOT_FOUND');
-  }
 
-  // ✅ يجب أن يكون المستخدم هو المُبلَّغ عنه
-  if (report.reportedUser.toString() !== donorId.toString()) {
+  if (report.reportedUser.toString() !== userId.toString())
     throw new AppError('غير مصرح', 403, 'FORBIDDEN');
-  }
 
-  // ✅ التحقق من نافذة الطعن باستخدام appealDeadline المحفوظة (بدلاً من إعادة الحساب)
-  if (!report.appealDeadline || new Date() > report.appealDeadline) {
-    throw new AppError('انتهت نافذة الطعن (72 ساعة)', 410, 'APPEAL_WINDOW_CLOSED');
-  }
+  if (report.appealText)
+    throw new AppError('قدّمت اعتراضاً مسبقاً', 409, 'ALREADY_APPEALED');
 
-  // ✅ منع تكرار الطعن
-  if (report.appealText) {
-    throw new AppError('تم تقديم الطعن مسبقاً', 409, 'ALREADY_APPEALED');
-  }
+  if (report.appealDeadline && new Date() > report.appealDeadline)
+    throw new AppError('انتهت مهلة الاعتراض', 400, 'APPEAL_WINDOW_CLOSED');
 
-  report.appealText = appealText;
+  report.appealText = appealText.trim();
   report.appealedAt = new Date();
   await reportRepository.save(report);
 
-  return toReportResponse(report);
+  return report;
 };
