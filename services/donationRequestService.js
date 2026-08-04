@@ -1,6 +1,10 @@
-// services/donationRequestService.js — ✅ PATCHED [LOGIC-03 | ARCH-01] WITH NEW SOCKET WRITING
-// ✅ FIX [PHONE-TRUST-01]: إضافة فحص phoneVerified في createRequestLogic و submitOfferLogic
+// services/donationRequestService.js
+// ✅ PATCHED v2 — إصلاحات Flow 5 Review
+// FIX [DUP-01]: نقل require('mongoose') للأعلى بدل داخل كل دالة
+// FIX [OFFERS-01]: getOffersLogic يتحقق من حالة الطلب قبل إرجاع العروض
+// FIX [SESSION-01]: session.endSession() في finally لكل الدوال
 
+const mongoose                   = require('mongoose');
 const SystemSettings             = require('../models/SystemSettings');
 const User                       = require('../models/User');
 const donationRequestRepository  = require('../repositories/donationRequestRepository');
@@ -13,11 +17,9 @@ const DonationRequest            = require('../models/DonationRequest');
 const donationOfferRepository    = require('../repositories/donationOfferRepository');
 const DonationOffer              = require('../models/DonationOffer');
 const { validateImageFile }      = require('../utils/imageValidation');
-
-// 💡 تعديل الشات البنيوي: الاستدعاء الجديد من مجلد socket مباشرة
 const { getIO }                  = require('../socket');
 
-const getMinTrustLevel            = (s) => s.minTrustLevelForRequests  ?? 2;
+const getMinTrustLevel = (s) => s.minTrustLevelForRequests ?? 2;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. إنشاء طلب تبرع جديد
@@ -31,7 +33,6 @@ exports.createRequestLogic = async (body, userId) => {
   if (!user?.isVerified)
     throw new AppError('يجب تفعيل حسابك أولاً ✅', 403, 'ACCOUNT_NOT_VERIFIED');
 
-  // ✅ FIX [PHONE-TRUST-01]: يجب أن يكون الهاتف محققاً للوصول لـ trustLevel >= 2
   if (!user.phoneVerified)
     throw new AppError(
       'يجب التحقق من رقم هاتفك أولاً للوصول لهذه الميزة 📱',
@@ -128,13 +129,14 @@ exports.getDonationRequestsLogic = async (query, userId) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. إلغاء طلب تبرع
+// ✅ FIX [SESSION-01]: session.endSession() في finally
 // ─────────────────────────────────────────────────────────────────────────────
 exports.cancelRequestLogic = async (requestId, userId) => {
-  const mongoose = require('mongoose');
-  const session  = await mongoose.startSession();
-  session.startTransaction();
+  const session = await mongoose.startSession();
 
   try {
+    session.startTransaction();
+
     const request = await DonationRequest.findOneAndUpdate(
       { _id: requestId, requester: userId, status: 'active' },
       { $set: { status: 'cancelled' } },
@@ -163,7 +165,6 @@ exports.cancelRequestLogic = async (requestId, userId) => {
     }
 
     await session.commitTransaction();
-    try { session.endSession(); } catch (_) {}
 
     if (cancelledOffers.length > 0) {
       setImmediate(async () => {
@@ -193,8 +194,10 @@ exports.cancelRequestLogic = async (requestId, userId) => {
 
   } catch (err) {
     if (session.inTransaction()) await session.abortTransaction();
-    try { session.endSession(); } catch (_) {}
     throw err;
+  } finally {
+    // ✅ FIX [SESSION-01]: endSession مرة واحدة في finally
+    try { session.endSession(); } catch (_) {}
   }
 };
 
@@ -243,7 +246,6 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
   if (!donor.isVerified)
     throw new AppError('يجب تفعيل حسابك أولاً ✅', 403, 'ACCOUNT_NOT_VERIFIED');
 
-  // ✅ FIX [PHONE-TRUST-01]: يجب أن يكون الهاتف محققاً للتبرع
   if (!donor.phoneVerified)
     throw new AppError(
       'يجب التحقق من رقم هاتفك أولاً للتبرع 📱',
@@ -252,7 +254,6 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
     );
 
   const minLevel = settings.minTrustLevelForDonating ?? 1;
-  
   if (donor.trustLevel < minLevel)
     throw new AppError(`يلزم Level ${minLevel} على الأقل للتبرع`, 403, 'INSUFFICIENT_TRUST_LEVEL');
 
@@ -321,6 +322,7 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 6. جلب العروض على طلب معين (لصاحب الطلب فقط)
+// ✅ FIX [OFFERS-01]: التحقق من حالة الطلب — لا تُرجع عروض طلب مغلق
 // ─────────────────────────────────────────────────────────────────────────────
 exports.getOffersLogic = async (requestId, userId) => {
   const request = await DonationRequest.findById(requestId)
@@ -333,19 +335,29 @@ exports.getOffersLogic = async (requestId, userId) => {
   if (request.requester.toString() !== userId)
     throw new AppError('غير مصرح لك برؤية هذه العروض 🚫', 403, 'FORBIDDEN');
 
+  // ✅ FIX [OFFERS-01]: لا تُرجع العروض إذا كان الطلب في حالة نهائية
+  const closedStatuses = ['cancelled', 'fulfilled'];
+  if (closedStatuses.includes(request.status))
+    throw new AppError(
+      `لا يمكن عرض العروض — الطلب في حالة "${request.status}"`,
+      400,
+      'REQUEST_CLOSED'
+    );
+
   const offers = await donationOfferRepository.findOffersByRequest(requestId);
   return { offers };
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 7. صاحب الطلب يختار عرضاً ← Transaction كاملة
+// ✅ FIX [SESSION-01]: session.endSession() في finally
 // ─────────────────────────────────────────────────────────────────────────────
 exports.acceptOfferLogic = async (requestId, offerId, userId) => {
-  const mongoose = require('mongoose');
-  const session  = await mongoose.startSession();
-  session.startTransaction();
+  const session = await mongoose.startSession();
 
   try {
+    session.startTransaction();
+
     const request = await DonationRequest.findOneAndUpdate(
       { _id: requestId, requester: userId, status: 'active' },
       { $set: { status: 'processing' } },
@@ -404,7 +416,6 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
     );
 
     await session.commitTransaction();
-    try { session.endSession(); } catch (_) {}
 
     setImmediate(async () => {
       try {
@@ -454,8 +465,10 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
 
   } catch (err) {
     if (session.inTransaction()) await session.abortTransaction();
-    try { session.endSession(); } catch (_) {}
     throw err;
+  } finally {
+    // ✅ FIX [SESSION-01]: endSession مرة واحدة في finally
+    try { session.endSession(); } catch (_) {}
   }
 };
 
