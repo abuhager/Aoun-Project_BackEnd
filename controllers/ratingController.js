@@ -23,7 +23,8 @@ exports.getUserRatings = asyncHandler(async (req, res) => {
 });
 
 exports.getPendingRating = asyncHandler(async (req, res) => {
-  const pending = await ratingService.getPendingRating(req.user.id);
-
-  return res.json({ pendingRating: pending });
+  const userId = req.user.id || req.user._id; 
+  const result = await ratingService.getPendingRating(userId);
+  
+  return res.status(200).json(result); 
 });
