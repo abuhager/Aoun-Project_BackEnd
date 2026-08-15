@@ -27,28 +27,22 @@ const getMinTrustLevel = (s) => s.minTrustLevelForRequests ?? 2;
 // ─────────────────────────────────────────────────────────────────────────────
 exports.createRequestLogic = async (body, userId) => {
   const [user, settings] = await Promise.all([
-    User.findById(userId).select('trustLevel isVerified phoneVerified').lean(),
+    User.findById(userId).select('trustLevel isVerified').lean(),
     SystemSettings.getCached(),
   ]);
 
   if (!user?.isVerified)
     throw new AppError('يجب تفعيل حسابك أولاً ✅', 403, 'ACCOUNT_NOT_VERIFIED');
 
-  // يتطلب توثيق الهاتف فقط إذا كان المستوى أقل من 2
-  if (!user.phoneVerified && (user.trustLevel ?? 1) < 2)
+  // ✅ الشرط الصريح: إنشاء طلب التبرع محصور فقط لمن يمتلك Level 2 فما فوق
+  const userLevel = user.trustLevel ?? 1;
+  if (userLevel < 2) {
     throw new AppError(
-      'يجب التحقق من رقم هاتفك أولاً للوصول لهذه الميزة 📱',
-      403,
-      'PHONE_NOT_VERIFIED'
-    );
-
-  const minTrustLevel = getMinTrustLevel(settings);
-  if ((user.trustLevel ?? 1) < minTrustLevel)
-    throw new AppError(
-      `مستوى الثقة غير كافٍ — يلزم Level ${minTrustLevel} على الأقل`,
+      'يجب أن يكون مستوى حسابك Level 2 على الأقل لتتمكن من نشر طلب تبرع 🌟',
       403,
       'INSUFFICIENT_TRUST_LEVEL'
     );
+  }
 
   const currentMonth = new Date().toISOString().slice(0, 7);
 
