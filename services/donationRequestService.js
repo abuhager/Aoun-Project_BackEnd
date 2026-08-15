@@ -1,8 +1,9 @@
 // services/donationRequestService.js
-// ✅ PATCHED v2 — إصلاحات Flow 5 Review
+// ✅ PATCHED v3 — تعديل شروط توثيق الهاتف للمستخدمين ذوي Level 2 فما فوق
 // FIX [DUP-01]: نقل require('mongoose') للأعلى بدل داخل كل دالة
 // FIX [OFFERS-01]: getOffersLogic يتحقق من حالة الطلب قبل إرجاع العروض
 // FIX [SESSION-01]: session.endSession() في finally لكل الدوال
+// FIX [PHONE-BYPASS-LVL2]: تخطي فحص الهاتف لمن يمتلك Level 2 فما فوق
 
 const mongoose                   = require('mongoose');
 const SystemSettings             = require('../models/SystemSettings');
@@ -33,7 +34,8 @@ exports.createRequestLogic = async (body, userId) => {
   if (!user?.isVerified)
     throw new AppError('يجب تفعيل حسابك أولاً ✅', 403, 'ACCOUNT_NOT_VERIFIED');
 
-  if (!user.phoneVerified)
+  // يتطلب توثيق الهاتف فقط إذا كان المستوى أقل من 2
+  if (!user.phoneVerified && (user.trustLevel ?? 1) < 2)
     throw new AppError(
       'يجب التحقق من رقم هاتفك أولاً للوصول لهذه الميزة 📱',
       403,
@@ -129,7 +131,6 @@ exports.getDonationRequestsLogic = async (query, userId) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. إلغاء طلب تبرع
-// ✅ FIX [SESSION-01]: session.endSession() في finally
 // ─────────────────────────────────────────────────────────────────────────────
 exports.cancelRequestLogic = async (requestId, userId) => {
   const session = await mongoose.startSession();
@@ -196,7 +197,6 @@ exports.cancelRequestLogic = async (requestId, userId) => {
     if (session.inTransaction()) await session.abortTransaction();
     throw err;
   } finally {
-    // ✅ FIX [SESSION-01]: endSession مرة واحدة في finally
     try { session.endSession(); } catch (_) {}
   }
 };
@@ -246,7 +246,8 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
   if (!donor.isVerified)
     throw new AppError('يجب تفعيل حسابك أولاً ✅', 403, 'ACCOUNT_NOT_VERIFIED');
 
-  if (!donor.phoneVerified)
+  // يتطلب توثيق الهاتف فقط إذا كان المستوى أقل من 2
+  if (!donor.phoneVerified && (donor.trustLevel ?? 1) < 2)
     throw new AppError(
       'يجب التحقق من رقم هاتفك أولاً للتبرع 📱',
       403,
@@ -286,14 +287,14 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
   }
 
   const offer = await donationOfferRepository.createOffer({
-    request:     requestId,
-    donor:       donorId,
-    safeHub:     body.safeHub,
-    condition:   body.condition,
-    description: body.description?.trim() || null,
+    request:      requestId,
+    donor:        donorId,
+    safeHub:      body.safeHub,
+    condition:    body.condition,
+    description:  body.description?.trim() || null,
     imageUrl,
     cloudinaryId,
-    status:      'pending',
+    status:       'pending',
   });
 
   setImmediate(async () => {
@@ -307,9 +308,9 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
         message:   `${donor.name} يريد التبرع بـ "${request.title}" 🎁`,
       });
       await notifyUser(request.requester._id, {
-        type:  'request_new_offer',
-        title: 'عرض تبرع جديد! 🎁',
-        body:  `${donor.name} عرض التبرع بـ "${request.title}" — راجع العروض واختر`,
+        type:     'request_new_offer',
+        title:    'عرض تبرع جديد! 🎁',
+        body:     `${donor.name} عرض التبرع بـ "${request.title}" — راجع العروض واختر`,
         metadata: { requestId: request._id.toString(), offerId: offer._id.toString() },
       });
     } catch (err) {
@@ -322,7 +323,6 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 6. جلب العروض على طلب معين (لصاحب الطلب فقط)
-// ✅ FIX [OFFERS-01]: التحقق من حالة الطلب — لا تُرجع عروض طلب مغلق
 // ─────────────────────────────────────────────────────────────────────────────
 exports.getOffersLogic = async (requestId, userId) => {
   const request = await DonationRequest.findById(requestId)
@@ -335,7 +335,6 @@ exports.getOffersLogic = async (requestId, userId) => {
   if (request.requester.toString() !== userId)
     throw new AppError('غير مصرح لك برؤية هذه العروض 🚫', 403, 'FORBIDDEN');
 
-  // ✅ FIX [OFFERS-01]: لا تُرجع العروض إذا كان الطلب في حالة نهائية
   const closedStatuses = ['cancelled', 'fulfilled'];
   if (closedStatuses.includes(request.status))
     throw new AppError(
@@ -350,7 +349,6 @@ exports.getOffersLogic = async (requestId, userId) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 7. صاحب الطلب يختار عرضاً ← Transaction كاملة
-// ✅ FIX [SESSION-01]: session.endSession() في finally
 // ─────────────────────────────────────────────────────────────────────────────
 exports.acceptOfferLogic = async (requestId, offerId, userId) => {
   const session = await mongoose.startSession();
@@ -467,7 +465,6 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
     if (session.inTransaction()) await session.abortTransaction();
     throw err;
   } finally {
-    // ✅ FIX [SESSION-01]: endSession مرة واحدة في finally
     try { session.endSession(); } catch (_) {}
   }
 };
