@@ -45,8 +45,8 @@ const normalizeCors = (err) => {
 const errorHandler = (err, req, res, next) => {
   // ✅ FIX-05: إذا أُرسلت الـ headers مسبقاً (stream أو نصف استجابة) — لا نُرسل مجدداً
   if (res.headersSent) {
-    console.error(`[errorHandler][Request-ID: ${req.id || 'N/A'}] Headers أُرسلت مسبقاً — تجاهل الخطأ:`, err.message);
-    return;
+    console.error(`[errorHandler][Request-ID: ${req.id || 'N/A'}] Headers أُرسلت مسبقاً:`, err.message);
+    return next(err);
   }
 
   // ✅ تطبيق normalizers بالترتيب
@@ -55,7 +55,12 @@ const errorHandler = (err, req, res, next) => {
 
   // تحديد ما إذا كان AppError رسمياً
   const isAppError  = error instanceof AppError;
-  const statusCode  = isAppError ? error.statusCode : (error.status ?? 500);
+  const requestedStatus = isAppError ? error.statusCode : error.status;
+  const statusCode = Number.isInteger(requestedStatus)
+    && requestedStatus >= 400
+    && requestedStatus <= 599
+    ? requestedStatus
+    : 500;
   const isOperational = isAppError ? error.isOperational : false;
   
   // استخلاص الـ Request ID الموحد الذي تم إنشاؤه في app.js
@@ -81,7 +86,7 @@ const errorHandler = (err, req, res, next) => {
   // ── بناء جسم الاستجابة ─────────────────────────────────────
   const body = {
     status:  statusCode >= 500 ? 'error' : 'fail',
-    message: isOperational
+    message: isOperational && statusCode < 500
       ? error.message
       // ✅ FIX-04: رسالة عامة للـ Programmer errors في production — لا كشف للتفاصيل التقنية
       : (process.env.NODE_ENV === 'production'

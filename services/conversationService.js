@@ -9,15 +9,6 @@ const mongoose = require("mongoose");
 const POPULATE_ITEM = "title images imageUrl";
 const POPULATE_USER = "name avatar";
 
-// 👈 حقن أمر فوري لتطهير كاش الفهارس المكسورة في MongoDB وإجبار بناء الـ Index المركب الصحيح
-Conversation.collection.dropIndexes().then(() => {
-  console.log("🧹 [Mongoose] تم تنظيف وتطهير كافة الفهارس القديمة والمعلقة لجدول المحادثات بنجاح!");
-  Conversation.ensureIndexes();
-}).catch(() => {
-  // تجنب التوقف إذا لم تكن هناك فهارس قديمة
-  Conversation.ensureIndexes(); 
-});
-
 exports.listConversationsLogic = async (userId) => {
   const conversations = await repo.findUserConversations(userId);
   const ids = conversations.map((c) => c._id);

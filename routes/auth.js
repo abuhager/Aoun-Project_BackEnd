@@ -19,7 +19,6 @@ const { upload, verifyImageBuffer } = require('../middlewares/upload');
 
 const {
   loginLimiter,
-  globalLimiter,
   registerLimiter,
   forgotPasswordLimiter,
   otpLimiter,
@@ -81,7 +80,6 @@ router.post('/reset-password/:token',
 );
 
 router.post('/refresh',
-  globalLimiter,
   authController.refreshToken
 );
 

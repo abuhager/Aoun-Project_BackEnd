@@ -1,194 +1,169 @@
-// middlewares/rateLimiter.js — DRY-02 FIXED
-// ✅ DRY-02: factory function createLimiter تلغي تكرار بنية الـ 9 limiters
-// ✅ محافظة كاملة على كل السلوك السابق: Redis · MemoryStore · devMultiplier · env values
+const { createHash } = require('crypto');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
+const { RedisStore } = require('rate-limit-redis');
+const { createClient } = require('redis');
 
-const rateLimit          = require('express-rate-limit');
-const { ipKeyGenerator } = rateLimit;
+const { parsePositiveInteger } = require('../config/env');
 
-// ── Redis State ────────────────────────────────────────────────
-let RedisStore  = null;
 let redisClient = null;
-let redisReady  = false;
+let redisReady = false;
+let limiterInstances = {};
 
-// ── connectRedis ───────────────────────────────────────────────
+const definitions = {
+  globalLimiter: ['RATE_LIMIT_GLOBAL', 15 * 60 * 1000, 200, 'rl:global:', 'global'],
+  loginLimiter: ['RATE_LIMIT_LOGIN', 15 * 60 * 1000, 10, 'rl:login:', 'تسجيل الدخول', 'email'],
+  registerLimiter: ['RATE_LIMIT_REGISTER', 60 * 60 * 1000, 5, 'rl:register:', 'التسجيل'],
+  forgotPasswordLimiter: ['RATE_LIMIT_FORGOT', 60 * 60 * 1000, 5, 'rl:forgot:', 'استعادة كلمة المرور', 'email'],
+  otpLimiter: ['RATE_LIMIT_OTP', 15 * 60 * 1000, 10, 'rl:otp:', 'التحقق من الكود'],
+  resendOtpLimiter: ['RATE_LIMIT_RESEND_OTP', 60 * 60 * 1000, 5, 'rl:resend-otp:', 'إعادة إرسال كود التحقق'],
+  uploadLimiter: ['RATE_LIMIT_UPLOAD', 60 * 60 * 1000, 30, 'rl:upload:', 'رفع الملفات'],
+  meLimiter: ['RATE_LIMIT_ME', 60 * 1000, 60, 'rl:me:', 'جلب بيانات المستخدم'],
+  publicLimiter: ['RATE_LIMIT_PUBLIC', 15 * 60 * 1000, 100, 'rl:public:', 'تصفح البيانات العامة'],
+};
+
+const buildStore = (prefix) => {
+  if (!redisReady || !redisClient) return undefined;
+  return new RedisStore({
+    prefix,
+    sendCommand: (...args) => redisClient.sendCommand(args),
+  });
+};
+
+const emailKeyGenerator = (req) => {
+  const ip = ipKeyGenerator(req.ip);
+  const email = String(req.body?.email ?? '').trim().toLowerCase();
+  if (!email) return ip;
+  const digest = createHash('sha256').update(email).digest('hex').slice(0, 24);
+  return `${ip}:${digest}`;
+};
+
+const createLimiter = (definition) => {
+  const [envPrefix, defaultWindowMs, defaultMax, storePrefix, messageType, keyType] = definition;
+  const developmentMultiplier = process.env.NODE_ENV === 'production' ? 1 : 20;
+  const windowMs = parsePositiveInteger(
+    process.env[`${envPrefix}_WINDOW_MS`],
+    defaultWindowMs,
+    { max: 7 * 24 * 60 * 60 * 1000 }
+  );
+  const configuredMax = parsePositiveInteger(
+    process.env[`${envPrefix}_MAX`],
+    defaultMax,
+    { max: 100_000 }
+  );
+
+  return rateLimit({
+    windowMs,
+    limit: configuredMax * developmentMultiplier,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    keyGenerator: keyType === 'email' ? emailKeyGenerator : undefined,
+    store: buildStore(storePrefix),
+    message: {
+      status: 429,
+      message: `طلبات كثيرة جداً — ${messageType}. حاول مجدداً لاحقاً.`,
+      code: 'RATE_LIMIT_EXCEEDED',
+    },
+  });
+};
+
+const rebuildLimiters = () => {
+  limiterInstances = Object.fromEntries(
+    Object.entries(definitions).map(([name, definition]) => [name, createLimiter(definition)])
+  );
+};
+
+const delegate = (name) => (req, res, next) => limiterInstances[name](req, res, next);
+
+rebuildLimiters();
+
 const connectRedis = async () => {
   if (!process.env.REDIS_URL) {
-    if (process.env.NODE_ENV === 'production') {
-      console.warn(
-        '[rateLimiter] 🚨 REDIS_URL غير مضبوط في production!\n' +
-        'Rate limiting يعمل بـ MemoryStore — تحايل ممكن في بيئة multi-instance.'
-      );
-    } else {
-      console.info('[rateLimiter] ℹ️  بدون Redis — MemoryStore نشط (مقبول في dev)');
-    }
-    return;
+    redisReady = false;
+    rebuildLimiters();
+    const message = '[rateLimiter] REDIS_URL غير مضبوط؛ MemoryStore يعمل لهذه النسخة فقط.';
+    if (process.env.NODE_ENV === 'production') console.warn(message);
+    else console.info(message);
+    return false;
   }
 
-  try {
-    const { createClient } = require('redis');
-    RedisStore             = require('rate-limit-redis');
+  if (redisClient?.isReady) return true;
 
+  try {
     redisClient = createClient({
       url: process.env.REDIS_URL,
-      socket: process.env.NODE_ENV !== 'production'
-        ? { reconnectStrategy: false }
-        : { reconnectStrategy: (retries) => {
-            if (retries >= 5) return new Error('Redis: تجاوز الحد الأقصى');
-            return Math.min(retries * 500, 10_000);
-          }},
+      socket: {
+        connectTimeout: parsePositiveInteger(process.env.REDIS_CONNECT_TIMEOUT_MS, 5_000),
+        reconnectStrategy: (retries) => {
+          if (retries >= 5) return new Error('Redis: تجاوز الحد الأقصى لإعادة الاتصال');
+          return Math.min(250 * 2 ** retries, 5_000);
+        },
+      },
     });
 
     let errorLogged = false;
-    redisClient.on('error', (err) => {
+    redisClient.on('error', (error) => {
       if (!errorLogged) {
-        console.error('❌ [Redis RateLimit]:', err.message, '\n   ℹ️  Fallback → MemoryStore');
+        console.error('[Redis RateLimit] تعذر استخدام Redis:', error.message);
         errorLogged = true;
       }
+    });
+    redisClient.on('reconnecting', () => {
+      if (!redisReady) return;
+      redisReady = false;
+      rebuildLimiters();
+    });
+    redisClient.on('ready', () => {
+      if (redisReady) return;
+      redisReady = true;
+      rebuildLimiters();
     });
 
     await redisClient.connect();
     redisReady = true;
-    console.info('✅ [Redis RateLimit] متصل وجاهز');
-  } catch (e) {
-    console.warn('[rateLimiter] ⚠️  فشل Redis — MemoryStore كـ fallback:', e.message);
-    RedisStore = null; redisClient = null; redisReady = false;
+    rebuildLimiters();
+    console.info('[Redis RateLimit] متصل وجاهز');
+    return true;
+  } catch (error) {
+    redisReady = false;
+    rebuildLimiters();
+    const failedClient = redisClient;
+    redisClient = null;
+    if (failedClient?.isOpen) await failedClient.disconnect();
+    if (process.env.REDIS_REQUIRED === 'true') throw error;
+    console.warn('[rateLimiter] فشل Redis؛ تم الرجوع إلى MemoryStore:', error.message);
+    return false;
   }
 };
 
-// ── Store Builder ──────────────────────────────────────────────
-const buildStore = (prefix) => {
-  if (RedisStore && redisClient && redisReady) {
-    return new RedisStore({
-      prefix,
-      sendCommand: (...args) => redisClient.sendCommand(args),
-    });
+const closeRedis = async () => {
+  redisReady = false;
+  rebuildLimiters();
+  if (!redisClient?.isOpen) {
+    redisClient = null;
+    return;
   }
-  return undefined;
+  const client = redisClient;
+  redisClient = null;
+  await client.quit();
 };
 
-// ── مُضاعف التطوير ─────────────────────────────────────────────
-const devMultiplier = process.env.NODE_ENV !== 'production' ? 20 : 1;
-
-// ── رسالة خطأ موحَّدة ──────────────────────────────────────────
-const rateLimitMessage = (type) => ({
-  status:  429,
-  message: `طلبات كثيرة جداً — ${type}. حاول مجدداً لاحقاً.`,
-  code:    'RATE_LIMIT_EXCEEDED',
-});
-
-// ✅ DRY-02: factory function — تُنشئ limiter من config بدل تكرار نفس البنية 9 مرات
-// كل limiter يختلف فقط في: windowMs · max · storePrefix · messageType · keyGenerator
-const createLimiter = ({
-  envPrefix,
-  defaultWindowMs,
-  defaultMax,
-  storePrefix,
-  messageType,
-  keyGen,
-}) =>
-  rateLimit({
-    windowMs:        parseInt(process.env[`${envPrefix}_WINDOW_MS`] || String(defaultWindowMs)),
-    max:             parseInt(process.env[`${envPrefix}_MAX`]       || String(defaultMax)) * devMultiplier,
-    standardHeaders: true,
-    legacyHeaders:   false,
-    keyGenerator:    keyGen ?? ((req) => ipKeyGenerator(req)),
-    store:           buildStore(storePrefix),
-    message:         rateLimitMessage(messageType),
-  });
-
-// ── الـ Limiters ───────────────────────────────────────────────
-const globalLimiter = createLimiter({
-  envPrefix:       'RATE_LIMIT_GLOBAL',
-  defaultWindowMs: 15 * 60 * 1000,
-  defaultMax:      200,
-  storePrefix:     'rl:global:',
-  messageType:     'global',
-});
-
-const loginLimiter = createLimiter({
-  envPrefix:       'RATE_LIMIT_LOGIN',
-  defaultWindowMs: 15 * 60 * 1000,
-  defaultMax:      10,
-  storePrefix:     'rl:login:',
-  messageType:     'تسجيل الدخول',
-  keyGen: (req) => {
-    const ip    = ipKeyGenerator(req);
-    const email = (req.body?.email ?? '').toLowerCase().trim();
-    return email ? `${ip}_${email}` : ip;
-  },
-});
-
-const registerLimiter = createLimiter({
-  envPrefix:       'RATE_LIMIT_REGISTER',
-  defaultWindowMs: 60 * 60 * 1000,
-  defaultMax:      5,
-  storePrefix:     'rl:register:',
-  messageType:     'التسجيل',
-});
-
-const forgotPasswordLimiter = createLimiter({
-  envPrefix:       'RATE_LIMIT_FORGOT',
-  defaultWindowMs: 60 * 60 * 1000,
-  defaultMax:      5,
-  storePrefix:     'rl:forgot:',
-  messageType:     'استعادة كلمة المرور',
-  keyGen: (req) => {
-    const ip    = ipKeyGenerator(req);
-    const email = (req.body?.email ?? '').toLowerCase().trim();
-    return email ? `${ip}_${email}` : ip;
-  },
-});
-
-const otpLimiter = createLimiter({
-  envPrefix:       'RATE_LIMIT_OTP',
-  defaultWindowMs: 15 * 60 * 1000,
-  defaultMax:      10,
-  storePrefix:     'rl:otp:',
-  messageType:     'التحقق من الكود',
-});
-
-const resendOtpLimiter = createLimiter({
-  envPrefix:       'RATE_LIMIT_RESEND_OTP',
-  defaultWindowMs: 60 * 60 * 1000,
-  defaultMax:      5,
-  storePrefix:     'rl:resend-otp:',
-  messageType:     'إعادة إرسال كود التحقق',
-});
-
-const uploadLimiter = createLimiter({
-  envPrefix:       'RATE_LIMIT_UPLOAD',
-  defaultWindowMs: 60 * 60 * 1000,
-  defaultMax:      30,
-  storePrefix:     'rl:upload:',
-  messageType:     'رفع الملفات',
-});
-
-const meLimiter = createLimiter({
-  envPrefix:       'RATE_LIMIT_ME',
-  defaultWindowMs: 60 * 1000,
-  defaultMax:      60,
-  storePrefix:     'rl:me:',
-  messageType:     'جلب بيانات المستخدم (/me)',
-  keyGen:          (req) => req.user?.id ?? ipKeyGenerator(req),
-});
-
-const publicLimiter = createLimiter({
-  envPrefix:       'RATE_LIMIT_PUBLIC',
-  defaultWindowMs: 15 * 60 * 1000,
-  defaultMax:      100,
-  storePrefix:     'rl:public:',
-  messageType:     'تصفح البيانات العامة',
+const getRateLimiterStatus = () => ({
+  store: redisReady ? 'redis' : 'memory',
+  redisConfigured: Boolean(process.env.REDIS_URL),
+  redisReady,
 });
 
 module.exports = {
   connectRedis,
-  globalLimiter,
-  loginLimiter,
-  registerLimiter,
-  forgotPasswordLimiter,
-  publicLimiter,
-  otpLimiter,
-  resendOtpLimiter,
-  uploadLimiter,
-  meLimiter,
+  closeRedis,
+  getRateLimiterStatus,
+  globalLimiter: delegate('globalLimiter'),
+  loginLimiter: delegate('loginLimiter'),
+  registerLimiter: delegate('registerLimiter'),
+  forgotPasswordLimiter: delegate('forgotPasswordLimiter'),
+  publicLimiter: delegate('publicLimiter'),
+  otpLimiter: delegate('otpLimiter'),
+  resendOtpLimiter: delegate('resendOtpLimiter'),
+  uploadLimiter: delegate('uploadLimiter'),
+  meLimiter: delegate('meLimiter'),
 };

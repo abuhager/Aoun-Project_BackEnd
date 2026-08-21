@@ -1,78 +1,163 @@
-// utils/ensureIndexes.js — نسخة محصّنة ضد تعارض الأسماء
-const mongoose        = require('mongoose');
-const Item            = require('../models/Item');
-const Report          = require('../models/Report');
-const DonationRequest = require('../models/DonationRequest');
-const User            = require('../models/User');
+if (require.main === module) require('dotenv').config();
 
-// ✅ دالة آمنة: تنشئ index واحد وتتجاهل تعارض الاسم بهدوء (index موجود مسبقاً بنفس الحقول)
-const safeCreateIndex = async (collection, indexSpec, label) => {
+const mongoose = require('mongoose');
+const { isDeepStrictEqual } = require('node:util');
+const Item = require('../models/Item');
+const Report = require('../models/Report');
+const DonationRequest = require('../models/DonationRequest');
+const User = require('../models/User');
+const Conversation = require('../models/Conversation');
+const Message = require('../models/Message');
+
+const indexGroups = [
+  {
+    model: Item,
+    indexes: [
+      { key: { status: 1, createdAt: -1 }, name: 'status_createdAt' },
+      { key: { donor: 1, status: 1 }, name: 'donor_status' },
+      { key: { bookedBy: 1, status: 1 }, name: 'bookedBy_status' },
+      { key: { category: 1, status: 1 }, name: 'category_status' },
+      { key: { 'waitlist.user': 1 }, name: 'waitlist_user' },
+      { key: { safeHub: 1 }, name: 'safeHub' },
+    ],
+  },
+  {
+    model: Report,
+    indexes: [
+      { key: { reportedUser: 1, status: 1 }, name: 'reportedUser_status' },
+      { key: { status: 1, createdAt: -1 }, name: 'status_createdAt' },
+      { key: { reporter: 1 }, name: 'reporter' },
+    ],
+  },
+  {
+    model: DonationRequest,
+    indexes: [
+      { key: { status: 1, expiresAt: 1 }, name: 'status_expiresAt' },
+      { key: { requester: 1, status: 1, month: 1 }, name: 'requester_status_month' },
+      { key: { category: 1, status: 1 }, name: 'category_status' },
+      { key: { expiresAt: 1 }, expireAfterSeconds: 0, name: 'ttl_expiresAt' },
+    ],
+  },
+  {
+    model: User,
+    indexes: [
+      { key: { trustLevel: 1 }, name: 'trustLevel' },
+      { key: { isBanned: 1 }, name: 'isBanned' },
+    ],
+  },
+  {
+    model: Conversation,
+    indexes: [
+      { key: { item: 1 }, name: 'item_1' },
+      { key: { owner: 1 }, name: 'owner_1' },
+      { key: { requester: 1 }, name: 'requester_1' },
+      {
+        key: { item: 1, owner: 1, requester: 1 },
+        unique: true,
+        name: 'item_1_owner_1_requester_1',
+      },
+      { key: { participants: 1, updatedAt: -1 }, name: 'participants_1_updatedAt_-1' },
+    ],
+  },
+  {
+    model: Message,
+    indexes: [
+      { key: { conversation: 1 }, name: 'conversation_1' },
+      { key: { sender: 1 }, name: 'sender_1' },
+      { key: { read: 1 }, name: 'read_1' },
+      { key: { conversation: 1, createdAt: 1 }, name: 'conversation_1_createdAt_1' },
+      {
+        key: { conversation: 1, sender: 1, read: 1 },
+        name: 'conversation_1_sender_1_read_1',
+      },
+    ],
+  },
+];
+
+const indexKeysEqual = (left, right) =>
+  isDeepStrictEqual(Object.entries(left ?? {}), Object.entries(right ?? {}));
+
+const indexDefinitionsEquivalent = (existing, requested) => {
+  const existingTtl = existing.expireAfterSeconds === undefined
+    ? undefined
+    : Number(existing.expireAfterSeconds);
+  const requestedTtl = requested.expireAfterSeconds === undefined
+    ? undefined
+    : Number(requested.expireAfterSeconds);
+
+  return indexKeysEqual(existing.key, requested.key)
+    && Boolean(existing.unique) === Boolean(requested.unique)
+    && Boolean(existing.sparse) === Boolean(requested.sparse)
+    && existingTtl === requestedTtl
+    && isDeepStrictEqual(existing.partialFilterExpression, requested.partialFilterExpression)
+    && isDeepStrictEqual(existing.collation, requested.collation);
+};
+
+const listExistingIndexes = async (collection) => {
   try {
-    await collection.createIndexes([indexSpec]);
-    console.log(`    ✓ ${indexSpec.name}`);
-  } catch (err) {
-    // 85 = IndexOptionsConflict · 86 = IndexKeySpecsConflict
-    // تعني: index بنفس الحقول موجود مسبقاً باسم مختلف — لا داعي للفشل، هو موجود فعلياً ويؤدي نفس الغرض
-    if (err.code === 85 || err.code === 86) {
-      console.log(`    ⏭️  ${indexSpec.name} — موجود مسبقاً بنفس الحقول (تم التجاوز)`);
-    } else {
-      console.error(`    ❌ ${indexSpec.name} فشل:`, err.message);
-    }
+    return await collection.indexes();
+  } catch (error) {
+    if (error.code === 26 || error.codeName === 'NamespaceNotFound') return [];
+    throw error;
   }
 };
 
 const ensureIndexes = async () => {
-  console.log('⏳ إنشاء الـ Indexes...');
+  const failures = [];
 
-  // ── Item Indexes ─────────────────────────────────────────
-  const itemIndexes = [
-    { key: { status: 1, createdAt: -1 }, name: 'status_createdAt' },
-    { key: { donor: 1, status: 1 },      name: 'donor_status' },
-    { key: { bookedBy: 1, status: 1 },   name: 'bookedBy_status' },
-    { key: { category: 1, status: 1 },   name: 'category_status' },
-    { key: { 'waitlist.user': 1 },       name: 'waitlist_user' },
-    { key: { safeHub: 1 },               name: 'safeHub' },
-  ];
-  for (const idx of itemIndexes) await safeCreateIndex(Item.collection, idx);
-  console.log('  ✅ Item indexes');
+  for (const { model, indexes } of indexGroups) {
+    let existingIndexes;
+    try {
+      existingIndexes = await listExistingIndexes(model.collection);
+    } catch (error) {
+      failures.push(new Error(`${model.modelName}: تعذر قراءة الفهارس: ${error.message}`, { cause: error }));
+      continue;
+    }
 
-  // ── Report Indexes ───────────────────────────────────────
-  const reportIndexes = [
-    { key: { reportedUser: 1, status: 1 }, name: 'reportedUser_status' },
-    { key: { status: 1, createdAt: -1 },    name: 'status_createdAt' },
-    { key: { reporter: 1 },                 name: 'reporter' },
-  ];
-  for (const idx of reportIndexes) await safeCreateIndex(Report.collection, idx);
-  console.log('  ✅ Report indexes');
+    for (const index of indexes) {
+      const sameKeyIndex = existingIndexes.find((existing) =>
+        indexKeysEqual(existing.key, index.key)
+      );
 
-  // ── DonationRequest Indexes ──────────────────────────────
-  const donationIndexes = [
-    { key: { status: 1, expiresAt: 1 },           name: 'status_expiresAt' },
-    { key: { requester: 1, status: 1, month: 1 }, name: 'requester_status_month' },
-    { key: { category: 1, status: 1 },            name: 'category_status' },
-    { key: { expiresAt: 1 }, expireAfterSeconds: 0, name: 'ttl_expiresAt' },
-  ];
-  for (const idx of donationIndexes) await safeCreateIndex(DonationRequest.collection, idx);
-  console.log('  ✅ DonationRequest indexes');
+      if (sameKeyIndex) {
+        if (!indexDefinitionsEquivalent(sameKeyIndex, index)) {
+          failures.push(new Error(
+            `${model.modelName}.${index.name}: يوجد فهرس بنفس الحقول لكن بخصائص مختلفة (${sameKeyIndex.name})`
+          ));
+        }
+        continue;
+      }
 
-  // ── User Indexes ─────────────────────────────────────────
-  const userIndexes = [
-    { key: { trustLevel: 1 }, name: 'trustLevel' },
-    { key: { isBanned: 1 },   name: 'isBanned' },
-  ];
-  for (const idx of userIndexes) await safeCreateIndex(User.collection, idx);
-  console.log('  ✅ User indexes');
+      try {
+        const { key, ...options } = index;
+        await model.collection.createIndex(key, options);
+        existingIndexes.push(index);
+      } catch (error) {
+        failures.push(new Error(`${model.modelName}.${index.name}: ${error.message}`, { cause: error }));
+      }
+    }
+  }
 
-  console.log('✅ جميع الـ Indexes تم التحقق منها (تم إنشاء الجديد وتجاوز الموجود)!');
+  if (failures.length) {
+    throw new AggregateError(failures, `فشل إنشاء ${failures.length} فهرس/فهارس`);
+  }
 };
 
+module.exports = ensureIndexes;
+module.exports.indexDefinitionsEquivalent = indexDefinitionsEquivalent;
+
 if (require.main === module) {
-  const MONGODB_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/aoun';
-  mongoose.connect(MONGODB_URI).then(async () => {
-    await ensureIndexes();
-    await mongoose.disconnect();
-    process.exit(0);
-  });
-} else {
-  module.exports = ensureIndexes;
+  if (!process.env.MONGO_URI) {
+    console.error('[Indexes] MONGO_URI مطلوب لتشغيل مهمة الفهارس');
+    process.exitCode = 1;
+  } else {
+    mongoose.connect(process.env.MONGO_URI, { autoIndex: false })
+      .then(ensureIndexes)
+      .then(() => console.log('[Indexes] اكتملت المهمة بنجاح'))
+      .catch((error) => {
+        console.error('[Indexes] فشلت المهمة:', error);
+        process.exitCode = 1;
+      })
+      .finally(() => mongoose.disconnect());
+  }
 }

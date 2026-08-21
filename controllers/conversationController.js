@@ -66,7 +66,7 @@ exports.openConversation = async (req, res, next) => {
       itemId,
       donorId,
       userId,
-      io: req.io,
+      io: req.app.get('io'),
     });
 
     return res.status(200).json({ status: "success", data });
@@ -119,7 +119,7 @@ exports.markConversationRead = catchAsync(async (req, res) => {
   const data = await conversationService.markConversationReadLogic({
     conversationId: req.params.conversationId,
     userId: uid(req),
-    io: req.io,
+    io: req.app.get('io'),
   });
   res.status(200).json({ status: "success", ...data });
 });

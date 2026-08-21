@@ -9,8 +9,6 @@ const { requireAuth, requireAdmin }     = require('../middlewares/auth');
 const { publicLimiter }                 = require('../middlewares/rateLimiter');
 
 // ── Public ──────────────────────────────────────────────────────────────────
-console.log('publicLimiter is:', typeof publicLimiter);
-console.log('hubCtrl.getHubs is:', typeof hubCtrl.getHubs);
 // ✅ SEC-02: publicLimiter يحمي DB من الإغراق
 router.get('/', publicLimiter, hubCtrl.getHubs);
 
