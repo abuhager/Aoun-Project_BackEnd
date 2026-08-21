@@ -41,6 +41,12 @@ const indexGroups = [
   {
     model: User,
     indexes: [
+      {
+        key: { phone: 1 },
+        unique: true,
+        partialFilterExpression: { phoneVerified: true },
+        name: 'phone_verified_unique',
+      },
       { key: { trustLevel: 1 }, name: 'trustLevel' },
       { key: { isBanned: 1 }, name: 'isBanned' },
     ],
@@ -121,6 +127,28 @@ const ensureIndexes = async () => {
 
       if (sameKeyIndex) {
         if (!indexDefinitionsEquivalent(sameKeyIndex, index)) {
+          const isLegacyPhoneIndex = model.modelName === 'User'
+            && index.name === 'phone_verified_unique'
+            && sameKeyIndex.name === 'phone_1'
+            && Boolean(sameKeyIndex.unique)
+            && !sameKeyIndex.partialFilterExpression;
+
+          if (isLegacyPhoneIndex) {
+            try {
+              await model.collection.dropIndex(sameKeyIndex.name);
+              const { key, ...options } = index;
+              await model.collection.createIndex(key, options);
+              const indexPosition = existingIndexes.indexOf(sameKeyIndex);
+              existingIndexes.splice(indexPosition, 1, index);
+            } catch (error) {
+              failures.push(new Error(
+                `${model.modelName}.${index.name}: تعذر ترقية فهرس الهاتف القديم: ${error.message}`,
+                { cause: error }
+              ));
+            }
+            continue;
+          }
+
           failures.push(new Error(
             `${model.modelName}.${index.name}: يوجد فهرس بنفس الحقول لكن بخصائص مختلفة (${sameKeyIndex.name})`
           ));

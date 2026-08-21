@@ -49,9 +49,12 @@ exports.verifyToken = async (req, res) => {
     });
 
   } catch (err) {
-    return res.status(err.status ?? 500).json({
-      msg:  err.message ?? 'خطأ في الخادم',
-      code: err.code    ?? 'SERVER_ERROR',
+    const status = Number.isInteger(err.status) ? err.status : 500;
+    const isFeatureDisabled = err.code === 'PHONE_VERIFICATION_DISABLED';
+    const isSafeError = status < 500 || isFeatureDisabled;
+    return res.status(status).json({
+      msg:  isSafeError ? err.message : 'تعذر التحقق من الهاتف حالياً',
+      code: isSafeError ? (err.code ?? 'PHONE_VERIFICATION_FAILED') : 'SERVER_ERROR',
     });
   }
 };

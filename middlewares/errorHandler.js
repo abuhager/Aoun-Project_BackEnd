@@ -95,6 +95,7 @@ const errorHandler = (err, req, res, next) => {
     code:      isAppError ? error.code : (error.code || 'INTERNAL_SERVER_ERROR'),
     requestId: requestId, // 💡 إرسال الـ ID للـ Frontend لربط التذاكر وبلاغات الأعطال بسجلات الخادم فوراُ
   };
+  body.msg = body.message;
 
   // ✅ FIX-03: stack في dev فقط
   if (process.env.NODE_ENV !== 'production' && error.stack) {

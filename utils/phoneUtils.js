@@ -5,10 +5,10 @@
 // الحل: مصدر حقيقة واحد — كل ملف يستورد من هنا
 
 /**
- * أرقام الجوال الأردنية: +962 ثم 7 ثم رقم من [5,7,8,9] ثم 7 أرقام
- * أمثلة صحيحة: +96279xxxxxxx, +96278xxxxxxx, +96277xxxxxxx, +96275xxxxxxx
+ * أرقام الجوال الأردنية: +962 ثم 77/78/79 ثم 7 أرقام
+ * أمثلة صحيحة: +96279xxxxxxx, +96278xxxxxxx, +96277xxxxxxx
  */
-const JORDAN_PHONE_REGEX = /^\+9627[5789]\d{7}$/;
+const JORDAN_PHONE_REGEX = /^\+9627[789]\d{7}$/;
 
 /**
  * أرقام عامة: + اختياري ثم 7-15 رقم
@@ -38,8 +38,9 @@ const isValidGeneralPhone = (phone) => GENERAL_PHONE_REGEX.test(String(phone ?? 
  * @returns {string}
  */
 const normalizeJordanPhone = (phone) => {
-  const cleaned = String(phone ?? '').replace(/\s+/g, '');
+  const cleaned = String(phone ?? '').replace(/[\s\-().]/g, '');
   if (cleaned.startsWith('+962')) return cleaned;
+  if (cleaned.startsWith('00962')) return `+${cleaned.slice(2)}`;
   if (cleaned.startsWith('07'))   return `+962${cleaned.slice(1)}`;
   if (cleaned.startsWith('7'))    return `+962${cleaned}`;
   return cleaned;

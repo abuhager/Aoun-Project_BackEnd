@@ -38,7 +38,22 @@ const initFirebase = () => {
 exports.verifyFirebasePhoneToken = async (idToken) => {
   initFirebase();
 
-  const decoded = await getAuth().verifyIdToken(idToken);
+  let decoded;
+  try {
+    decoded = await getAuth().verifyIdToken(idToken, true);
+  } catch {
+    throw Object.assign(
+      new Error('رمز التحقق من الهاتف غير صالح أو منتهي الصلاحية'),
+      { status: 401, code: 'INVALID_PHONE_TOKEN' }
+    );
+  }
+
+  if (decoded.firebase?.sign_in_provider !== 'phone') {
+    throw Object.assign(
+      new Error('يجب استخدام Firebase Phone Auth للتحقق من الرقم'),
+      { status: 400, code: 'INVALID_PHONE_AUTH_PROVIDER' }
+    );
+  }
 
   // decoded.phone_number موجود فقط إذا تم التوثيق عبر Phone Auth
   if (!decoded.phone_number) {

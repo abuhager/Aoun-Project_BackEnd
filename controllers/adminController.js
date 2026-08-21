@@ -19,7 +19,13 @@ exports.promoteUser = asyncHandler(async (req, res) => {
   const reason    = cleanString(req.body.reason);
   const adminNote = cleanString(req.body.adminNote);
 
-  const user = await adminService.promoteToLevel2(req.params.id, req.user.id, reason, adminNote);
+  const user = await adminService.promoteToLevel2(
+    req.params.id,
+    req.user.id,
+    req.user.role,
+    reason,
+    adminNote
+  );
   return res.status(200).json({ msg: `تمت ترقية ${user.name} ✅`, user });
 });
 
@@ -30,7 +36,13 @@ exports.demoteUser = asyncHandler(async (req, res) => {
   const reason    = cleanString(req.body.reason);
   const adminNote = cleanString(req.body.adminNote);
 
-  const user = await adminService.demoteToLevel1(req.params.id, req.user.id, reason, adminNote);
+  const user = await adminService.demoteToLevel1(
+    req.params.id,
+    req.user.id,
+    req.user.role,
+    reason,
+    adminNote
+  );
   return res.status(200).json({ msg: `تم خفض ${user.name}`, user });
 });
 
@@ -50,7 +62,13 @@ exports.banUser = asyncHandler(async (req, res) => {
   const reason    = cleanString(req.body.reason);
   const adminNote = cleanString(req.body.adminNote);
 
-  const user = await adminService.banUser(targetUserId, req.user.id, reason, adminNote);
+  const user = await adminService.banUser(
+    targetUserId,
+    req.user.id,
+    req.user.role,
+    reason,
+    adminNote
+  );
 
   // ── Cascade Ban ─────────────────────────────────────────────
   await Item.updateMany(
@@ -89,8 +107,13 @@ exports.banUser = asyncHandler(async (req, res) => {
 });
 
 exports.unbanUser = asyncHandler(async (req, res) => {
-  const adminNote = cleanString(req.body.adminNote);
-  const user = await adminService.unbanUser(req.params.id, req.user.id, adminNote);
+  const adminNote = cleanString(req.body?.adminNote);
+  const user = await adminService.unbanUser(
+    req.params.id,
+    req.user.id,
+    req.user.role,
+    adminNote
+  );
   res.json({ msg: `تم رفع الحظر عن ${user.name}`, user });
 });
 

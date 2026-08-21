@@ -29,7 +29,9 @@ exports.findByEmail = (email, options = {}) => {
 };
 
 exports.findByEmailWithPassword = (email) =>
-  User.findOne({ email }).select('+password +verificationOtpExpiry +otpAttempts');
+  User.findOne({ email }).select(
+    '+password +verificationOtpExpiry +otpAttempts +sessionVersion'
+  );
 
 exports.createUser = (data) => User.create(data);
 
@@ -42,7 +44,18 @@ exports.findById = (id) =>
 // ✅ [SEC-REPO-02] isFrozen + isVerified + isBanned مطلوبة في refreshLogic
 // بدون هذه الحقول: مستخدم مجمَّد أو غير مُفعَّل يستطيع تجديد التوكن
 exports.findByIdWithRefreshToken = (id) =>
-  User.findById(id).select('+refreshToken isFrozen isBanned isVerified');
+  User.findById(id).select(
+    '+refreshToken +previousRefreshToken +previousRefreshTokenExpire ' +
+    '+sessionVersion +sessionIssuedAt'
+  );
+
+exports.findAuthStateById = (id) =>
+  User.findById(id)
+    .select(
+      'name role trustLevel phoneVerified isVerified isBanned isFrozen ' +
+      '+sessionVersion +sessionIssuedAt'
+    )
+    .lean();
 
 exports.findByResetToken = (hashedToken) =>
   User.findOne({
@@ -53,15 +66,51 @@ exports.findByResetToken = (hashedToken) =>
 exports.updateUser = (id, update) =>
   User.findByIdAndUpdate(id, update, { returnDocument: 'after' });
 
-exports.rotateRefreshToken = (userId, oldHash, newHash, newIssuedAt) =>
-  User.findOneAndUpdate(
-    { _id: userId, refreshToken: oldHash },
-    { $set: { refreshToken: newHash, sessionIssuedAt: newIssuedAt } },
+exports.beginUserSession = (id) =>
+  User.findByIdAndUpdate(
+    id,
+    {
+      $inc: { sessionVersion: 1 },
+      $set: { sessionIssuedAt: new Date() },
+      $unset: {
+        refreshToken: 1,
+        previousRefreshToken: 1,
+        previousRefreshTokenExpire: 1,
+      },
+    },
     { returnDocument: 'after' }
-  ).select('_id name email role trustLevel isBanned quota trustScore');
+  ).select('+sessionVersion');
+
+exports.storeRefreshToken = (id, sessionVersion, refreshHash) =>
+  User.findOneAndUpdate(
+    { _id: id, sessionVersion },
+    { $set: { refreshToken: refreshHash } },
+    { returnDocument: 'after' }
+  ).select('+sessionVersion');
+
+exports.rotateRefreshToken = (
+  userId,
+  sessionVersion,
+  oldHash,
+  newHash,
+  newIssuedAt,
+  previousTokenExpire
+) =>
+  User.findOneAndUpdate(
+    { _id: userId, sessionVersion, refreshToken: oldHash },
+    {
+      $set: {
+        refreshToken: newHash,
+        previousRefreshToken: oldHash,
+        previousRefreshTokenExpire: previousTokenExpire,
+        sessionIssuedAt: newIssuedAt,
+      },
+    },
+    { returnDocument: 'after' }
+  ).select('+sessionVersion');
 
 exports.findByIdWithSession = (id) =>
-  User.findById(id).select('+refreshToken +sessionIssuedAt');
+  User.findById(id).select('+refreshToken +sessionVersion +sessionIssuedAt');
 
 // ✅ [DUP-REPO-01] ADMIN_FIELDS تُضيف reportedBy فوق BASE_USER_FIELDS
 exports.findByIdForAdmin = (id) =>
@@ -109,7 +158,7 @@ exports.atomicVerifyAndComplete = (userId, currentOtpHash, updateData) =>
     { _id: userId, verificationOtp: currentOtpHash },
     updateData,
     { returnDocument: 'after' }
-  );
+  ).select('+sessionVersion');
 
 exports.resetOtpAttemptsAfterLock = (email) =>
   User.updateOne(
@@ -122,12 +171,57 @@ exports.resetOtpAttemptsAfterLock = (email) =>
 
 // ─── فحص تكرار رقم الهاتف ────────────────────────────────────
 exports.findByPhoneExcluding = (phone, excludeUserId) =>
-  User.findOne({ phone, _id: { $ne: excludeUserId } }).select('_id').lean();
+  User.findOne({
+    phone,
+    phoneVerified: true,
+    _id: { $ne: excludeUserId },
+  }).select('_id').lean();
+
+exports.consumeResetToken = (hashedToken, hashedPassword) =>
+  User.findOneAndUpdate(
+    {
+      resetPasswordToken: hashedToken,
+      resetPasswordExpire: { $gt: Date.now() },
+    },
+    {
+      $set: { password: hashedPassword, sessionIssuedAt: new Date() },
+      $inc: { sessionVersion: 1 },
+      $unset: {
+        resetPasswordToken: 1,
+        resetPasswordExpire: 1,
+        refreshToken: 1,
+        previousRefreshToken: 1,
+        previousRefreshTokenExpire: 1,
+      },
+    },
+    { returnDocument: 'after' }
+  ).select('_id +sessionVersion');
+
+exports.changePassword = (userId, hashedPassword) =>
+  User.findByIdAndUpdate(
+    userId,
+    {
+      $set: { password: hashedPassword, sessionIssuedAt: new Date() },
+      $inc: { sessionVersion: 1 },
+      $unset: {
+        refreshToken: 1,
+        previousRefreshToken: 1,
+        previousRefreshTokenExpire: 1,
+      },
+    },
+    { returnDocument: 'after' }
+  ).select('_id +sessionVersion');
 
 // ─── إلغاء صلاحية الجلسة ─────────────────────────────────────
 exports.invalidateUserSession = (userId) =>
   User.findByIdAndUpdate(userId, {
-    $unset: { refreshToken: 1, sessionIssuedAt: 1 },
+    $inc: { sessionVersion: 1 },
+    $set: { sessionIssuedAt: new Date() },
+    $unset: {
+      refreshToken: 1,
+      previousRefreshToken: 1,
+      previousRefreshTokenExpire: 1,
+    },
   });
 
 // ✅ FIX [PERF-PROF-02]: lean() مباشرة — لا يجوز استدعاء .select().lean() فوقها

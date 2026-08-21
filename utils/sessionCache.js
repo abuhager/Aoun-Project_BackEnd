@@ -6,35 +6,36 @@
 const TTL_MS = parseInt(process.env.SESSION_CACHE_TTL_MS ?? '60000', 10) || 60_000;
 
 /**
- * @type {Map<string, { sessionIssuedAt: Date | null, cachedAt: number }>}
+ * @type {Map<string, { state: object, cachedAt: number }>}
  */
 const _cache = new Map();
 
 /**
  * جلب sessionIssuedAt من الـ Cache
  * @param {string} userId
- * @returns {Date | null | undefined} — undefined = غير موجود في الـ Cache
+ * @returns {object | undefined} — undefined = غير موجود في الـ Cache
  */
 const get = (userId) => {
-  const entry = _cache.get(userId);
+  const key = String(userId);
+  const entry = _cache.get(key);
   if (!entry) return undefined; // cache miss
 
   if (Date.now() - entry.cachedAt > TTL_MS) {
-    _cache.delete(userId);
+    _cache.delete(key);
     return undefined; // انتهت الصلاحية
   }
 
-  return entry.sessionIssuedAt; // cache hit (قد تكون null لمستخدم بدون جلسة محددة)
+  return entry.state;
 };
 
 /**
  * حفظ sessionIssuedAt في الـ Cache
  * @param {string} userId
- * @param {Date | null} sessionIssuedAt
+ * @param {object} state
  */
-const set = (userId, sessionIssuedAt) => {
-  _cache.set(userId, {
-    sessionIssuedAt,
+const set = (userId, state) => {
+  _cache.set(String(userId), {
+    state,
     cachedAt: Date.now(),
   });
 };
@@ -47,7 +48,7 @@ const set = (userId, sessionIssuedAt) => {
  * @param {string} userId
  */
 const invalidate = (userId) => {
-  _cache.delete(userId);
+  _cache.delete(String(userId));
 };
 
 /**

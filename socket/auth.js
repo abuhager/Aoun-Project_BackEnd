@@ -1,5 +1,7 @@
-const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
+
+const { verifyAccessToken } = require('../utils/tokenUtils');
+const { resolveAccessIdentity } = require('../middlewares/auth');
 
 const createSocketAuthError = (message, code = 'SOCKET_UNAUTHORIZED') => {
   const error = new Error(message);
@@ -7,42 +9,44 @@ const createSocketAuthError = (message, code = 'SOCKET_UNAUTHORIZED') => {
   return error;
 };
 
-const verifySocketToken = (token, secret = process.env.JWT_SECRET) => {
+const verifySocketToken = (token) => {
   if (!token || typeof token !== 'string') {
     throw createSocketAuthError('مطلوب تسجيل الدخول للاتصال الفوري');
-  }
-  if (!secret) {
-    throw createSocketAuthError('تعذر تهيئة مصادقة الاتصال الفوري', 'SOCKET_AUTH_MISCONFIGURED');
   }
 
   let decoded;
   try {
-    decoded = jwt.verify(token, secret);
+    decoded = verifyAccessToken(token);
   } catch {
     throw createSocketAuthError('رمز الاتصال غير صالح أو منتهي الصلاحية');
   }
 
-  const user = decoded?.user;
-  if (!user || !mongoose.isObjectIdOrHexString(user.id)) {
+  const userId = decoded?.user?.id;
+  if (!mongoose.isObjectIdOrHexString(userId)) {
     throw createSocketAuthError('بيانات الهوية داخل الرمز غير صالحة');
   }
 
-  return {
-    id: user.id.toString(),
-    name: typeof user.name === 'string' ? user.name : '',
-    role: typeof user.role === 'string' ? user.role : 'user',
-  };
+  return { id: String(userId) };
 };
 
-const socketAuthMiddleware = (socket, next) => {
+const socketAuthMiddleware = async (socket, next) => {
+  const token = socket.handshake.auth?.token;
   try {
-    const identity = verifySocketToken(socket.handshake.auth?.token);
+    verifySocketToken(token);
+    const identity = await resolveAccessIdentity(token);
     socket.userId = identity.id;
     socket.userName = identity.name;
     socket.userRole = identity.role;
-    next();
+    return next();
   } catch (error) {
-    next(error);
+    const code = error.code || error.data?.code || 'SOCKET_UNAUTHORIZED';
+    const isSafeClientError = Number.isInteger(error.statusCode)
+      ? error.statusCode < 500
+      : Boolean(error.data?.code);
+    return next(createSocketAuthError(
+      isSafeClientError ? error.message : 'تعذر التحقق من هوية الاتصال',
+      code
+    ));
   }
 };
 

@@ -10,6 +10,25 @@ const notifyUser       = require('../utils/notifyUser');
 const AppError         = require('../utils/AppError');
 const sessionCache     = require('../utils/sessionCache');
 
+const assertCanManageUser = async (targetId, actorId, actorRole) => {
+  const target = await userRepository.findByIdForAdmin(targetId);
+  if (!target) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
+  if (String(targetId) === String(actorId)) {
+    throw new AppError('لا يمكنك تنفيذ هذا الإجراء على حسابك', 400, 'CANNOT_MODERATE_SELF');
+  }
+  if (target.role === 'super_admin') {
+    throw new AppError('لا يمكن تعديل حساب المشرف الأعلى', 403, 'SUPER_ADMIN_PROTECTED');
+  }
+  if (target.role === 'admin' && actorRole !== 'super_admin') {
+    throw new AppError(
+      'إدارة حسابات المشرفين تتطلب صلاحية المشرف الأعلى',
+      403,
+      'SUPER_ADMIN_REQUIRED'
+    );
+  }
+  return target;
+};
+
 // ─── Stats ────────────────────────────────────────────────────
 exports.getStats = () => adminRepo.getDashboardStats();
 
@@ -26,11 +45,12 @@ exports.listUsers = async ({ page = 1, search = '', banned = '' }) => {
   return { users, total, page: normalizedPage, pages: Math.ceil(total / PAGE_SIZE) };
 };
 
-exports.banUser = async (userId, adminId, reason, adminNote) => {
+exports.banUser = async (userId, adminId, adminRole, reason, adminNote) => {
+  await assertCanManageUser(userId, adminId, adminRole);
   const user = await adminRepo.banUser(userId, reason, adminId);
   if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
 
-  await User.findByIdAndUpdate(userId, { $inc: { refreshTokenVersion: 1 } });
+  await userRepository.invalidateUserSession(userId);
   sessionCache.invalidate(userId);
 
   await adminRepo.logAdminAction({
@@ -42,9 +62,11 @@ exports.banUser = async (userId, adminId, reason, adminNote) => {
   return user;
 };
 
-exports.unbanUser = async (userId, adminId, adminNote = null) => {
+exports.unbanUser = async (userId, adminId, adminRole, adminNote = null) => {
+  await assertCanManageUser(userId, adminId, adminRole);
   const user = await adminRepo.unbanUser(userId);
   if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
+  sessionCache.invalidate(userId);
 
   await adminRepo.logAdminAction({
     adminId, action: 'UNBAN', targetId: userId, targetModel: 'User',
@@ -180,9 +202,8 @@ exports.listAuditLogs = async ({ page = 1 }) => {
 };
 
 // ─── Promote / Demote ─────────────────────────────────────────
-exports.promoteToLevel2 = async (targetId, adminId, reason = null, adminNote = null) => {
-  const user = await userRepository.findByIdForAdmin(targetId);
-  if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
+exports.promoteToLevel2 = async (targetId, adminId, adminRole, reason = null, adminNote = null) => {
+  const user = await assertCanManageUser(targetId, adminId, adminRole);
   if (user.isBanned) throw new AppError('لا يمكن ترقية مستخدم محظور', 403, 'USER_BANNED');
   if (user.trustLevel !== 1) throw new AppError(
     `لا يمكن الترقية اليدوية — مستوى المستخدم الحالي هو ${user.trustLevel}`,
@@ -193,6 +214,7 @@ exports.promoteToLevel2 = async (targetId, adminId, reason = null, adminNote = n
   const level2Quota = settings?.level2Quota ?? 4;
 
   const updated = await userRepository.setTrustLevelAndQuota(targetId, 2, level2Quota);
+  sessionCache.invalidate(targetId);
 
   await adminRepo.logAdminAction({
     adminId, action: 'PROMOTE', targetId, targetModel: 'User',
@@ -203,15 +225,15 @@ exports.promoteToLevel2 = async (targetId, adminId, reason = null, adminNote = n
   return updated;
 };
 
-exports.demoteToLevel1 = async (targetId, adminId, reason = null, adminNote = null) => {
-  const user = await userRepository.findByIdForAdmin(targetId);
-  if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
+exports.demoteToLevel1 = async (targetId, adminId, adminRole, reason = null, adminNote = null) => {
+  const user = await assertCanManageUser(targetId, adminId, adminRole);
   if (user.trustLevel === 1) throw new AppError('المستخدم في المستوى 1 بالفعل', 400, 'ALREADY_LEVEL1');
 
   const settings     = await SystemSettings.getCached();
   const defaultQuota = settings?.defaultUserQuota ?? 2;
 
   const updated = await userRepository.setTrustLevelAndQuota(targetId, 1, defaultQuota);
+  sessionCache.invalidate(targetId);
 
   await adminRepo.logAdminAction({
     adminId, action: 'DEMOTE', targetId, targetModel: 'User',

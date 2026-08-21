@@ -21,6 +21,8 @@ const {
   loginLimiter,
   registerLimiter,
   forgotPasswordLimiter,
+  resetPasswordLimiter,
+  refreshLimiter,
   otpLimiter,
   resendOtpLimiter,
   meLimiter,
@@ -73,13 +75,25 @@ router.post('/forgot-password',
   authController.forgotPassword
 );
 
+const validateResetTokenParam = (req, res, next) => {
+  if (!/^[a-f\d]{64}$/i.test(req.params.token ?? '')) {
+    return res.status(400).json({
+      msg: 'رابط إعادة التعيين غير صالح أو منتهي الصلاحية',
+      code: 'INVALID_RESET_TOKEN',
+    });
+  }
+  return next();
+};
+
 router.post('/reset-password/:token',
-  forgotPasswordLimiter,
+  resetPasswordLimiter,
+  validateResetTokenParam,
   validateBody('resetPassword'),
   authController.resetPassword
 );
 
 router.post('/refresh',
+  refreshLimiter,
   authController.refreshToken
 );
 

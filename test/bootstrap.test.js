@@ -1,7 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const jwt = require('jsonwebtoken');
 
 process.env.NODE_ENV = 'test';
 process.env.ALLOWED_ORIGINS = 'https://frontend.example';
@@ -17,6 +16,9 @@ process.env.CLOUDINARY_API_SECRET = 'test-secret';
 const { parseAllowedOrigins } = require('../config/cors');
 const { validateEnvironment } = require('../config/env');
 const { verifySocketToken } = require('../socket/auth');
+const { generateAccessToken } = require('../utils/tokenUtils');
+const { buildMongoOptions } = require('../config/db');
+const { indexDefinitionsEquivalent } = require('../utils/ensureIndexes');
 const app = require('../app');
 
 let server;
@@ -59,19 +61,44 @@ test('ينظف Origins المكررة ويرفض Origin يحتوي مساراً'
   assert.throws(() => parseAllowedOrigins('https://a.example/path'));
 });
 
+test('لا يمرر family إلى MongoDB في الوضع التلقائي', () => {
+  const previousFamily = process.env.MONGO_IP_FAMILY;
+
+  process.env.MONGO_IP_FAMILY = '0';
+  assert.equal('family' in buildMongoOptions(), false);
+
+  process.env.MONGO_IP_FAMILY = '4';
+  assert.equal(buildMongoOptions().family, 4);
+
+  if (previousFamily === undefined) delete process.env.MONGO_IP_FAMILY;
+  else process.env.MONGO_IP_FAMILY = previousFamily;
+});
+
+test('يعتبر فهرسين متطابقين حتى لو اختلف اسمهما فقط', () => {
+  assert.equal(indexDefinitionsEquivalent(
+    { key: { status: 1, createdAt: -1 }, name: 'status_1_createdAt_-1' },
+    { key: { status: 1, createdAt: -1 }, name: 'status_createdAt' }
+  ), true);
+
+  assert.equal(indexDefinitionsEquivalent(
+    { key: { email: 1 }, name: 'email_1', unique: true },
+    { key: { email: 1 }, name: 'email_lookup' }
+  ), false);
+});
+
 test('يرفض Socket token المفقود أو غير الصالح ويقبل هوية MongoDB صحيحة', () => {
   assert.throws(() => verifySocketToken(null, 'secret'), /مطلوب تسجيل الدخول/);
   assert.throws(() => verifySocketToken('not-a-token', 'secret'), /غير صالح/);
 
-  const token = jwt.sign(
-    { user: { id: '507f1f77bcf86cd799439011', name: 'عون', role: 'user' } },
-    'secret',
-    { expiresIn: '5m' }
-  );
-  assert.deepEqual(verifySocketToken(token, 'secret'), {
-    id: '507f1f77bcf86cd799439011',
-    name: 'عون',
+  const token = generateAccessToken({
+    _id: '507f1f77bcf86cd799439011',
     role: 'user',
+    trustLevel: 1,
+    isVerified: true,
+    sessionVersion: 0,
+  });
+  assert.deepEqual(verifySocketToken(token), {
+    id: '507f1f77bcf86cd799439011',
   });
 });
 

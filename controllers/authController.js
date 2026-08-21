@@ -16,8 +16,7 @@ const {
   CLEAR_SESSION_ACTIVE_OPTIONS,  // ✅ [ARCH-CTRL-01] مستورد من tokenUtils
 } = require('../utils/tokenUtils');
 
-// ✅ [LOGIC-CTRL-01] regex للأرقام الأردنية — +9627[5|7|8|9]XXXXXXX
-const PHONE_REGEX = /^\+9627[5789]\d{7}$/;
+const { isValidJordanPhone } = require('../utils/phoneUtils');
 
 // ✅ [PERF-CTRL-01] + [DUP-CTRL-01] دالة مشتركة لتحليل رقم الصفحة بأمان
 // تمنع: page سالب، page=0، page=NaN، page عالٍ جداً
@@ -144,7 +143,7 @@ exports.updateMe = asyncHandler(async (req, res) => {
     const phone = req.body.phone.trim();
     // ✅ [LOGIC-CTRL-01] التحقق من صيغة الهاتف الأردني قبل تمريره للـ Service
     // يمنع إدخال أرقام مشوهة أو دولية غير مدعومة تصل إلى DB
-    if (!PHONE_REGEX.test(phone)) {
+    if (!isValidJordanPhone(phone)) {
       return res.status(400).json({
         msg:  'صيغة رقم الهاتف غير صحيحة ❌ — يجب أن يكون بصيغة +9627XXXXXXXX',
         code: 'INVALID_PHONE_FORMAT',

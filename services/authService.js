@@ -3,7 +3,7 @@
 // سجل الإصلاحات الكاملة:
 //
 // ── الجولة الحالية ──────────────────────────────────────────────
-// ✅ [TEMP-MOD]      trustLevel 2  — رفع المستوى التلقائي لجميع الحسابات الجديدة لـ Level 2 مؤقتاً
+// ✅ [AUTH-LEVEL]    الحسابات العادية تبدأ Level 1، والترقية فقط بإثبات الاستحقاق
 // ✅ [SEC-NEW-01]    registerLogic — Generic message + fire-and-forget OTP
 // ✅ [SEC-NEW-02]    loginLogic     — إصدار accessToken من DB بعد التحقق من الحفظ
 // ✅ [SEC-NEW-03]    resendOtpLogic — فحص isFrozen إضافةً لـ isBanned
@@ -53,6 +53,21 @@ const { hashToken } = require('../utils/cryptoUtils');
 // ✅ [HC-NEW-01] نطاق [10,14] — أقل من 10 خطر أمني، أكثر من 14 بطء مفرط
 const _rawBcrypt    = parseInt(process.env.BCRYPT_ROUNDS, 10);
 const BCRYPT_ROUNDS = (_rawBcrypt >= 10 && _rawBcrypt <= 14) ? _rawBcrypt : 12;
+const DUMMY_PASSWORD_HASH = '$2b$12$v4FB8JgizGmjsYINGhMyE.mqVv9exDY221nU/jT4bkBYEXagU1AgW';
+const _rawRefreshGrace = Number.parseInt(
+  process.env.REFRESH_REUSE_GRACE_MS ?? '5000',
+  10
+);
+const REFRESH_REUSE_GRACE_MS = Number.isInteger(_rawRefreshGrace)
+  ? Math.min(Math.max(_rawRefreshGrace, 1000), 10_000)
+  : 5000;
+
+const constantTimeHashEqual = (left, right) => {
+  if (!/^[a-f\d]{64}$/i.test(left ?? '') || !/^[a-f\d]{64}$/i.test(right ?? '')) {
+    return false;
+  }
+  return crypto.timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
+};
 
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -69,20 +84,17 @@ const isUniversityEmail = async (email) => {
 };
 
 
-// ✅ [TEMP-MOD] تعديل مؤقت لرفع أي مستخدم لـ Level 2 حتى لو لم يكن إيميل جامعي
 const _upgradeStudentTrust = async (user, settings) => {
   const cfg = settings ?? await SystemSettings.getCached();
-
-  // 👈 رفع كفاءة الحساب فوراً لـ Level 2 للجميع مؤقتاً
-  if ((user.trustLevel ?? 1) < 2) {
-    user.trustLevel = 2;
-  }
 
   if (!(await isUniversityEmail(user.email))) return;
 
 
   user.isVerifiedStudent = true;
-  const studentTrustLevel = cfg?.studentDefaultTrustLevel ?? 2;
+  const studentTrustLevel = Math.min(
+    2,
+    Math.max(1, Number(cfg?.studentDefaultTrustLevel ?? 2))
+  );
   const studentQuota      = cfg?.studentQuota             ?? 5;
   const defaultQuota      = cfg?.defaultUserQuota         ?? 2;
 
@@ -137,7 +149,7 @@ const _issueVerificationOtp = async (userId, email, name, isStudent, otpExpiryMi
   });
 
 
-  emailService.sendVerificationEmail(email, rawOtp, name, isStudent)
+  emailService.sendVerificationEmail(email, rawOtp, name, isStudent, otpExpiryMinutes)
     .catch((err) => console.error('[Mail Error] _issueVerificationOtp:', err.message));
 };
 
@@ -173,7 +185,7 @@ exports.resendOtpLogic = async ({ email }) => {
     user.verificationOtpExpiry &&
     user.verificationOtpExpiry.getTime() - Date.now() > (totalExpiryMs - COOLDOWN_MS)
   ) {
-    return { statusCode: 429, body: { msg: 'انتظر دقيقة واحدة قبل طلب رمز جديد ⏳', code: 'RESEND_TOO_FAST' } };
+    return GENERIC_OK;
   }
 
 
@@ -190,7 +202,10 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
   const settings          = await SystemSettings.getCached();
   const otpExpiryMinutes  = settings?.otpExpiryMinutes          ?? 10;
   const defaultQuota      = settings?.defaultUserQuota          ?? 2;
-  const studentTrustLevel = settings?.studentDefaultTrustLevel ?? 2;
+  const studentTrustLevel = Math.min(
+    2,
+    Math.max(1, Number(settings?.studentDefaultTrustLevel ?? 2))
+  );
   const isStudent          = await isUniversityEmail(email);
 
 
@@ -207,18 +222,25 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
   if (exists) {
     if (exists.isVerified) {
       // تأخير وهمي لمنع Timing Attack — لا نُخبر المهاجم بالحالة
-      await bcrypt.hash(password, BCRYPT_ROUNDS);
+      await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
       return GENERIC_REGISTER_RESPONSE;
     }
 
 
-    // مستخدم موجود لكن غير مُفعَّل — OTP في الخلفية بدون await عمداً
+    // مستخدم موجود لكن غير مُفعَّل — نخزن OTP قبل الرد، وإرسال البريد نفسه غير حاجب
     const extraFields = {
       isVerifiedStudent: isStudent,
-      trustLevel:        2, // 👈 [TEMP-MOD] إعطاء Level 2 حتى لو حساب قديم بيعيد طلب رمز
+      trustLevel:        isStudent ? studentTrustLevel : 1,
       quota:             isStudent ? (settings?.studentQuota ?? 5) : defaultQuota,
     };
-    _issueVerificationOtp(exists._id, exists.email, exists.name, isStudent, otpExpiryMinutes, extraFields);
+    await _issueVerificationOtp(
+      exists._id,
+      exists.email,
+      exists.name,
+      isStudent,
+      otpExpiryMinutes,
+      extraFields
+    );
     return GENERIC_REGISTER_RESPONSE;
   }
 
@@ -229,15 +251,15 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
     name,
     email,
     password:          hashed,
-    phone:             phone || undefined,
+    phone,
     otpAttempts:       0,
     isVerifiedStudent: isStudent,
-    trustLevel:        2, // 👈 [TEMP-MOD] Level 2 تلقائياً لجميع المستخدمين
+    trustLevel:        isStudent ? studentTrustLevel : 1,
     quota:             isStudent ? (settings?.studentQuota ?? 5) : defaultQuota,
   });
 
 
-  _issueVerificationOtp(newUser._id, email, name, isStudent, otpExpiryMinutes);
+  await _issueVerificationOtp(newUser._id, email, name, isStudent, otpExpiryMinutes);
 
 
   return GENERIC_REGISTER_RESPONSE;
@@ -261,7 +283,6 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
     return { statusCode: 429, body: { msg: 'تجاوزت الحد المسموح من المحاولات، اطلب رمزاً جديداً 🔒', code: 'OTP_ATTEMPTS_EXCEEDED' } };
   }
 
-
   if (!user.verificationOtp || !user.verificationOtpExpiry) {
     return { statusCode: 400, body: { msg: 'لا يوجد رمز تحقق نشط، اطلب رمزاً جديداً' } };
   }
@@ -279,41 +300,52 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
   }
 
 
-  // ✅ [LOGIC-NEW-01] toObject() لإنتاج plain JS object نظيف من Mongoose document
   const mutableUser = user.toObject ? user.toObject() : { ...user };
-
-
-  // ✅ [PERF-NEW-01] نمرر settings المُحمَّلة مسبقاً (ويرفع لـ Level 2)
   await _upgradeStudentTrust(mutableUser, settings);
 
-
-  const accessToken                                     = generateAccessToken(mutableUser);
-  const { token: refreshToken, hashed: hashedRefresh }  = generateRefreshToken(mutableUser);
-
-
-  const updatedUser = await userRepository.atomicVerifyAndComplete(user._id, user.verificationOtp, {
+  const verifiedUser = await userRepository.atomicVerifyAndComplete(user._id, user.verificationOtp, {
     $set: {
       isVerified:        true,
       isVerifiedStudent: mutableUser.isVerifiedStudent,
       trustLevel:        mutableUser.trustLevel,
       quota:             mutableUser.quota,
       otpAttempts:       0,
-      refreshToken:      hashedRefresh,
       sessionIssuedAt:   new Date(),
     },
-    $unset: { verificationOtp: 1, verificationOtpExpiry: 1 },
+    $inc: { sessionVersion: 1 },
+    $unset: {
+      verificationOtp: 1,
+      verificationOtpExpiry: 1,
+      refreshToken: 1,
+      previousRefreshToken: 1,
+      previousRefreshTokenExpire: 1,
+    },
   });
 
-
-  if (!updatedUser) {
+  if (!verifiedUser) {
     return { statusCode: 409, body: { msg: 'تم التحقق مسبقاً أو الرمز غير صالح 🔄' } };
   }
 
+  const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(verifiedUser);
+  const savedSession = await userRepository.storeRefreshToken(
+    verifiedUser._id,
+    verifiedUser.sessionVersion,
+    hashedRefresh
+  );
+  if (!savedSession) {
+    return {
+      statusCode: 409,
+      body: { msg: 'تم تفعيل الحساب، سجّل الدخول للمتابعة', code: 'SESSION_CONFLICT' },
+    };
+  }
+
+  sessionCache.invalidate(verifiedUser._id);
+  const accessToken = generateAccessToken(savedSession);
 
   return {
     statusCode: 200,
     refreshToken,
-    body: { msg: 'تم التحقق من إيميلك بنجاح ✅', user: buildSafeUser(updatedUser), accessToken },
+    body: { msg: 'تم التحقق من إيميلك بنجاح ✅', user: buildSafeUser(savedSession), accessToken },
   };
 };
 
@@ -322,13 +354,18 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
 exports.loginLogic = async ({ email, password }) => {
   const user = await userRepository.findByEmailWithPassword(email);
 
-
-  if (!user)        return { statusCode: 401, body: { msg: 'بيانات الدخول غير صحيحة' } };
-  if (user.isBanned) return { statusCode: 403, body: { msg: 'هذا الحساب محظور 🚫', code: 'ACCOUNT_BANNED' } };
-
-
-  const isMatch = await bcrypt.compare(password, user.password);
+  const isMatch = await bcrypt.compare(
+    password,
+    user?.password ?? DUMMY_PASSWORD_HASH
+  );
   if (!isMatch) return { statusCode: 401, body: { msg: 'بيانات الدخول غير صحيحة' } };
+  if (!user) return { statusCode: 401, body: { msg: 'بيانات الدخول غير صحيحة' } };
+  if (user.isBanned) {
+    return { statusCode: 403, body: { msg: 'هذا الحساب محظور 🚫', code: 'ACCOUNT_BANNED' } };
+  }
+  if (user.isFrozen) {
+    return { statusCode: 403, body: { msg: 'هذا الحساب مجمّد مؤقتاً 🧊', code: 'ACCOUNT_FROZEN' } };
+  }
 
 
   if (!user.isVerified) {
@@ -381,13 +418,14 @@ exports.loginLogic = async ({ email, password }) => {
   const settings    = await SystemSettings.getCached();
   const beforeLevel = user.trustLevel ?? 1;
   const beforeQuota = user.quota      ?? 2;
+  const beforeStudent = Boolean(user.isVerifiedStudent);
   await _upgradeStudentTrust(user, settings);
 
 
   // ✅ [SEC-NEW-02] نحفظ في DB أولاً ونُصدر التوكن من النتيجة المحفوظة
   const needsUpdate = user.trustLevel !== beforeLevel ||
                       user.quota      !== beforeQuota ||
-                      user.isVerifiedStudent;
+                      Boolean(user.isVerifiedStudent) !== beforeStudent;
 
 
   let finalUser = user;
@@ -402,25 +440,28 @@ exports.loginLogic = async ({ email, password }) => {
   }
 
 
-  const accessToken                                     = generateAccessToken(finalUser);
-  const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(finalUser);
-
-
-  const savedSession = await userRepository.updateUser(finalUser._id, {
-    refreshToken:    hashedRefresh,
-    sessionIssuedAt: new Date(),
-  });
-
-
-  if (!savedSession) {
+  const sessionUser = await userRepository.beginUserSession(finalUser._id);
+  if (!sessionUser) {
     return { statusCode: 500, body: { msg: 'خطأ في حفظ الجلسة، حاول مجدداً ⚠️', code: 'SESSION_SAVE_FAILED' } };
   }
 
+  const { token: refreshToken, hashed: hashedRefresh } = generateRefreshToken(sessionUser);
+  const savedSession = await userRepository.storeRefreshToken(
+    sessionUser._id,
+    sessionUser.sessionVersion,
+    hashedRefresh
+  );
+  if (!savedSession) {
+    return { statusCode: 409, body: { msg: 'تعارض في إنشاء الجلسة، حاول مجدداً', code: 'SESSION_CONFLICT' } };
+  }
+
+  sessionCache.invalidate(savedSession._id);
+  const accessToken = generateAccessToken(savedSession);
 
   return {
     statusCode: 200,
     refreshToken,
-    body: { msg: 'مرحباً بعودتك 👋', user: buildSafeUser(finalUser), accessToken },
+    body: { msg: 'مرحباً بعودتك 👋', user: buildSafeUser(savedSession), accessToken },
   };
 };
 
@@ -463,6 +504,17 @@ exports.refreshLogic = async (rawRefreshToken, clientIp = 'unknown') => {
     return { statusCode: 401, clearCookie: true, body: { msg: 'المستخدم غير موجود', code: 'USER_NOT_FOUND' } };
   }
 
+  const tokenSessionVersion = Number(decoded.user.sessionVersion ?? 0);
+  const currentSessionVersion = Number(user.sessionVersion ?? 0);
+  if (tokenSessionVersion !== currentSessionVersion) {
+    sessionCache.invalidate(userId);
+    return {
+      statusCode: 401,
+      clearCookie: true,
+      body: { msg: 'الجلسة منتهية، أعد تسجيل الدخول', code: 'SESSION_INVALIDATED' },
+    };
+  }
+
 
   if (user.isBanned) {
     sessionCache.invalidate(userId);
@@ -473,6 +525,7 @@ exports.refreshLogic = async (rawRefreshToken, clientIp = 'unknown') => {
   // ✅ [LOGIC-NEW-02] فحص isVerified
   if (!user.isVerified) {
     await userRepository.invalidateUserSession(userId);
+    sessionCache.invalidate(userId);
     return { statusCode: 403, clearCookie: true, body: { msg: 'الحساب غير مُفعَّل، يرجى التحقق من بريدك 📧', code: 'ACCOUNT_NOT_VERIFIED' } };
   }
 
@@ -489,10 +542,24 @@ exports.refreshLogic = async (rawRefreshToken, clientIp = 'unknown') => {
   }
 
 
-  const isTokenMatch = crypto.timingSafeEqual(
-    Buffer.from(hashedIncoming,   'hex'),
-    Buffer.from(user.refreshToken,'hex')
-  );
+  const isTokenMatch = constantTimeHashEqual(hashedIncoming, user.refreshToken);
+
+  const isRecentPreviousToken =
+    constantTimeHashEqual(hashedIncoming, user.previousRefreshToken)
+    && user.previousRefreshTokenExpire
+    && user.previousRefreshTokenExpire.getTime() > Date.now();
+
+  if (!isTokenMatch && isRecentPreviousToken) {
+    // طلبان متزامنان (تبويبان مثلاً): لا نمسح الكوكي الجديدة التي وضعها الطلب الفائز.
+    return {
+      statusCode: 200,
+      body: {
+        accessToken: generateAccessToken(user),
+        user: buildSafeUser(user),
+        refreshRaceRecovered: true,
+      },
+    };
+  }
 
 
   if (!isTokenMatch) {
@@ -504,11 +571,38 @@ exports.refreshLogic = async (rawRefreshToken, clientIp = 'unknown') => {
 
 
   const { token: newRefreshToken, hashed: newHashed } = generateRefreshToken(user);
-  const rotated = await userRepository.rotateRefreshToken(userId, user.refreshToken, newHashed, new Date());
+  const rotated = await userRepository.rotateRefreshToken(
+    userId,
+    currentSessionVersion,
+    user.refreshToken,
+    newHashed,
+    new Date(),
+    new Date(Date.now() + REFRESH_REUSE_GRACE_MS)
+  );
 
 
   if (!rotated) {
-    return { statusCode: 409, clearCookie: true, body: { msg: 'تعارض في تجديد الجلسة، أعد المحاولة', code: 'ROTATION_CONFLICT' } };
+    // قد يكون طلب refresh متزامن قد أكمل التدوير بعد قراءة user أعلاه.
+    // أعد القراءة واسمح فقط للتوكن السابق داخل نافذة السباق القصيرة.
+    const latest = await userRepository.findByIdWithRefreshToken(userId);
+    const recoveredRace = latest
+      && Number(latest.sessionVersion ?? 0) === currentSessionVersion
+      && constantTimeHashEqual(hashedIncoming, latest.previousRefreshToken)
+      && latest.previousRefreshTokenExpire
+      && latest.previousRefreshTokenExpire.getTime() > Date.now();
+
+    if (recoveredRace) {
+      return {
+        statusCode: 200,
+        body: {
+          accessToken: generateAccessToken(latest),
+          user: buildSafeUser(latest),
+          refreshRaceRecovered: true,
+        },
+      };
+    }
+
+    return { statusCode: 409, clearCookie: false, body: { msg: 'تعارض في تجديد الجلسة، أعد المحاولة', code: 'ROTATION_CONFLICT' } };
   }
 
 
@@ -536,20 +630,21 @@ exports.logoutLogic = async (userId) => {
 exports.forgotPasswordLogic = async ({ email }) => {
   const GENERIC = { statusCode: 200, body: { msg: 'إذا كان الإيميل مسجَّلاً، ستصلك رسالة لإعادة تعيين كلمة المرور 📧' } };
   const user    = await userRepository.findByEmail(email);
-  if (!user || !user.isVerified || user.isBanned) return GENERIC;
+  if (!user || !user.isVerified || user.isBanned || user.isFrozen) return GENERIC;
 
-
+  const settings = await SystemSettings.getCached();
+  const expiryMinutes = settings?.resetPasswordExpiryMinutes ?? 15;
   const rawToken    = crypto.randomBytes(32).toString('hex');
   const hashedToken = hashToken(rawToken);
 
 
   await userRepository.updateUser(user._id, {
     resetPasswordToken:  hashedToken,
-    resetPasswordExpire: Date.now() + 15 * 60 * 1000, // 15 دقيقة
+    resetPasswordExpire: Date.now() + expiryMinutes * 60 * 1000,
   });
 
 
-  emailService.sendPasswordResetEmail(email, rawToken, user.name)
+  emailService.sendPasswordResetEmail(email, rawToken, user.name, expiryMinutes)
     .catch((err) => console.error('[Mail Error] forgotPassword:', err.message));
 
 
@@ -559,35 +654,19 @@ exports.forgotPasswordLogic = async ({ email }) => {
 
 // ─── resetPasswordLogic ───────────────────────────────────────────
 exports.resetPasswordLogic = async (token, newPassword) => {
-  if (!token || !newPassword) {
+  if (!/^[a-f\d]{64}$/i.test(token ?? '') || !newPassword) {
     return { statusCode: 400, body: { msg: 'التوكن وكلمة المرور الجديدة مطلوبان' } };
   }
 
-
   const hashedToken = hashToken(token);
-  const user        = await userRepository.findByResetToken(hashedToken);
-
+  const hashed = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+  const user = await userRepository.consumeResetToken(hashedToken, hashed);
 
   if (!user) {
     return { statusCode: 400, body: { msg: 'الرابط غير صالح أو منتهي الصلاحية ⏰', code: 'INVALID_RESET_TOKEN' } };
   }
 
-
-  const hashed = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-
-
-  await userRepository.updateUser(user._id, {
-    password:        hashed,
-    sessionIssuedAt: new Date(),
-    $unset: {
-      resetPasswordToken:  1,
-      resetPasswordExpire: 1,
-      refreshToken:        1,
-    },
-  });
-
-
-  sessionCache.invalidate(user._id.toString());
+  sessionCache.invalidate(user._id);
 
 
   return { statusCode: 200, body: { msg: 'تم تغيير كلمة المرور بنجاح ✅ — أعد تسجيل الدخول' } };
@@ -637,6 +716,7 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, fileMimeType) => {
   const updated = await userRepository.updateUser(userId, updates);
   if (!updated) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
 
+  sessionCache.invalidate(userId);
 
   return { statusCode: 200, body: { msg: 'تم تحديث الملف الشخصي بنجاح ✅', user: buildSafeUser(updated) } };
 };
@@ -655,14 +735,9 @@ exports.updatePasswordLogic = async (userId, { currentPassword, newPassword }) =
   const hashed = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
 
 
-  await userRepository.updateUser(userId, {
-    password:        hashed,
-    sessionIssuedAt: new Date(),
-    $unset: { refreshToken: 1 },
-  });
-
-
-  sessionCache.invalidate(userId.toString());
+  const changed = await userRepository.changePassword(userId, hashed);
+  if (!changed) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
+  sessionCache.invalidate(userId);
 
 
   return {

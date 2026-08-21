@@ -35,6 +35,13 @@ const validateEnvironment = (env = process.env) => {
     errors.push('MONGO_URI يجب أن يبدأ بـ mongodb:// أو mongodb+srv://');
   }
 
+  if (
+    env.PHONE_VERIFICATION_ENABLED
+    && !['true', 'false'].includes(env.PHONE_VERIFICATION_ENABLED.trim().toLowerCase())
+  ) {
+    errors.push('PHONE_VERIFICATION_ENABLED يجب أن تكون true أو false');
+  }
+
   if (env.ALLOWED_ORIGINS) {
     try {
       parseAllowedOrigins(env.ALLOWED_ORIGINS);

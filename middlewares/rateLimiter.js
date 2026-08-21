@@ -14,11 +14,14 @@ const definitions = {
   loginLimiter: ['RATE_LIMIT_LOGIN', 15 * 60 * 1000, 10, 'rl:login:', 'تسجيل الدخول', 'email'],
   registerLimiter: ['RATE_LIMIT_REGISTER', 60 * 60 * 1000, 5, 'rl:register:', 'التسجيل'],
   forgotPasswordLimiter: ['RATE_LIMIT_FORGOT', 60 * 60 * 1000, 5, 'rl:forgot:', 'استعادة كلمة المرور', 'email'],
+  resetPasswordLimiter: ['RATE_LIMIT_RESET_PASSWORD', 60 * 60 * 1000, 10, 'rl:reset-password:', 'تعيين كلمة المرور'],
+  refreshLimiter: ['RATE_LIMIT_REFRESH', 60 * 1000, 60, 'rl:refresh:', 'تجديد الجلسة'],
   otpLimiter: ['RATE_LIMIT_OTP', 15 * 60 * 1000, 10, 'rl:otp:', 'التحقق من الكود'],
   resendOtpLimiter: ['RATE_LIMIT_RESEND_OTP', 60 * 60 * 1000, 5, 'rl:resend-otp:', 'إعادة إرسال كود التحقق'],
   uploadLimiter: ['RATE_LIMIT_UPLOAD', 60 * 60 * 1000, 30, 'rl:upload:', 'رفع الملفات'],
   meLimiter: ['RATE_LIMIT_ME', 60 * 1000, 60, 'rl:me:', 'جلب بيانات المستخدم'],
   publicLimiter: ['RATE_LIMIT_PUBLIC', 15 * 60 * 1000, 100, 'rl:public:', 'تصفح البيانات العامة'],
+  phoneVerifyLimiter: ['RATE_LIMIT_PHONE_VERIFY', 60 * 60 * 1000, 10, 'rl:phone-verify:', 'التحقق من الهاتف', 'user'],
 };
 
 const buildStore = (prefix) => {
@@ -36,6 +39,9 @@ const emailKeyGenerator = (req) => {
   const digest = createHash('sha256').update(email).digest('hex').slice(0, 24);
   return `${ip}:${digest}`;
 };
+
+const userKeyGenerator = (req) =>
+  req.user?.id ? `user:${String(req.user.id)}` : ipKeyGenerator(req.ip);
 
 const createLimiter = (definition) => {
   const [envPrefix, defaultWindowMs, defaultMax, storePrefix, messageType, keyType] = definition;
@@ -56,7 +62,9 @@ const createLimiter = (definition) => {
     limit: configuredMax * developmentMultiplier,
     standardHeaders: 'draft-8',
     legacyHeaders: false,
-    keyGenerator: keyType === 'email' ? emailKeyGenerator : undefined,
+    keyGenerator: keyType === 'email'
+      ? emailKeyGenerator
+      : (keyType === 'user' ? userKeyGenerator : undefined),
     store: buildStore(storePrefix),
     message: {
       status: 429,
@@ -161,7 +169,10 @@ module.exports = {
   loginLimiter: delegate('loginLimiter'),
   registerLimiter: delegate('registerLimiter'),
   forgotPasswordLimiter: delegate('forgotPasswordLimiter'),
+  resetPasswordLimiter: delegate('resetPasswordLimiter'),
+  refreshLimiter: delegate('refreshLimiter'),
   publicLimiter: delegate('publicLimiter'),
+  phoneVerifyLimiter: delegate('phoneVerifyLimiter'),
   otpLimiter: delegate('otpLimiter'),
   resendOtpLimiter: delegate('resendOtpLimiter'),
   uploadLimiter: delegate('uploadLimiter'),

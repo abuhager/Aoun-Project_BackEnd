@@ -9,6 +9,10 @@ const MAX_MESSAGE_LENGTH = 2000;
  * دالة التحقق من مشاركة المستخدم في المحادثة
  */
 async function assertParticipant(convId, userId) {
+  if (!mongoose.isObjectIdOrHexString(convId) || !mongoose.isObjectIdOrHexString(userId)) {
+    throw Object.assign(new Error('معرّف المحادثة أو المستخدم غير صالح'), { code: 'BAD_REQUEST' });
+  }
+
   // 1. محاولة البحث بـ ID المحادثة الصريح أولاً
   let conv = await repo.findConversationById(convId);
   
@@ -95,36 +99,21 @@ function registerChatHandlers(io, socket) {
     if (!convId || !trimmed) {
       throw Object.assign(new Error("بيانات إرسال غير صالحة"), { code: "BAD_REQUEST" });
     }
-
-    // 1️⃣ استخراج الهوية بشتى الطرق الممكنة من السوكت
-    let currentUserId = 
-      socket.userId || 
-      socket.user?.id || 
-      socket.user?._id ||
-      socket.request?.user?.id;
-
-    // 2️⃣ جلب المحادثة بأمان عبر الـ ObjectId
-    let parsedConvId;
-    try { parsedConvId = new mongoose.Types.ObjectId(convId); } catch(e){}
-
-    let conv = parsedConvId ? await Conversation.findById(parsedConvId) : null;
-    if (!conv) {
-      conv = await Conversation.findOne({ item: convId });
+    if (trimmed.length > MAX_MESSAGE_LENGTH) {
+      throw Object.assign(
+        new Error(`الرسالة تتجاوز الحد الأقصى (${MAX_MESSAGE_LENGTH} حرف)`),
+        { code: "MESSAGE_TOO_LONG" }
+      );
+    }
+    if (!socket.userId) {
+      throw Object.assign(new Error("هوية الاتصال غير موجودة"), { code: "UNAUTHORIZED" });
     }
 
-    // 3️⃣ استنتاج الهوية برمجياً من أطراف المحادثة في حال فصل الجلسة
-    if (!currentUserId && conv) {
-      currentUserId = conv.requester?._id || conv.requester || conv.owner?._id || conv.owner;
-    }
+    const currentUserId = socket.userId;
+    const conv = await assertParticipant(convId, currentUserId);
+    const realConvId = conv._id.toString();
+    socket.join(`conv_${realConvId}`);
 
-    // 4️⃣ خط الدفاع الاحتياطي الأخير لحقن معرف طوارئ حقيقي مسجل
-    if (!currentUserId) {
-      currentUserId = new mongoose.Types.ObjectId("6a43f5e5cee3421d5c6498dd");
-    }
-
-    const realConvId = conv ? conv._id.toString() : convId;
-
-    // 5️⃣ الحفظ الفعلي الآمن في قاعدة البيانات
     const message = await repo.createMessage({
       conversationId: realConvId,
       senderId: currentUserId, 
@@ -202,6 +191,7 @@ function registerChatHandlers(io, socket) {
   // 3️⃣ حدث حالة الكتابة اللحظية (Typing Status)
   socket.on("typing_status", ({ convId, isTyping } = {}) => {
     if (!convId) return;
+    if (!socket.rooms.has(`conv_${convId}`)) return;
     socket.to(`conv_${convId}`).emit("typing_status", {
       convId,
       userId: socket.userId,
@@ -210,4 +200,4 @@ function registerChatHandlers(io, socket) {
   });
 }
 
-module.exports = { registerChatHandlers };
+module.exports = { assertParticipant, registerChatHandlers };

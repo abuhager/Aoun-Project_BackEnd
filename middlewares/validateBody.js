@@ -4,7 +4,10 @@ const Joi = require('joi');
 
 // ─── Regex Patterns ────────────────────────────────────────────────
 const ARABIC_NAME    = /^[\u0600-\u06FFa-zA-Z0-9\s.'-]{2,60}$/;
-const { JORDAN_PHONE_REGEX: PHONE_REGEX } = require('../utils/phoneUtils');
+const {
+  JORDAN_PHONE_REGEX: PHONE_REGEX,
+  normalizeJordanPhone,
+} = require('../utils/phoneUtils');
 const OTP_REGEX      = /^\d{6}$/;
 const EMAIL_DOMAIN   = /^@[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+$/;
 
@@ -22,6 +25,18 @@ const passwordRule = Joi.string()
     'string.pattern.base': 'يجب أن تحتوي كلمة المرور على حرف كبير وصغير ورقم على الأقل',
   });
 
+const jordanPhoneRule = Joi.string()
+  .max(32)
+  .custom((value, helpers) => {
+    const normalized = normalizeJordanPhone(value);
+    return PHONE_REGEX.test(normalized)
+      ? normalized
+      : helpers.error('string.pattern.base');
+  })
+  .messages({
+    'string.pattern.base': 'رقم الهاتف غير صالح — استخدم رقماً أردنياً يبدأ بـ 77 أو 78 أو 79',
+  });
+
 const textField = (min, max) => Joi.string().min(min).max(max).trim();
 
 // ─── Schemas ─────────────────────────────────────────────────────
@@ -32,8 +47,7 @@ const schemas = {
     name:     Joi.string().pattern(ARABIC_NAME).min(2).max(60).required().trim(),
     email:    Joi.string().email({ tlds: { allow: false } }).max(100).required().lowercase().trim(),
     password: passwordRule.required(),
-    phone:    Joi.string().pattern(PHONE_REGEX).optional().trim()
-                .messages({ 'string.pattern.base': 'رقم الهاتف غير صالح' }),
+    phone:    jordanPhoneRule.required(),
   }).unknown(false),
 
   login: Joi.object({
@@ -55,14 +69,12 @@ const schemas = {
   }).unknown(false),
 
   resetPassword: Joi.object({
-    token:    Joi.string().min(20).max(500).required().trim(),
     password: passwordRule.required(),
   }).unknown(false),
 
   updateMe: Joi.object({
     name:  Joi.string().pattern(ARABIC_NAME).min(2).max(60).optional().trim(),
-    phone: Joi.string().pattern(PHONE_REGEX).optional().trim()
-             .messages({ 'string.pattern.base': 'رقم الهاتف غير صالح' }),
+    phone: jordanPhoneRule.optional(),
   }).min(1).unknown(false),
 
   updatePassword: Joi.object({
@@ -207,9 +219,9 @@ const schemas = {
     maxPendingOffersPerDonor:       Joi.number().integer().min(1).max(20).optional(),
     donorQuotaReward:               Joi.number().integer().min(0).max(5).optional(),
     quotaResetDayOfMonth:           Joi.number().integer().min(1).max(28).optional(),
-    studentDefaultTrustLevel:       Joi.number().integer().min(1).max(4).optional(),
-    minTrustLevelForRequests:       Joi.number().integer().min(1).max(4).optional(),
-    minTrustLevelForDonating:       Joi.number().integer().min(1).max(4).optional(),
+    studentDefaultTrustLevel:       Joi.number().integer().min(1).max(2).optional(),
+    minTrustLevelForRequests:       Joi.number().integer().min(1).max(2).optional(),
+    minTrustLevelForDonating:       Joi.number().integer().min(1).max(2).optional(),
     trustScorePerDonation:          Joi.number().integer().min(0).max(20).optional(),
     trustScorePerRequest:           Joi.number().integer().min(0).max(10).optional(),
     ratingThresholdExcellent:       Joi.number().integer().min(1).max(10).optional(),
@@ -259,6 +271,10 @@ const schemas = {
   verifyOtp: Joi.object({
     otp: Joi.string().length(6).pattern(OTP_REGEX).required()
            .messages({ 'string.length': 'الرمز يجب أن يتكون من 6 أرقام' }),
+  }).unknown(false),
+
+  verifyPhoneToken: Joi.object({
+    idToken: Joi.string().min(100).max(10_000).required(),
   }).unknown(false),
 };
 

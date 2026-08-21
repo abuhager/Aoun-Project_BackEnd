@@ -1,6 +1,8 @@
 // models/User.js
 const mongoose = require('mongoose');
 
+const JORDAN_PHONE_REGEX = /^\+9627[789]\d{7}$/;
+
 const userSchema = new mongoose.Schema(
   {
     name:              { type: String, required: true, trim: true },
@@ -8,6 +10,9 @@ const userSchema = new mongoose.Schema(
     password:          { type: String, required: true, select: false },
     avatar:            { type: String, default: '' },
     isBanned:          { type: Boolean, default: false },
+    isFrozen:          { type: Boolean, default: false },
+    banReason:         { type: String, default: null, maxlength: 500 },
+    bannedBy:          { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     role:              { type: String, default: 'user', enum: ['user', 'admin', 'super_admin'] },
     isVerified:        { type: Boolean, default: false },
 
@@ -17,14 +22,22 @@ const userSchema = new mongoose.Schema(
     otpAttempts:           { type: Number, default: 0, select: false },
 
     // ── OTP الهاتف ─────────────────────────────────────────
-    // ✅ تم التعديل: أصبح إلزامياً الآن مع مسح المسافات تلقائياً
-    phone:             { type: String, required: true, trim: true }, 
+    phone: {
+      type: String,
+      required: true,
+      trim: true,
+      validate: {
+        validator: (value) => JORDAN_PHONE_REGEX.test(value),
+        message: 'رقم الهاتف يجب أن يكون بصيغة دولية أردنية صحيحة (+9627XXXXXXXX)',
+      },
+    },
     phoneVerified:     { type: Boolean, default: false },
     phoneOtp:          { type: String, select: false },
     phoneOtpExpiry:    { type: Date,   select: false },
+    phoneOtpSentAt:    { type: Date,   select: false },
 
     // ── نظام التحقق ومستوى الثقة ───────────────────────────
-trustLevel: { type: Number, min: 1, max: 2, default: 2 },
+    trustLevel:        { type: Number, min: 1, max: 2, default: 1 },
     trustScore:        { type: Number, default: 70 },
     promotedByAdmin:   { type: Boolean, default: false },
     isVerifiedStudent: { type: Boolean, default: false },
@@ -37,6 +50,9 @@ trustLevel: { type: Number, min: 1, max: 2, default: 2 },
     resetPasswordToken:  { type: String, select: false },
     resetPasswordExpire: { type: Date,   select: false },
     refreshToken:        { type: String, select: false },
+    previousRefreshToken: { type: String, select: false },
+    previousRefreshTokenExpire: { type: Date, select: false },
+    sessionVersion:      { type: Number, default: 0, select: false },
     sessionIssuedAt:     { type: Date,   select: false },
   },
   { timestamps: true }
@@ -45,8 +61,15 @@ trustLevel: { type: Number, min: 1, max: 2, default: 2 },
 // ── الفهارس (Indexes) ───────────────────────────────────
 userSchema.index({ email: 1 }, { unique: true });
 
-// ✅ بما أن الهاتف أصبح Required صريح، الفهرس العادي الفريد يكفي تماماً ولا حاجة لشروط معقدة
-userSchema.index({ phone: 1 }, { unique: true });
+// لا نحجز الرقم نهائياً قبل إثبات ملكيته. الفهرس الفريد يطبّق فقط على الأرقام المحققة.
+userSchema.index(
+  { phone: 1 },
+  {
+    unique: true,
+    name: 'phone_verified_unique',
+    partialFilterExpression: { phoneVerified: true },
+  }
+);
 
 userSchema.index({ role: 1, isBanned: 1 });
 userSchema.index({ trustLevel: 1 });

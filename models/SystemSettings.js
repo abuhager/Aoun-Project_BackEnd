@@ -11,7 +11,7 @@ const systemSettingsSchema = new mongoose.Schema(
     // ─── حصص المستخدمين ──────────────────────────────────────────────────
     defaultUserQuota:         { type: Number, default: 2, min: 0, max: 20 },
     studentQuota:             { type: Number, default: 5, min: 1, max: 20 },
-    studentDefaultTrustLevel: { type: Number, default: 2, min: 1, max: 4  },
+    studentDefaultTrustLevel: { type: Number, default: 2, min: 1, max: 2  },
     level2Quota:              { type: Number, default: 4, min: 0, max: 20 },
 
     // ─── حدود الحجز والتبرع ──────────────────────────────────────────────
@@ -72,8 +72,8 @@ const systemSettingsSchema = new mongoose.Schema(
 
     // ─── إعدادات الطلبات والعروض ──────────────────────────────────────────
     // ✅ [HC-OFFER-01]: حدود الأهلية والعروض ديناميكية
-    minTrustLevelForRequests: { type: Number, default: 2, min: 1, max: 4 },
-    minTrustLevelForDonating: { type: Number, default: 1, min: 1, max: 4 },
+    minTrustLevelForRequests: { type: Number, default: 2, min: 1, max: 2 },
+    minTrustLevelForDonating: { type: Number, default: 1, min: 1, max: 2 },
     maxPendingOffersPerDonor: { type: Number, default: 5, min: 1, max: 20 },
 
     // ─── إعدادات الجامعات ─────────────────────────────────────────────────
