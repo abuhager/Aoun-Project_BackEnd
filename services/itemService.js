@@ -14,8 +14,11 @@ const SafeHub         = require('../models/SafeHub');
 const itemRepository  = require('../repositories/itemRepository');
 const AppError        = require('../utils/AppError');
 
-const { fireSendEmail }      = require('../utils/sendEmail');
-const { uploadToCloudinary } = require('../utils/uploadToCloudinary');
+const { fireSendEmail } = require('../utils/sendEmail');
+const {
+  uploadToCloudinary,
+  deleteFromCloudinary,
+} = require('../utils/uploadToCloudinary');
 const notifyUser             = require('../utils/notifyUser');
 const { toPublicItem, toDonorItem, toReceiverItem } = require('../dtos/itemDto');
 const { buildGamificationProfile } = require('../utils/gamification');
@@ -627,4 +630,210 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
   }
 
   throw new AppError('نوع التأكيد غير معروف', 400, 'INVALID_CONFIRMATION_TYPE');
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. تعديل غرض
+// ─────────────────────────────────────────────────────────────────────────────
+exports.updateItemLogic = async (itemId, userId, body = {}, file = null) => {
+  const snapshot = await Item.findById(itemId)
+    .select('donor status cloudinaryId')
+    .lean();
+
+  if (!snapshot)
+    throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+
+  if (snapshot.donor?.toString() !== userId?.toString())
+    throw new AppError('ليس لديك صلاحية تعديل هذا الغرض', 403, 'FORBIDDEN');
+
+  if (!['متاح', 'مخفي'].includes(snapshot.status))
+    throw new AppError(
+      'لا يمكن تعديل الغرض بعد حجزه أو تسليمه',
+      409,
+      'ITEM_NOT_EDITABLE'
+    );
+
+  if (body.category) {
+    const settings = await SystemSettings.getCached();
+    if (!settings.categories?.includes(body.category))
+      throw new AppError(
+        `التصنيف "${body.category}" غير مدعوم`,
+        400,
+        'INVALID_CATEGORY'
+      );
+  }
+
+  if (body.safeHub) {
+    // المراكز القديمة التي لا تحتوي isActive تُعامل كمفعّلة للتوافق مع البيانات الحالية.
+    const safeHub = await SafeHub.findOne({
+      _id: body.safeHub,
+      isActive: { $ne: false },
+    }).select('_id').lean();
+
+    if (!safeHub)
+      throw new AppError(
+        'نقطة الاستلام غير موجودة أو غير مفعّلة',
+        400,
+        'INVALID_SAFE_HUB'
+      );
+  }
+
+  const allowedFields = [
+    'title',
+    'description',
+    'category',
+    'location',
+    'condition',
+    'safeHub',
+  ];
+  const updates = {};
+
+  for (const field of allowedFields) {
+    if (!Object.hasOwn(body, field)) continue;
+    const value = body[field];
+    updates[field] = typeof value === 'string' ? value.trim() : value;
+  }
+
+  let uploadedImage = null;
+
+  if (file) {
+    await validateImageFile(file);
+    uploadedImage = await uploadToCloudinary(file.buffer);
+    updates.imageUrl = uploadedImage.secure_url;
+    updates.cloudinaryId = uploadedImage.public_id;
+  }
+
+  if (Object.keys(updates).length === 0)
+    throw new AppError('لا توجد تعديلات للحفظ', 400, 'NO_CHANGES');
+
+  let updatedItem;
+
+  try {
+    updatedItem = await Item.findOneAndUpdate(
+      {
+        _id: itemId,
+        donor: userId,
+        status: { $in: ['متاح', 'مخفي'] },
+      },
+      { $set: updates },
+      { returnDocument: 'after', runValidators: true }
+    ).populate([
+      {
+        path: 'donor',
+        select: 'name avatar trustScore isVerifiedStudent trustLevel',
+      },
+      {
+        path: 'safeHub',
+        select: 'name address city workingHours',
+      },
+    ]);
+  } catch (err) {
+    if (uploadedImage?.public_id) {
+      try {
+        await deleteFromCloudinary(uploadedImage.public_id);
+      } catch (cleanupErr) {
+        console.warn('[Cloudinary] تعذر حذف الصورة الجديدة بعد فشل التعديل:', cleanupErr.message);
+      }
+    }
+    throw err;
+  }
+
+  if (!updatedItem) {
+    if (uploadedImage?.public_id) {
+      try {
+        await deleteFromCloudinary(uploadedImage.public_id);
+      } catch (cleanupErr) {
+        console.warn('[Cloudinary] تعذر حذف الصورة الجديدة بعد تعارض التعديل:', cleanupErr.message);
+      }
+    }
+
+    throw new AppError(
+      'تغيّرت حالة الغرض أثناء التعديل؛ حدّث الصفحة وحاول مجدداً',
+      409,
+      'ITEM_UPDATE_CONFLICT'
+    );
+  }
+
+  if (
+    uploadedImage?.public_id &&
+    snapshot.cloudinaryId &&
+    snapshot.cloudinaryId !== uploadedImage.public_id
+  ) {
+    try {
+      await deleteFromCloudinary(snapshot.cloudinaryId);
+    } catch (cleanupErr) {
+      console.warn('[Cloudinary] تعذر حذف الصورة القديمة بعد التعديل:', cleanupErr.message);
+    }
+  }
+
+  const itemObject = updatedItem.toObject
+    ? updatedItem.toObject()
+    : { ...updatedItem };
+
+  return {
+    msg: 'تم تحديث الغرض بنجاح ✅',
+    item: toDonorItem(itemObject, userId),
+  };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. حذف غرض
+// ─────────────────────────────────────────────────────────────────────────────
+exports.deleteItemLogic = async (itemId, userId, isAdmin = false) => {
+  const snapshot = await Item.findById(itemId)
+    .select('donor bookedBy waitlist status cloudinaryId title')
+    .lean();
+
+  if (!snapshot)
+    throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+
+  const isOwner = snapshot.donor?.toString() === userId?.toString();
+  if (!isOwner && !isAdmin)
+    throw new AppError('ليس لديك صلاحية حذف هذا الغرض', 403, 'FORBIDDEN');
+
+  if (snapshot.status === 'تم التسليم' && !isAdmin)
+    throw new AppError(
+      'لا يمكن حذف غرض تم تسليمه',
+      409,
+      'DELIVERED_ITEM_DELETE_FORBIDDEN'
+    );
+
+  const deleteFilter = { _id: itemId };
+  if (!isAdmin) {
+    deleteFilter.donor = userId;
+    deleteFilter.status = { $ne: 'تم التسليم' };
+  }
+
+  const deletedItem = await Item.findOneAndDelete(deleteFilter);
+  if (!deletedItem)
+    throw new AppError(
+      'تغيّرت حالة الغرض أثناء الحذف؛ حدّث الصفحة وحاول مجدداً',
+      409,
+      'ITEM_DELETE_CONFLICT'
+    );
+
+  if (snapshot.cloudinaryId) {
+    try {
+      await deleteFromCloudinary(snapshot.cloudinaryId);
+    } catch (cleanupErr) {
+      console.warn('[Cloudinary] تعذر حذف صورة الغرض المحذوف:', cleanupErr.message);
+    }
+  }
+
+  // إغلاق شاشة الغرض فوراً لدى الحاجز وقائمة الانتظار إن كانوا متصلين.
+  const affectedUserIds = [
+    snapshot.bookedBy,
+    ...(snapshot.waitlist ?? []).map((entry) => entry.user),
+  ].filter(Boolean);
+
+  try {
+    const io = getIO();
+    for (const affectedUserId of affectedUserIds) {
+      io.to(getUserRoom(affectedUserId.toString())).emit('item:deleted', {
+        itemId: snapshot._id,
+      });
+    }
+  } catch (_) {}
+
+  return { msg: 'تم حذف الغرض بنجاح ✅' };
 };

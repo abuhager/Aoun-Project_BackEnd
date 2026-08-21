@@ -22,6 +22,12 @@ exports.findByIdLean = (itemId) =>
 exports.countActiveByDonor = (donorId) =>
   Item.countDocuments({ donor: donorId, status: { $in: ['متاح', 'محجوز'] } });
 
+exports.countActiveByHub = (hubId) =>
+  Item.countDocuments({
+    safeHub: hubId,
+    status: { $in: ['متاح', 'محجوز'] },
+  });
+
 exports.countActiveBookingsByUser = (userId) =>
   Item.countDocuments({ bookedBy: userId, status: 'محجوز' });
 

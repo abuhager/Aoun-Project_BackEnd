@@ -11,7 +11,11 @@ exports.findAll = () =>
 
 // Public — النشطة فقط
 exports.findAllActive = () =>
-  SafeHub.find({ isActive: true }).sort({ city: 1 }).select('-createdBy').lean();
+  // يدعم السجلات القديمة التي لا تحتوي isActive؛ التعطيل الصريح وحده يخفي المركز.
+  SafeHub.find({ isActive: { $ne: false } })
+    .sort({ city: 1, name: 1 })
+    .select('-createdBy')
+    .lean();
 
 exports.findById = (id) =>
   SafeHub.findById(id).lean();
@@ -36,3 +40,6 @@ exports.updateById = (id, rawBody) => {
 
 exports.deactivateById = (id) =>
   SafeHub.findByIdAndUpdate(id, { $set: { isActive: false } }, { returnDocument: 'after' });
+
+exports.reactivateById = (id) =>
+  SafeHub.findByIdAndUpdate(id, { $set: { isActive: true } }, { returnDocument: 'after' });

@@ -198,12 +198,11 @@ const schemas = {
     name:         Joi.string().min(3).max(100).optional().trim(),
     address:      Joi.string().min(3).max(200).optional().trim(),
     city:         Joi.string().min(2).max(60).optional().trim(),
-    isActive:     Joi.boolean().optional(),
     workingHours: Joi.string().max(100).optional().trim(),
     coordinates: Joi.object({
       lat: Joi.number().min(-90).max(90).required(),
       lng: Joi.number().min(-180).max(180).required(),
-    }).optional(),
+    }).allow(null).optional(),
   }).min(1).unknown(false),
 
   // ──────────── settings ─────────────────────────────────────────

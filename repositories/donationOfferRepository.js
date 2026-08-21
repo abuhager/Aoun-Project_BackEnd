@@ -1,6 +1,10 @@
 // repositories/donationOfferRepository.js ✅ CLEAN & PATCHED
 const DonationOffer = require('../models/DonationOffer');
 
+// العرض المعلّق ما زال قابلاً للاختيار، لذلك يمنع تعطيل مركزه حتى يُعالج.
+exports.countPendingByHub = (hubId) =>
+  DonationOffer.countDocuments({ safeHub: hubId, status: 'pending' });
+
 // إنشاء عرض جديد
 exports.createOffer = (payload) =>
   DonationOffer.create(payload);

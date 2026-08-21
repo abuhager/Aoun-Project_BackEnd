@@ -10,20 +10,26 @@ const safeHubSchema = new mongoose.Schema(
       type:     String,
       required: true,
       trim:     true,
+      minlength: 3,
+      maxlength: 100,
     },
     address: {
       type:     String,
       required: true,
       trim:     true,
+      minlength: 3,
+      maxlength: 200,
     },
     city: {
       type:     String,
       required: true,
       trim:     true,
+      minlength: 2,
+      maxlength: 60,
     },
     coordinates: {
-      lat: { type: Number },
-      lng: { type: Number },
+      lat: { type: Number, min: -90,  max: 90 },
+      lng: { type: Number, min: -180, max: 180 },
     },
     isActive: {
       type:    Boolean,
@@ -36,6 +42,7 @@ const safeHubSchema = new mongoose.Schema(
     workingHours: {
       type:    String,
       trim:    true,
+      maxlength: 100,
       default: '9:00 ص — 5:00 م',
     },
   },

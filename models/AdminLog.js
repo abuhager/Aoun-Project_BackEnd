@@ -14,7 +14,7 @@ const adminLogSchema = new mongoose.Schema({
   },
   targetModel: {
     type: String,
-    enum: ['User', 'Item', 'Report', null],
+    enum: ['User', 'Item', 'Report', 'SafeHub', null],
     default: null,
   },
 
