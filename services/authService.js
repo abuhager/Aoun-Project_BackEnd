@@ -209,7 +209,8 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
   const isStudent          = await isUniversityEmail(email);
 
 
-  // ✅ [SEC-NEW-01] رسالة موحَّدة — المهاجم لا يعرف إن كان الإيميل مسجَّلاً أم لا
+  // الحساب الجديد وغير المفعَّل يتابعان إلى OTP. الحساب المفعَّل يعود بخطأ
+  // صريح لتحسين تجربة النسخة التجريبية ومنع تحويله إلى شاشة رمز لن يُرسل.
   const GENERIC_REGISTER_RESPONSE = {
     statusCode: 201,
     body: { msg: 'إذا كان الإيميل جديداً، ستصلك رسالة تفعيل قريباً 📬', email, isVerifiedStudent: isStudent },
@@ -221,9 +222,15 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
 
   if (exists) {
     if (exists.isVerified) {
-      // تأخير وهمي لمنع Timing Attack — لا نُخبر المهاجم بالحالة
+      // نحافظ على كلفة bcrypt لتقليل فرق التوقيت، لكن نعيد حالة واضحة للواجهة.
       await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
-      return GENERIC_REGISTER_RESPONSE;
+      return {
+        statusCode: 409,
+        body: {
+          msg: 'هذا البريد الإلكتروني مسجّل مسبقاً، سجّل الدخول للمتابعة',
+          code: 'EMAIL_ALREADY_EXISTS',
+        },
+      };
     }
 
 
