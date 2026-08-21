@@ -14,29 +14,49 @@ const DEFAULT_LEVELS = Object.freeze([
   { level: 5, title: 'أسطورة', badge: '👑', minScore: 150, maxScore: null },
 ]);
 
+const normalizeScore = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+};
+
+const normalizeLevels = (levels) => {
+  if (!Array.isArray(levels) || levels.length === 0) return [...DEFAULT_LEVELS];
+
+  const normalized = levels
+    .filter((level) => Number.isFinite(Number(level?.minScore)))
+    .map((level) => ({ ...level, minScore: Number(level.minScore) }))
+    .sort((left, right) => left.minScore - right.minScore);
+
+  return normalized.length ? normalized : [...DEFAULT_LEVELS];
+};
+
 // ✅ NJ-09: يقبل levels مخصصة من SystemSettings أو يستخدم الافتراضية
 const calcLevel = (trustScore, levels = DEFAULT_LEVELS) => {
-  if (!levels || levels.length === 0) return DEFAULT_LEVELS[0];
-  const score = Math.max(0, trustScore);
-  return [...levels].reverse().find((l) => score >= l.minScore) ?? levels[0];
+  const normalizedLevels = normalizeLevels(levels);
+  const score = normalizeScore(trustScore);
+  return [...normalizedLevels]
+    .reverse()
+    .find((level) => score >= level.minScore) ?? normalizedLevels[0];
 };
 
 // ✅ NJ-10: حماية من أن levels تكون فارغة
 const calcProgress = (trustScore, levels = DEFAULT_LEVELS) => {
-  if (!levels || levels.length === 0) return { progress: 0, pointsToNext: null };
-
-  const score     = Math.max(0, trustScore);
-  const current   = calcLevel(score, levels);
-  const nextLevel = levels.find((l) => l.level === current.level + 1);
+  const normalizedLevels = normalizeLevels(levels);
+  const score = normalizeScore(trustScore);
+  const current = calcLevel(score, normalizedLevels);
+  const currentIndex = normalizedLevels.findIndex(
+    (level) => level.level === current.level && level.minScore === current.minScore
+  );
+  const nextLevel = normalizedLevels[currentIndex + 1];
 
   if (!nextLevel) return { progress: 100, pointsToNext: null };
 
-  const range    = nextLevel.minScore - current.minScore;
+  const range    = Math.max(1, nextLevel.minScore - current.minScore);
   const achieved = score - current.minScore;
 
   return {
-    progress:     Math.min(100, Math.round((achieved / range) * 100)),
-    pointsToNext: nextLevel.minScore - score,
+    progress:     Math.max(0, Math.min(100, Math.round((achieved / range) * 100))),
+    pointsToNext: Math.max(0, nextLevel.minScore - score),
   };
 };
 
@@ -44,12 +64,14 @@ const calcProgress = (trustScore, levels = DEFAULT_LEVELS) => {
 const buildGamificationProfile = (trustScore, totalDonations, settings = null) => {
   // إذا كانت SystemSettings تحتوي على gamificationLevels استخدمها
   const levels    = settings?.gamificationLevels ?? DEFAULT_LEVELS;
-  const levelInfo = calcLevel(trustScore, levels);
-  const { progress, pointsToNext } = calcProgress(trustScore, levels);
+  const normalizedScore = normalizeScore(trustScore);
+  const normalizedDonations = Math.max(0, Number(totalDonations) || 0);
+  const levelInfo = calcLevel(normalizedScore, levels);
+  const { progress, pointsToNext } = calcProgress(normalizedScore, levels);
 
   return {
-    trustScore,
-    totalDonations,
+    trustScore: normalizedScore,
+    totalDonations: normalizedDonations,
     level:        levelInfo.level,
     title:        levelInfo.title,
     badge:        levelInfo.badge,
@@ -63,6 +85,7 @@ module.exports = {
   calcLevel,
   calcProgress,
   buildGamificationProfile,
+  normalizeScore,
   // ✅ للتوافق مع الاستيرادات القديمة
   LEVELS: DEFAULT_LEVELS,
 };

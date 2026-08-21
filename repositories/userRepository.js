@@ -18,6 +18,17 @@ const BASE_USER_FIELDS =
 const USER_FIELDS  = BASE_USER_FIELDS + ' phoneVerified';       // للمستخدم نفسه
 const ADMIN_FIELDS = BASE_USER_FIELDS + ' reportedBy';          // للأدمن
 
+const activeAccountEligibility = () => ({
+  isVerified: true,
+  // الحسابات القديمة قد لا تحتوي هذين الحقلين؛ نمنع true فقط.
+  isBanned: { $ne: true },
+  isFrozen: { $ne: true },
+});
+
+const leaderboardEligibility = () => ({
+  ...activeAccountEligibility(),
+});
+
 // ─── قراءة ───────────────────────────────────────────────────
 
 exports.findByEmail = (email, options = {}) => {
@@ -131,6 +142,13 @@ exports.setTrustLevel = (id, level) =>
 exports.findByIdWithPassword = (id) =>
   User.findById(id).select('+password');
 
+exports.findProfileUpdateState = (id) =>
+  User.findById(id)
+    .select(
+      'phone phoneVerified trustLevel isVerifiedStudent promotedByAdmin avatar +avatarPublicId'
+    )
+    .lean();
+
 // ─── دوال verifyEmailLogic ────────────────────────────────────
 
 exports.findAndIncrementOtpAttempts = (email, maxAttempts = 5) =>
@@ -226,6 +244,41 @@ exports.invalidateUserSession = (userId) =>
 
 // ✅ FIX [PERF-PROF-02]: lean() مباشرة — لا يجوز استدعاء .select().lean() فوقها
 exports.findPublicProfile = (id) =>
-  User.findById(id)
-    .select('name avatar role trustScore trustLevel totalDonations isVerifiedStudent isBanned createdAt')
+  User.findOne({
+    _id: id,
+    ...activeAccountEligibility(),
+  })
+    .select(
+      'name avatar role trustScore trustLevel totalDonations badges ' +
+      'isVerifiedStudent createdAt'
+    )
     .lean();
+
+exports.findLeaderboardUsers = (limit) =>
+  User.find(leaderboardEligibility())
+    .select('name avatar trustScore totalDonations')
+    .sort({ trustScore: -1, totalDonations: -1, _id: 1 })
+    .limit(limit)
+    .lean();
+
+exports.findLeaderboardUser = (userId) =>
+  User.findOne({ _id: userId, ...leaderboardEligibility() })
+    .select('trustScore totalDonations')
+    .lean();
+
+exports.countLeaderboardUsersAhead = (user) =>
+  User.countDocuments({
+    ...leaderboardEligibility(),
+    $or: [
+      { trustScore: { $gt: user.trustScore } },
+      {
+        trustScore: user.trustScore,
+        totalDonations: { $gt: user.totalDonations },
+      },
+      {
+        trustScore: user.trustScore,
+        totalDonations: user.totalDonations,
+        _id: { $lt: user._id },
+      },
+    ],
+  });

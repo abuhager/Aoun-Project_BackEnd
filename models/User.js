@@ -9,6 +9,7 @@ const userSchema = new mongoose.Schema(
     email:             { type: String, required: true, trim: true, lowercase: true },
     password:          { type: String, required: true, select: false },
     avatar:            { type: String, default: '' },
+    avatarPublicId:    { type: String, default: null, select: false },
     isBanned:          { type: Boolean, default: false },
     isFrozen:          { type: Boolean, default: false },
     banReason:         { type: String, default: null, maxlength: 500 },

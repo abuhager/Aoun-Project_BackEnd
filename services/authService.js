@@ -34,12 +34,11 @@ const { Readable } = require('stream');
 const cloudinary   = require('../config/cloudinary');
 
 
-const Item           = require('../models/Item');
-const Rating         = require('../models/Rating');
 const SystemSettings = require('../models/SystemSettings');
 
 
 const userRepository = require('../repositories/userRepository');
+const profileRepository = require('../repositories/profileRepository');
 const emailService   = require('./emailService');
 const sessionCache   = require('../utils/sessionCache');
 
@@ -116,6 +115,7 @@ const buildSafeUser = (user) => ({
   trustScore:         user.trustScore,
   trustLevel:         user.trustLevel     ?? 1,
   quota:              user.quota,
+  totalDonations:     user.totalDonations ?? 0,
   isVerified:         user.isVerified,
   isVerifiedStudent:  user.isVerifiedStudent,
   isBanned:           user.isBanned       ?? false,
@@ -131,6 +131,15 @@ const _getProfilePageParams = async (page) => {
   const pageSize = settings?.profilePageSize ?? 10;
   return { pageSize, skip: (page - 1) * pageSize, settings };
 };
+
+const toProfileActivityItem = (item) => ({
+  _id: item._id,
+  title: item.title,
+  category: item.category,
+  status: item.status,
+  imageUrl: item.imageUrl ?? '',
+  createdAt: item.deliveredAt ?? item.createdAt,
+});
 
 
 // ✅ [DUP-NEW-01] دالة مشتركة لإصدار OTP — تُزيل التكرار من 3 أماكن
@@ -682,10 +691,22 @@ exports.resetPasswordLogic = async (token, newPassword) => {
 
 // ─── updateMeLogic ────────────────────────────────────────────────
 exports.updateMeLogic = async (userId, updates, fileBuffer, fileMimeType) => {
-  const settings     = await SystemSettings.getCached();
-  const maxImageSize = settings?.maxAvatarSizeBytes ?? 2 * 1024 * 1024;
-  const maxWidth     = settings?.maxAvatarWidth      ?? 400;
-  const maxHeight    = settings?.maxAvatarHeight     ?? 400;
+  const [settings, currentUser] = await Promise.all([
+    SystemSettings.getCached(),
+    userRepository.findProfileUpdateState(userId),
+  ]);
+
+  if (!currentUser) {
+    return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
+  }
+
+  const maxAvatarSizeMb = Math.min(
+    20,
+    Math.max(1, Number(settings?.maxAvatarSizeMb ?? 5))
+  );
+  const maxImageSize = maxAvatarSizeMb * 1024 * 1024;
+  const maxWidth = Math.min(1000, Math.max(100, Number(settings?.avatarWidth ?? 400)));
+  const maxHeight = Math.min(1000, Math.max(100, Number(settings?.avatarHeight ?? 400)));
 
 
   if (fileBuffer) {
@@ -693,35 +714,82 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, fileMimeType) => {
       return { statusCode: 400, body: { msg: 'نوع الملف غير مدعوم — يُسمح بـ JPEG وPNG وWebP فقط' } };
     }
     if (fileBuffer.length > maxImageSize) {
-      return { statusCode: 400, body: { msg: `حجم الصورة يتجاوز الحد المسموح (${Math.round(maxImageSize / 1024)}KB)` } };
+      return {
+        statusCode: 400,
+        body: { msg: `حجم الصورة يتجاوز الحد المسموح (${maxAvatarSizeMb}MB)` },
+      };
     }
   }
 
 
   if (updates.phone) {
-    const existing = await userRepository.findByPhoneExcluding(updates.phone, userId);
-    if (existing) {
-      return { statusCode: 409, body: { msg: 'رقم الهاتف مستخدم من قِبَل حساب آخر ⚠️', code: 'PHONE_ALREADY_USED' } };
+    if (updates.phone === currentUser.phone) {
+      delete updates.phone;
+    } else {
+      const existing = await userRepository.findByPhoneExcluding(updates.phone, userId);
+      if (existing) {
+        return { statusCode: 409, body: { msg: 'رقم الهاتف مستخدم من قِبَل حساب آخر ⚠️', code: 'PHONE_ALREADY_USED' } };
+      }
+
+      updates.phoneVerified = false;
+
+      const wasPhoneOnlyLevel2 =
+        currentUser.phoneVerified
+        && currentUser.trustLevel === 2
+        && !currentUser.isVerifiedStudent
+        && !currentUser.promotedByAdmin;
+
+      if (wasPhoneOnlyLevel2) {
+        updates.trustLevel = 1;
+        updates.quota = settings?.defaultUserQuota ?? 2;
+      }
     }
-    updates.phoneVerified = false;
   }
 
 
+  let newAvatarPublicId = null;
   if (fileBuffer) {
     const stream   = Readable.from(fileBuffer);
-    const imageUrl = await new Promise((resolve, reject) => {
+    const uploadResult = await new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         { folder: 'avatars', width: maxWidth, height: maxHeight, crop: 'fill' },
-        (err, result) => err ? reject(err) : resolve(result.secure_url)
+        (err, result) => err ? reject(err) : resolve(result)
       );
       stream.pipe(uploadStream);
     });
-    updates.avatar = imageUrl;
+    updates.avatar = uploadResult.secure_url;
+    updates.avatarPublicId = uploadResult.public_id;
+    newAvatarPublicId = uploadResult.public_id;
   }
 
 
-  const updated = await userRepository.updateUser(userId, updates);
-  if (!updated) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
+  let updated;
+  try {
+    updated = await userRepository.updateUser(userId, updates);
+  } catch (error) {
+    if (newAvatarPublicId) {
+      await cloudinary.uploader.destroy(newAvatarPublicId).catch(() => {});
+    }
+    throw error;
+  }
+
+  if (!updated) {
+    if (newAvatarPublicId) {
+      await cloudinary.uploader.destroy(newAvatarPublicId).catch(() => {});
+    }
+    return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
+  }
+
+  if (
+    newAvatarPublicId
+    && currentUser.avatarPublicId
+    && currentUser.avatarPublicId !== newAvatarPublicId
+  ) {
+    setImmediate(() => {
+      cloudinary.uploader.destroy(currentUser.avatarPublicId)
+        .catch((error) => console.warn('[Avatar Cleanup]', error.message));
+    });
+  }
 
   sessionCache.invalidate(userId);
 
@@ -762,14 +830,10 @@ exports.getMeLogic = async (userId, page) => {
   const [user, donationsResult, receivedResult, donationsTotal, receivedTotal] =
     await Promise.all([
       userRepository.findById(userId),
-      Item.find({ donor: userId, status: { $ne: 'draft' } })
-        .sort({ createdAt: -1 }).skip(skip).limit(pageSize)
-        .select('title category status images createdAt').lean(),
-      Item.find({ recipient: userId, status: 'delivered' })
-        .sort({ deliveredAt: -1 }).skip(skip).limit(pageSize)
-        .select('title category images deliveredAt').lean(),
-      Item.countDocuments({ donor: userId, status: { $ne: 'draft' } }),
-      Item.countDocuments({ recipient: userId, status: 'delivered' }),
+      profileRepository.findOwnDonations(userId, skip, pageSize),
+      profileRepository.findReceivedItems(userId, skip, pageSize),
+      profileRepository.countOwnDonations(userId),
+      profileRepository.countReceivedItems(userId),
     ]);
 
 
@@ -784,8 +848,8 @@ exports.getMeLogic = async (userId, page) => {
     statusCode: 200,
     body: {
       user:      buildSafeUser(user),
-      donations: donationsResult,
-      received:  receivedResult,
+      donations: donationsResult.map(toProfileActivityItem),
+      received:  receivedResult.map(toProfileActivityItem),
       page,
       pageSize,
       donationsTotal,
@@ -803,30 +867,57 @@ exports.getMeLogic = async (userId, page) => {
 exports.getPublicProfileLogic = async (targetId, page) => {
   const { pageSize, skip } = await _getProfilePageParams(page);
 
-
-  const [user, donations, ratingsResult] = await Promise.all([
-    userRepository.findPublicProfile(targetId),
-    Item.find({ donor: targetId, status: 'delivered' })
-      .sort({ deliveredAt: -1 }).skip(skip).limit(pageSize)
-      .select('title category images deliveredAt').lean(),
-    Rating.find({ rated: targetId })
-      .sort({ createdAt: -1 }).skip(skip).limit(pageSize)
-      .populate('rater', 'name avatar').lean(),
-  ]);
-
-
+  const user = await userRepository.findPublicProfile(targetId);
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
-  if (user.isBanned) return { statusCode: 403, body: { msg: 'هذا الحساب غير متاح 🚫' } };
+
+  const [donations, received, donationsTotal, receivedTotal, ratingSummary] =
+    await Promise.all([
+      profileRepository.findPublicDonations(targetId, skip, pageSize),
+      profileRepository.findPublicReceivedItems(targetId, skip, pageSize),
+      profileRepository.countPublicDonations(targetId),
+      profileRepository.countPublicReceivedItems(targetId),
+      profileRepository.getRatingSummary(targetId),
+    ]);
+
+  const totalDonationPages = Math.ceil(donationsTotal / pageSize);
+  const totalReceivedPages = Math.ceil(receivedTotal / pageSize);
 
 
   return {
     statusCode: 200,
     body: {
-      user,
-      donations,
-      ratings: ratingsResult,
-      page,
-      pageSize,
+      user: {
+        _id: user._id,
+        name: user.name,
+        avatar: user.avatar ?? '',
+        role: user.role,
+        trustScore: user.trustScore ?? 0,
+        trustLevel: user.trustLevel ?? 1,
+        totalDonations: user.totalDonations ?? 0,
+        isVerifiedStudent: Boolean(user.isVerifiedStudent),
+        badges: user.badges ?? [],
+        createdAt: user.createdAt,
+        gamification: buildGamificationProfile(
+          user.trustScore,
+          user.totalDonations
+        ),
+      },
+      stats: {
+        donationsCount: donationsTotal,
+        receivedCount: receivedTotal,
+        totalRatings: ratingSummary.totalRatings,
+        averageRating: ratingSummary.averageRating,
+      },
+      donations: donations.map(toProfileActivityItem),
+      received: received.map(toProfileActivityItem),
+      pagination: {
+        page,
+        pageSize,
+        totalDonationPages,
+        totalReceivedPages,
+        hasMoreDonations: page < totalDonationPages,
+        hasMoreReceived: page < totalReceivedPages,
+      },
     },
   };
 };

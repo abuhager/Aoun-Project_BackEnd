@@ -18,6 +18,7 @@ const { fireSendEmail }      = require('../utils/sendEmail');
 const { uploadToCloudinary } = require('../utils/uploadToCloudinary');
 const notifyUser             = require('../utils/notifyUser');
 const { toPublicItem, toDonorItem, toReceiverItem } = require('../dtos/itemDto');
+const { buildGamificationProfile } = require('../utils/gamification');
 const { getIO }              = require('../socket');
 
 // ── ✅ ARCH-01: ثوابت مشتركة ────────────────────────────────────────────────
@@ -89,12 +90,23 @@ exports.getItemsLogic = async (query) => {
 exports.getMyItemsLogic = async (userId) => {
   const [user, myDonations, myRequests] = await Promise.all([
     User.findById(userId)
-      .select('name email trustScore quota isVerifiedStudent gamification').lean(),
+      .select(
+        'name email avatar trustScore trustLevel quota totalDonations ' +
+        'isVerifiedStudent badges'
+      )
+      .lean(),
     itemRepository.findDonationsByUser(userId),
     itemRepository.findReceivedByUser(userId),
   ]);
 
-  return { user, myDonations, myRequests };
+  const safeUser = user
+    ? {
+        ...user,
+        gamification: buildGamificationProfile(user.trustScore, user.totalDonations),
+      }
+    : null;
+
+  return { user: safeUser, myDonations, myRequests };
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

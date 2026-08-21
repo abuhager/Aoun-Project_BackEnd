@@ -75,7 +75,7 @@ const schemas = {
   updateMe: Joi.object({
     name:  Joi.string().pattern(ARABIC_NAME).min(2).max(60).optional().trim(),
     phone: jordanPhoneRule.optional(),
-  }).min(1).unknown(false),
+  }).unknown(false),
 
   updatePassword: Joi.object({
     currentPassword: Joi.string().min(8).max(128).required(),

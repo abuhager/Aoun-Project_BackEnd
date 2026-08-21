@@ -26,6 +26,7 @@ const {
   otpLimiter,
   resendOtpLimiter,
   meLimiter,
+  publicLimiter,
 } = require('../middlewares/rateLimiter');
 
 const conditionalUpload = (req, res, next) => {
@@ -98,6 +99,7 @@ router.post('/refresh',
 );
 
 router.get('/profile/:id',
+  publicLimiter,
   validateObjectId('id'),
   authController.getPublicProfile
 );
@@ -127,6 +129,7 @@ router.post('/logout',
 );
 
 router.put('/me',
+  meLimiter,
   requireAuth,
   conditionalUpload,
   conditionalVerify,
@@ -135,6 +138,7 @@ router.put('/me',
 );
 
 router.put('/me/password',
+  meLimiter,
   requireAuth,
   validateBody('updatePassword'),
   authController.updatePassword

@@ -152,6 +152,13 @@ exports.updateMe = asyncHandler(async (req, res) => {
     updates.phone = phone;
   }
 
+  if (Object.keys(updates).length === 0 && !req.file) {
+    return res.status(400).json({
+      msg: 'لم يتم إرسال أي تغيير للملف الشخصي',
+      code: 'NO_PROFILE_CHANGES',
+    });
+  }
+
   const result = await authService.updateMeLogic(
     req.user.id,
     updates,
@@ -168,5 +175,11 @@ exports.updatePassword = asyncHandler(async (req, res) => {
     currentPassword: req.body.currentPassword,
     newPassword:     req.body.newPassword,
   });
+
+  if (result.statusCode === 200) {
+    res.clearCookie('refreshToken',   CLEAR_REFRESH_COOKIE_OPTIONS);
+    res.clearCookie('session_active', CLEAR_SESSION_ACTIVE_OPTIONS);
+  }
+
   return res.status(result.statusCode).json(result.body);
 });

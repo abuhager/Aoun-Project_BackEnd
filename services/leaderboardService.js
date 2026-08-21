@@ -1,15 +1,11 @@
 // services/leaderboardService.js
-const User = require('../models/User');
+const userRepository = require('../repositories/userRepository');
 const { buildGamificationProfile } = require('../utils/gamification');
 
 const LEADERBOARD_LIMIT = 20;
 
 exports.getLeaderboard = async () => {
-  const users = await User.find({ isBanned: false, isVerified: true })
-    .select('name avatar trustScore totalDonations')
-    .sort({ trustScore: -1, totalDonations: -1 })
-    .limit(LEADERBOARD_LIMIT)
-    .lean();
+  const users = await userRepository.findLeaderboardUsers(LEADERBOARD_LIMIT);
 
   return users.map((u, index) => ({
     rank:          index + 1,
@@ -21,20 +17,19 @@ exports.getLeaderboard = async () => {
 };
 
 exports.getUserRank = async (userId) => {
-  const user = await User.findById(userId)
-    .select('trustScore totalDonations')
-    .lean();
+  const user = await userRepository.findLeaderboardUser(userId);
 
-  if (!user)
-    throw Object.assign(new Error('المستخدم غير موجود'), { status: 404 });
+  if (!user) {
+    return {
+      eligible: false,
+      reason: 'لوحة المتصدرين مخصصة للمستخدمين المفعّلين غير المحظورين',
+    };
+  }
 
-  const rank = await User.countDocuments({
-    isBanned:   false,
-    isVerified: true,
-    trustScore: { $gt: user.trustScore },
-  }) + 1;
+  const rank = await userRepository.countLeaderboardUsersAhead(user) + 1;
 
   return {
+    eligible: true,
     rank,
     ...buildGamificationProfile(user.trustScore, user.totalDonations),
   };

@@ -13,7 +13,13 @@ exports.getSettings = asyncHandler(async (req, res) => {
 // ✅ Public — بدون auth — يرجع فقط ما يحتاجه الـ Frontend
 exports.getPublicSettings = asyncHandler(async (req, res) => {
   const settings = await settingsService.getSettings();
-  const { categories, reportReasons, platformName, contactEmail } = settings ?? {};
+  const {
+    categories,
+    reportReasons,
+    platformName,
+    contactEmail,
+    maxAvatarSizeMb,
+  } = settings ?? {};
 
   // ❌ مش Cache-Control عشاني نضمن أن التغييرات تظهر فوراً
   res.setHeader('Cache-Control', 'no-store');
@@ -22,6 +28,7 @@ exports.getPublicSettings = asyncHandler(async (req, res) => {
     reportReasons: reportReasons ?? [],
     platformName:  platformName  ?? 'عون',
     contactEmail:  contactEmail  ?? 'aoun.help.center@gmail.com',
+    maxAvatarSizeMb: maxAvatarSizeMb ?? 5,
   });
 });
 
