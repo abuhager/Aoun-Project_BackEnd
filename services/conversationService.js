@@ -3,8 +3,10 @@
 const repo = require("../repositories/conversationRepository");
 const dto = require("../dtos/conversationDto");
 const User = require("../models/User");
+const Item = require("../models/Item");
 const Conversation = require("../models/Conversation");
 const mongoose = require("mongoose");
+const AppError = require("../utils/AppError");
 
 const POPULATE_ITEM = "title images imageUrl";
 const POPULATE_USER = "name avatar";
@@ -22,15 +24,40 @@ exports.listConversationsLogic = async (userId) => {
 exports.openConversationLogic = async ({ itemId, userId, donorId, io }) => {
   const targetUserId = donorId;
   if (!targetUserId || targetUserId === userId.toString()) {
-    throw Object.assign(new Error("لا يمكنك فتح محادثة مع نفسك"), { status: 400 });
+    throw new AppError("لا يمكنك فتح محادثة مع نفسك", 400, "INVALID_CHAT_TARGET");
   }
 
-  const targetUser = await User.findById(targetUserId).lean();
-  if (!targetUser) throw Object.assign(new Error("المستخدم غير موجود"), { status: 404 });
+  const [targetUser, item] = await Promise.all([
+    User.findById(targetUserId).select('_id').lean(),
+    Item.findById(itemId).select('donor bookedBy').lean(),
+  ]);
+  if (!targetUser || !item)
+    throw new AppError("الغرض أو المستخدم غير موجود", 404, "CHAT_RESOURCE_NOT_FOUND");
+
+  const ownerId = item.donor?.toString();
+  const requesterId = item.bookedBy?.toString();
+  const currentUserId = userId.toString();
+  const targetId = targetUserId.toString();
+
+  if (!ownerId || !requesterId) {
+    throw new AppError(
+      "المحادثة تصبح متاحة بعد حجز الغرض فقط",
+      409,
+      "CHAT_REQUIRES_ACTIVE_BOOKING"
+    );
+  }
+
+  const isParticipant = currentUserId === ownerId || currentUserId === requesterId;
+  const expectedTargetId = currentUserId === ownerId ? requesterId : ownerId;
+  if (!isParticipant || targetId !== expectedTargetId) {
+    throw new AppError("غير مصرح بفتح هذه المحادثة", 403, "CHAT_FORBIDDEN");
+  }
 
   const oItemId = new mongoose.Types.ObjectId(itemId);
   const oUserId = new mongoose.Types.ObjectId(userId);
   const oTargetId = new mongoose.Types.ObjectId(targetUserId);
+  const oOwnerId = new mongoose.Types.ObjectId(ownerId);
+  const oRequesterId = new mongoose.Types.ObjectId(requesterId);
 
   // 1️⃣ الفحص القياسي بالمشاركين
   let conversation = await Conversation.findOne({
@@ -48,8 +75,8 @@ exports.openConversationLogic = async ({ itemId, userId, donorId, io }) => {
     try {
       conversation = await repo.findOrCreateConversation({
         itemId,
-        owner: targetUserId,
-        requester: userId,
+        owner: ownerId,
+        requester: requesterId,
       });
       isNew = true;
     } catch (error) {
@@ -58,7 +85,12 @@ exports.openConversationLogic = async ({ itemId, userId, donorId, io }) => {
         
         // 👈 الإصلاح الحاسم الخارق: طالما أن الداتابيز مقفلة بفهرس مكسور على الـ item وحده، 
         // سنسحب المحادثة الوحيدة المرتبطة بهذا الغرض لكي نمنع الـ 500 تماماً ويعبر المستخدم للشات القائم بسلام!
-        conversation = await Conversation.findOne({ item: oItemId })
+        conversation = await Conversation.findOne({
+          item: oItemId,
+          owner: oOwnerId,
+          requester: oRequesterId,
+          participants: { $all: [oUserId, oTargetId] },
+        })
           .populate("item", POPULATE_ITEM)
           .populate("owner", POPULATE_USER)
           .populate("requester", POPULATE_USER);
@@ -78,7 +110,12 @@ exports.openConversationLogic = async ({ itemId, userId, donorId, io }) => {
 
   // 3️⃣ خط دفاع أخير بالمسار النصي لـ Item
   if (!conversation) {
-    conversation = await Conversation.findOne({ item: itemId })
+    conversation = await Conversation.findOne({
+      item: oItemId,
+      owner: oOwnerId,
+      requester: oRequesterId,
+      participants: { $all: [oUserId, oTargetId] },
+    })
       .populate("item", POPULATE_ITEM)
       .populate("owner", POPULATE_USER)
       .populate("requester", POPULATE_USER);
@@ -86,6 +123,10 @@ exports.openConversationLogic = async ({ itemId, userId, donorId, io }) => {
 
   if (!conversation) {
     throw Object.assign(new Error("فشل في استرداد أو إنشاء المحادثة القائمة"), { status: 500 });
+  }
+
+  if (!repo.isParticipant(conversation, userId)) {
+    throw new AppError("غير مصرح بفتح هذه المحادثة", 403, "CHAT_FORBIDDEN");
   }
 
   return { conversation: dto.toConversationListItem(conversation, 0), isNew };

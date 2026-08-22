@@ -3,7 +3,10 @@ const drService    = require('../services/donationRequestService');
 const asyncHandler = require('../utils/asyncHandler');
 
 exports.getRequests = asyncHandler(async (req, res) => {
-  const result = await drService.getDonationRequestsLogic(req.query, req.user.id);
+  const result = await drService.getDonationRequestsLogic(
+    req.query,
+    req.user?.id ?? null
+  );
   res.json(result);
 });
 
@@ -22,11 +25,12 @@ exports.cancelRequest = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
-// ✅ إصلاح: drService بدل donationRequestService + asyncHandler
-
-
 exports.getRequestById = asyncHandler(async (req, res) => {
-  const request = await drService.getRequestByIdLogic(req.params.id, req.user.id);
+  const request = await drService.getRequestByIdLogic(
+    req.params.id,
+    req.user?.id ?? null,
+    req.user?.role ?? 'user'
+  );
   res.json({ request });
 });
 
@@ -51,6 +55,24 @@ exports.getOffers = asyncHandler(async (req, res) => {
 // صاحب الطلب يختار عرضاً
 exports.acceptOffer = asyncHandler(async (req, res) => {
   const result = await drService.acceptOfferLogic(
+    req.params.id,
+    req.params.offerId,
+    req.user.id
+  );
+  res.json(result);
+});
+
+exports.rejectOffer = asyncHandler(async (req, res) => {
+  const result = await drService.rejectOfferLogic(
+    req.params.id,
+    req.params.offerId,
+    req.user.id
+  );
+  res.json(result);
+});
+
+exports.withdrawOffer = asyncHandler(async (req, res) => {
+  const result = await drService.withdrawOfferLogic(
     req.params.id,
     req.params.offerId,
     req.user.id

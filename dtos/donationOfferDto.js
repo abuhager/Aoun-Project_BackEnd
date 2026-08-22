@@ -1,7 +1,3 @@
-// dtos/donationOfferDto.js
-// ✅ DC-13 FIX: هذا الملف كان فارغاً تماماً (0 bytes)!
-//    لا يوجد أي validation لعروض التبرع → أي بيانات تمر بدون فلترة
-
 const Joi = require('joi');
 
 // ══════════════════════════════════════════════════════════════
@@ -43,7 +39,6 @@ exports.toPublicOffer = (offer) => ({
   condition:   offer.condition,
   description: offer.description ?? null,
   imageUrl:    offer.imageUrl     ?? null,
-  // ✅ مطابق لـ DonationOffer.status في Frontend — يشمل 'cancelled_by_requester'
   status:      offer.status,
   createdAt:   offer.createdAt,
   donor: offer.donor ? {

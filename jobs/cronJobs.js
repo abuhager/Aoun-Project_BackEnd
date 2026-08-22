@@ -12,9 +12,11 @@ const SystemSettings  = require('../models/SystemSettings');
 const { settingsEvents } = require('../models/SystemSettings');
 const { fireSendEmail }  = require('../utils/sendEmail');
 const { escapeHtml }     = require('../services/emailService');
-const DonationRequest    = require('../models/DonationRequest');
 const notifyUser         = require('../utils/notifyUser');  // ✅ NJ-20
 const { getIO }          = require('../socket');
+const {
+  expireDonationRequestsLogic,
+} = require('../services/donationRequestService');
 
 const emitToUser = (userId, event, payload) => {
   if (!userId) return;
@@ -128,6 +130,9 @@ async function findEligibleWaitlistCandidate(item, maxBookings) {
 }
 
 async function processExpiredItem(item, settings) {
+  // عناصر تلبية الطلبات لها دورة حياة خاصة ولا تدخل انتهاء الحجز أو قائمة الانتظار العامة.
+  if (item.linkedRequestId) return;
+
   const previousBookerId = item.bookedBy;
   const { candidate, skippedUserIds } = await findEligibleWaitlistCandidate(
     item,
@@ -149,6 +154,7 @@ async function processExpiredItem(item, settings) {
         _id: item._id,
         status: 'محجوز',
         bookedBy: previousBookerId,
+        linkedRequestId: null,
         recipientConfirmed: { $ne: true },
       },
       {
@@ -232,6 +238,7 @@ async function processExpiredItem(item, settings) {
         _id: item._id,
         status: 'محجوز',
         bookedBy: previousBookerId,
+        linkedRequestId: null,
         recipientConfirmed: { $ne: true },
       },
       releaseUpdate,
@@ -296,9 +303,10 @@ const initCronJobs = async () => {
       // ✅ تحصين الفحص: جلب المستندات التي تحتوي على تاريخ حقيقي وصالح فقط لمنع الـ Cast Error
       const expiredItems = await Item.find({
         status:   'محجوز',
+        linkedRequestId: null,
         bookedAt: { $exists: true, $type: 'date', $lt: threshold },
         recipientConfirmed: { $ne: true },
-      }).select('_id bookedBy waitlist cancelledBy donor title').lean();
+      }).select('_id bookedBy waitlist cancelledBy donor title linkedRequestId').lean();
 
       if (!expiredItems.length) return;
 
@@ -339,6 +347,7 @@ const initCronJobs = async () => {
       // ✅ تحصين الفحص للتذكير أيضاً من الحقول المشوهة وجودة الـ Date
       const soonExpiring = await Item.find({
         status:             'محجوز',
+        linkedRequestId:    null,
         bookedAt:           { $exists: true, $type: 'date', $gte: windowFrom, $lt: windowTo },
         recipientConfirmed: { $ne: true },
         reminderSent:       { $ne: true } // تعديل بسيط لضمان الفلترة بشكل أدق بدلاً من السلوك الافتراضي المشوه
@@ -357,6 +366,7 @@ const initCronJobs = async () => {
             status:       'محجوز',
             bookedBy:     item.bookedBy._id,
             bookedAt:     item.bookedAt,
+            linkedRequestId: null,
             reminderSent: { $ne: true },
           };
           const claim = await Item.updateOne(
@@ -386,15 +396,15 @@ const initCronJobs = async () => {
     });
   }, { scheduled: true, timezone: 'Asia/Amman' });
 
-  // ── 4. أرشفة طلبات التبرع المنتهية (يومياً 2 ص) ───────────
-  cron.schedule('0 2 * * *', () => {
+  // ── 4. أرشفة طلبات التبرع المنتهية كل ساعة ────────────────
+  cron.schedule('15 * * * *', () => {
     runSafe('expire-donation-requests', async () => {
-      const result = await DonationRequest.updateMany(
-        { status: 'active', expiresAt: { $lt: new Date() } },
-        { $set: { status: 'expired' } }
+      const { expiredCount } = await expireDonationRequestsLogic(
+        new Date(),
+        { limit: 500 }
       );
-      if (result.modifiedCount > 0) {
-        console.log(`[Cron] 🧹 ${result.modifiedCount} طلب تبرع انتهت صلاحيته`);
+      if (expiredCount > 0) {
+        console.log(`[Cron] 🧹 ${expiredCount} طلب تبرع انتهت صلاحيته`);
       }
     });
   }, { scheduled: true, timezone: 'Asia/Amman' });

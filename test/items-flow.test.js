@@ -212,6 +212,7 @@ test('حذف المالك ذري ولا يسمح لغيره أو بحذف غرض
   assert.deepEqual(deleteFilter, {
     _id: ITEM_ID,
     donor: OWNER_ID,
+    linkedRequestId: null,
     status: { $ne: 'تم التسليم' },
     recipientConfirmed: { $ne: true },
   });

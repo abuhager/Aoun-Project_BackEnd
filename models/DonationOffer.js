@@ -1,6 +1,3 @@
-// models/DonationOffer.js — ✅ DC-15 FIX
-// إضافة 'cancelled_by_requester' لـ status enum لمزامنة Frontend DonationOfferStatus
-
 const mongoose = require('mongoose');
 
 const donationOfferSchema = new mongoose.Schema(
@@ -32,13 +29,19 @@ const donationOfferSchema = new mongoose.Schema(
     cloudinaryId: { type: String, default: null },
     status: {
       type:    String,
-      // ✅ DC-15 FIX: إضافة 'cancelled_by_requester' لمزامنة Frontend
-      enum:    ['pending', 'accepted', 'rejected', 'cancelled_by_requester'],
+      enum: [
+        'pending',
+        'accepted',
+        'rejected',
+        'withdrawn',
+        'cancelled_by_requester',
+        'request_expired',
+      ],
       default: 'pending',
       index:   true,
     },
   },
-  { timestamps: true }
+  { timestamps: true, autoIndex: false }
 );
 
 module.exports = mongoose.model('DonationOffer', donationOfferSchema);

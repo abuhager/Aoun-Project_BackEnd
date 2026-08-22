@@ -1,8 +1,3 @@
-// dtos/donationRequestDto.js
-// ✅ DC-12 FIX: هذا الملف كان يحتوي على الـ Model بدل الـ DTO! 
-//    الـ Model الحقيقي موجود في models/DonationRequest.js
-//    هذا الملف يجب أن يحتوي على: validation + transformation فقط
-
 const Joi = require('joi');
 const SystemSettings = require('../models/SystemSettings');
 
@@ -56,7 +51,7 @@ exports.validateUpdateRequest = async (data) => {
 // 2. Transformations — مطابقة للـ Frontend DonationRequest interface
 // ══════════════════════════════════════════════════════════════
 
-exports.toPublicRequest = (req) => ({
+exports.toPublicRequest = (req, options = {}) => ({
   _id:         req._id,
   title:       req.title,
   category:    req.category,
@@ -68,15 +63,15 @@ exports.toPublicRequest = (req) => ({
   expiresAt:   req.expiresAt   ?? null,
   createdAt:   req.createdAt,
   updatedAt:   req.updatedAt,
-  requester: req.requester ? {
+  requester: req.requester?.name ? {
     _id:        req.requester._id,
     name:       req.requester.name,
     avatar:     req.requester.avatar     ?? null,
     trustScore: req.requester.trustScore ?? null,
     trustLevel: req.requester.trustLevel ?? null,
   } : null,
-  // ✅ مطابق لـ DonationRequest.fulfilledByItem في Frontend
-  fulfilledByItem: req.fulfilledByItem ? {
+  // تفاصيل العرض الفائز خاصة بصاحب الطلب والمتبرع المقبول والإدارة فقط.
+  fulfilledByItem: options.includeFulfilledItem && req.fulfilledByItem ? {
     _id:                req.fulfilledByItem._id,
     status:             req.fulfilledByItem.status,
     condition:          req.fulfilledByItem.condition,

@@ -31,7 +31,7 @@ exports.countReceivedItems = (userId) =>
 
 exports.findPublicDonations = (userId, skip, limit) =>
   findActivity(
-    { donor: userId, status: 'تم التسليم' },
+    { donor: userId, status: 'تم التسليم', linkedRequestId: null },
     'deliveredAt',
     skip,
     limit
@@ -39,17 +39,17 @@ exports.findPublicDonations = (userId, skip, limit) =>
 
 exports.findPublicReceivedItems = (userId, skip, limit) =>
   findActivity(
-    { bookedBy: userId, status: 'تم التسليم' },
+    { bookedBy: userId, status: 'تم التسليم', linkedRequestId: null },
     'deliveredAt',
     skip,
     limit
   );
 
 exports.countPublicDonations = (userId) =>
-  Item.countDocuments({ donor: userId, status: 'تم التسليم' });
+  Item.countDocuments({ donor: userId, status: 'تم التسليم', linkedRequestId: null });
 
 exports.countPublicReceivedItems = (userId) =>
-  Item.countDocuments({ bookedBy: userId, status: 'تم التسليم' });
+  Item.countDocuments({ bookedBy: userId, status: 'تم التسليم', linkedRequestId: null });
 
 exports.getRatingSummary = async (userId) => {
   const [summary] = await Rating.aggregate([

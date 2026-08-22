@@ -38,6 +38,13 @@ const jordanPhoneRule = Joi.string()
   });
 
 const textField = (min, max) => Joi.string().min(min).max(max).trim();
+const donationOfferBody = Joi.object({
+  condition: Joi.string()
+    .valid('جديد', 'مستعمل ممتاز', 'مستعمل جيد')
+    .required(),
+  safeHub:     objectId().required(),
+  description: Joi.string().max(500).optional().allow('').trim(),
+}).unknown(false);
 
 // ─── Schemas ─────────────────────────────────────────────────────
 const schemas = {
@@ -145,12 +152,7 @@ const schemas = {
     safeHub:     objectId().required(),
   }).unknown(false),
 
-  respondToRequest: Joi.object({
-    condition:   textField(2, 50).required(),
-    safeHub:     objectId().required(),
-    description: Joi.string().max(500).optional().allow('').trim(),
-    location:    textField(2, 100).optional(),
-  }).unknown(false),
+  respondToRequest: donationOfferBody,
 
   updateItem: Joi.object({
     title:       textField(3, 100).optional(),
@@ -176,11 +178,7 @@ const schemas = {
     urgency:     Joi.string().valid('low', 'medium', 'high').default('medium'),
   }).unknown(false),
 
-  submitOffer: Joi.object({
-    condition:   textField(2, 50).required(),
-    safeHub:     objectId().required(),
-    description: Joi.string().max(500).optional().allow('').trim(),
-  }).unknown(false),
+  submitOffer: donationOfferBody,
 
   // ──────────── hubs ────────────────────────────────────────────────
   createHub: Joi.object({

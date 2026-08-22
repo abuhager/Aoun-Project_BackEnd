@@ -1,4 +1,3 @@
-// repositories/donationRequestRepository.js ✅ CLEANED & MOVED
 const DonationRequest = require('../models/DonationRequest');
 
 // عدد الطلبات في الشهر (بغض النظر عن الحالة) — للحد الأقصى عند الإنشاء
@@ -46,6 +45,7 @@ exports.cancelOwnedActiveRequest = ({ requestId, userId }) =>
 exports.findUserRequests = (userId) =>
   DonationRequest.find({ requester: userId })
     .sort({ createdAt: -1 })
+    .populate('requester', 'name avatar trustLevel trustScore')
     .populate({
       path:   'fulfilledByItem',
       select: '_id condition status safeHub donor',
@@ -62,12 +62,12 @@ exports.findActiveRequestById = (requestId) =>
     status:    'active',
     expiresAt: { $gt: new Date() },
   })
-    .populate('requester', 'name email')
+    .populate('requester', 'name avatar trustLevel trustScore')
     .lean();
 
 exports.findRequestByIdWithItem = (requestId) =>
   DonationRequest.findById(requestId)
-    .populate('requester', 'name')
+    .populate('requester', 'name avatar trustLevel trustScore')
     .populate({
       path:   'fulfilledByItem',
       select: '_id condition status safeHub donor recipientConfirmed donorConfirmed',
@@ -82,3 +82,17 @@ exports.findRequestById = (requestId) =>
   DonationRequest.findById(requestId)
     .populate('requester', 'name avatar trustLevel trustScore')
     .lean();
+
+exports.findExpiredActiveIds = ({ now, requester, limit = 200 }) => {
+  const filter = {
+    status: 'active',
+    expiresAt: { $lte: now },
+  };
+  if (requester) filter.requester = requester;
+
+  return DonationRequest.find(filter)
+    .select('_id')
+    .sort({ expiresAt: 1 })
+    .limit(limit)
+    .lean();
+};

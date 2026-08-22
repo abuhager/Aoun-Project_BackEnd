@@ -122,6 +122,5 @@ ItemSchema.index({ status: 1, bookedAt: 1 });
 ItemSchema.index({ status: 1, deliveredAt: -1 });
 ItemSchema.index({ location: 1, status: 1 });
 ItemSchema.index({ 'waitlist.user': 1, status: 1 });
-ItemSchema.index({ linkedRequestId: 1 });
 
 module.exports = mongoose.model('Item', ItemSchema);

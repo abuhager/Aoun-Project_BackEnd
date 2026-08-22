@@ -16,7 +16,11 @@ exports.getMyItems = asyncHandler(async (req, res) => {
 
 exports.getItemById = asyncHandler(async (req, res) => {
   const requesterId = req.user?.id || req.user?._id || null;
-  const result = await itemService.getItemByIdLogic(req.params.id, requesterId);
+  const result = await itemService.getItemByIdLogic(
+    req.params.id,
+    requesterId,
+    req.user?.role ?? 'user'
+  );
   res.json(result);
 });
 

@@ -1,4 +1,3 @@
-// repositories/donationOfferRepository.js ✅ CLEAN & PATCHED
 const DonationOffer = require('../models/DonationOffer');
 
 // العرض المعلّق ما زال قابلاً للاختيار، لذلك يمنع تعطيل مركزه حتى يُعالج.
@@ -6,8 +5,11 @@ exports.countPendingByHub = (hubId) =>
   DonationOffer.countDocuments({ safeHub: hubId, status: 'pending' });
 
 // إنشاء عرض جديد
-exports.createOffer = (payload) =>
-  DonationOffer.create(payload);
+exports.createOffer = async (payload, session = null) => {
+  if (!session) return DonationOffer.create(payload);
+  const [offer] = await DonationOffer.create([payload], { session });
+  return offer;
+};
 
 // هل قدّم هذا المتبرع عرضاً مسبقاً؟
 // التعديل: استخدام !! للتأكد من إرجاع true/false صريحة توافقاً مع الـ Service
@@ -15,6 +17,11 @@ exports.existsByRequestAndDonor = async (requestId, donorId) => {
   const result = await DonationOffer.exists({ request: requestId, donor: donorId });
   return !!result;
 };
+
+exports.findViewerOffer = (requestId, donorId) =>
+  DonationOffer.findOne({ request: requestId, donor: donorId })
+    .select('_id status createdAt')
+    .lean();
 
 // جلب كل العروض على طلب معين (لصاحب الطلب فقط)
 exports.findOffersByRequest = (requestId) =>
@@ -53,7 +60,7 @@ exports.acceptOffer = (offerId, session) =>
  * أضفتها بالاسم الأصلي والـ Alias البديل عشان تنتهي مشكلة الـ TypeError نهائياً
  */
 exports.countPendingOffersByDonor = async (donorId) => {
-  return await DonationOffer.countDocuments({ donor: donorId, status: 'pending' });
+  return DonationOffer.countDocuments({ donor: donorId, status: 'pending' });
 };
 
 exports.countPendingByDonor = exports.countPendingOffersByDonor;

@@ -5,6 +5,7 @@ const { isDeepStrictEqual } = require('node:util');
 const Item = require('../models/Item');
 const Report = require('../models/Report');
 const DonationRequest = require('../models/DonationRequest');
+const DonationOffer = require('../models/DonationOffer');
 const User = require('../models/User');
 const Conversation = require('../models/Conversation');
 const Message = require('../models/Message');
@@ -19,6 +20,13 @@ const indexGroups = [
       { key: { category: 1, status: 1 }, name: 'category_status' },
       { key: { 'waitlist.user': 1 }, name: 'waitlist_user' },
       { key: { safeHub: 1 }, name: 'safeHub' },
+      {
+        key: { linkedRequestId: 1 },
+        unique: true,
+        partialFilterExpression: { linkedRequestId: { $type: 'objectId' } },
+        name: 'linked_request_unique',
+        replaceIfDifferent: true,
+      },
     ],
   },
   {
@@ -35,7 +43,18 @@ const indexGroups = [
       { key: { status: 1, expiresAt: 1 }, name: 'status_expiresAt' },
       { key: { requester: 1, status: 1, month: 1 }, name: 'requester_status_month' },
       { key: { category: 1, status: 1 }, name: 'category_status' },
-      { key: { expiresAt: 1 }, expireAfterSeconds: 0, name: 'ttl_expiresAt' },
+    ],
+  },
+  {
+    model: DonationOffer,
+    indexes: [
+      {
+        key: { request: 1, donor: 1 },
+        unique: true,
+        name: 'request_donor_unique',
+      },
+      { key: { safeHub: 1, status: 1 }, name: 'safeHub_status' },
+      { key: { donor: 1, status: 1 }, name: 'donor_status' },
     ],
   },
   {
@@ -99,6 +118,20 @@ const indexDefinitionsEquivalent = (existing, requested) => {
     && isDeepStrictEqual(existing.collation, requested.collation);
 };
 
+const indexCreateOptions = ({ key: _key, replaceIfDifferent: _replace, ...options }) => options;
+
+const dropObsoleteDonationRequestTtlIndexes = async () => {
+  const existingIndexes = await listExistingIndexes(DonationRequest.collection);
+  const obsoleteIndexes = existingIndexes.filter((index) =>
+    index.expireAfterSeconds !== undefined
+    && indexKeysEqual(index.key, { expiresAt: 1 })
+  );
+
+  for (const index of obsoleteIndexes) {
+    await DonationRequest.collection.dropIndex(index.name);
+  }
+};
+
 const listExistingIndexes = async (collection) => {
   try {
     return await collection.indexes();
@@ -110,6 +143,16 @@ const listExistingIndexes = async (collection) => {
 
 const ensureIndexes = async () => {
   const failures = [];
+
+  try {
+    // الطلب المنتهي يجب أن يُؤرشف، لا أن يُحذف تلقائياً من MongoDB.
+    await dropObsoleteDonationRequestTtlIndexes();
+  } catch (error) {
+    failures.push(new Error(
+      `DonationRequest: تعذر إزالة فهرس TTL القديم: ${error.message}`,
+      { cause: error }
+    ));
+  }
 
   for (const { model, indexes } of indexGroups) {
     let existingIndexes;
@@ -127,6 +170,21 @@ const ensureIndexes = async () => {
 
       if (sameKeyIndex) {
         if (!indexDefinitionsEquivalent(sameKeyIndex, index)) {
+          if (index.replaceIfDifferent) {
+            try {
+              await model.collection.dropIndex(sameKeyIndex.name);
+              await model.collection.createIndex(index.key, indexCreateOptions(index));
+              const indexPosition = existingIndexes.indexOf(sameKeyIndex);
+              existingIndexes.splice(indexPosition, 1, index);
+            } catch (error) {
+              failures.push(new Error(
+                `${model.modelName}.${index.name}: تعذر ترقية الفهرس القديم: ${error.message}`,
+                { cause: error }
+              ));
+            }
+            continue;
+          }
+
           const isLegacyPhoneIndex = model.modelName === 'User'
             && index.name === 'phone_verified_unique'
             && sameKeyIndex.name === 'phone_1'
@@ -136,8 +194,7 @@ const ensureIndexes = async () => {
           if (isLegacyPhoneIndex) {
             try {
               await model.collection.dropIndex(sameKeyIndex.name);
-              const { key, ...options } = index;
-              await model.collection.createIndex(key, options);
+              await model.collection.createIndex(index.key, indexCreateOptions(index));
               const indexPosition = existingIndexes.indexOf(sameKeyIndex);
               existingIndexes.splice(indexPosition, 1, index);
             } catch (error) {
@@ -157,8 +214,7 @@ const ensureIndexes = async () => {
       }
 
       try {
-        const { key, ...options } = index;
-        await model.collection.createIndex(key, options);
+        await model.collection.createIndex(index.key, indexCreateOptions(index));
         existingIndexes.push(index);
       } catch (error) {
         failures.push(new Error(`${model.modelName}.${index.name}: ${error.message}`, { cause: error }));
@@ -173,6 +229,7 @@ const ensureIndexes = async () => {
 
 module.exports = ensureIndexes;
 module.exports.indexDefinitionsEquivalent = indexDefinitionsEquivalent;
+module.exports.dropObsoleteDonationRequestTtlIndexes = dropObsoleteDonationRequestTtlIndexes;
 
 if (require.main === module) {
   if (!process.env.MONGO_URI) {

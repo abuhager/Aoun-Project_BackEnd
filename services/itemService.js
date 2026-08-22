@@ -103,6 +103,25 @@ const findNextEligibleWaitlistCandidate = async (
 const escapeRegex = (str = '') =>
   String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').slice(0, 100);
 
+const isAdminRole = (role) => ['admin', 'super_admin'].includes(role);
+
+const assertGenericLifecycleAllowed = (item, userId) => {
+  if (!item?.linkedRequestId) return;
+
+  const isParticipant = [item.donor, item.bookedBy].some(
+    (value) => value && userId && value.toString() === userId.toString()
+  );
+
+  if (!isParticipant)
+    throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+
+  throw new AppError(
+    'هذا الغرض مخصص لطلب تبرع مقبول ولا يمكن إدارة حجزه من المسار العام',
+    409,
+    'REQUEST_LINKED_ITEM_LOCKED'
+  );
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. جلب الأغراض المتاحة
 // ─────────────────────────────────────────────────────────────────────────────
@@ -113,7 +132,10 @@ exports.getItemsLogic = async (query = {}) => {
   const limit       = Math.min(maxPageSize, Math.max(1, parseInt(query.limit, 10) || 10));
   const skip        = (page - 1) * limit;
 
-  const filter = { status: { $in: ['متاح', 'محجوز'] } };
+  const filter = {
+    status: { $in: ['متاح', 'محجوز'] },
+    linkedRequestId: null,
+  };
 
   if (query.location)    filter.location = new RegExp(escapeRegex(query.location), 'i');
   if (query.search)      filter.title    = new RegExp(escapeRegex(query.search),    'i');
@@ -173,7 +195,7 @@ exports.getMyItemsLogic = async (userId) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. جلب غرض بالـ ID
 // ─────────────────────────────────────────────────────────────────────────────
-exports.getItemByIdLogic = async (itemId, requesterId) => {
+exports.getItemByIdLogic = async (itemId, requesterId, requesterRole = 'user') => {
   const item = await itemRepository.findItemDetails(itemId);
   if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
 
@@ -185,11 +207,15 @@ exports.getItemByIdLogic = async (itemId, requesterId) => {
 
   const isOwner     = requesterId && obj.donor?._id?.toString() === requesterId.toString();
   const isBookerReq = requesterId && obj.bookedBy?._id?.toString() === requesterId.toString();
+  const isAdmin     = isAdminRole(requesterRole);
 
-  if (obj.status === 'مخفي' && !isOwner)
+  if (obj.linkedRequestId && !isOwner && !isBookerReq && !isAdmin)
     throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
 
-  if (isOwner) {
+  if (obj.status === 'مخفي' && !isOwner && !isAdmin)
+    throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+
+  if (isOwner || isAdmin) {
     const result = toDonorItem(obj, requesterId);
     delete result.waitlist;
     return result;
@@ -281,6 +307,7 @@ exports.createItemLogic = async (body, userId, file) => {
       const requests = await DonationRequest.find({
         category: item.category,
         status:   'active',
+        expiresAt: { $gt: new Date() },
         requester: { $ne: userId },
       }).select('requester').lean();
 
@@ -310,7 +337,7 @@ exports.bookItemLogic = async (itemId, userId) => {
     User.findById(userId).select('isVerified trustLevel').lean(),
     SystemSettings.getCached(),
     Item.findById(itemId)
-      .select('status donor bookedBy waitlist cancelledBy')
+      .select('status donor bookedBy waitlist cancelledBy linkedRequestId')
       .lean(),
   ]);
 
@@ -319,6 +346,8 @@ exports.bookItemLogic = async (itemId, userId) => {
 
   if (!snapshot)
     throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+
+  assertGenericLifecycleAllowed(snapshot, userId);
 
   if (!user.isVerified)
     throw new AppError('يجب تفعيل الحساب أولاً ✅', 403, 'ACCOUNT_NOT_VERIFIED');
@@ -368,6 +397,7 @@ exports.bookItemLogic = async (itemId, userId) => {
         status:   'متاح',
         donor:    { $ne: userObjectId },
         bookedBy: null,
+        linkedRequestId: null,
         cancelledBy: { $ne: userObjectId },
       },
       {
@@ -436,6 +466,7 @@ exports.bookItemLogic = async (itemId, userId) => {
         status:      'محجوز',
         bookedBy:    { $ne: userObjectId },
         donor:       { $ne: userObjectId },
+        linkedRequestId: null,
         cancelledBy: { $ne: userObjectId },
         'waitlist.user': { $ne: userObjectId },
         $expr: {
@@ -474,6 +505,7 @@ exports.leaveWaitlistLogic = async (itemId, userId) => {
     {
       _id: itemId,
       bookedBy: { $ne: userObjectId },
+      linkedRequestId: null,
       'waitlist.user': userObjectId,
     },
     { $pull: { waitlist: { user: userObjectId } } },
@@ -489,9 +521,12 @@ exports.leaveWaitlistLogic = async (itemId, userId) => {
     };
   }
 
-  const snapshot = await Item.findById(itemId).select('bookedBy waitlist').lean();
+  const snapshot = await Item.findById(itemId)
+    .select('donor bookedBy waitlist linkedRequestId')
+    .lean();
   if (!snapshot)
     throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+  assertGenericLifecycleAllowed(snapshot, userId);
   if (snapshot.bookedBy?.toString() === userId.toString())
     throw new AppError('أنت الحاجز الفعلي؛ استخدم إلغاء الحجز', 400, 'USE_CANCEL_BOOKING');
   throw new AppError('أنت لست في قائمة الانتظار', 400, 'NOT_IN_WAITLIST');
@@ -502,10 +537,11 @@ exports.leaveWaitlistLogic = async (itemId, userId) => {
 // ─────────────────────────────────────────────────────────────────────────────
 exports.cancelBookingLogic = async (itemId, userId) => {
   const snapshot = await Item.findById(itemId)
-    .select('status donor bookedBy waitlist cancelledBy title recipientConfirmed')
+    .select('status donor bookedBy waitlist cancelledBy title recipientConfirmed linkedRequestId')
     .lean();
 
   if (!snapshot) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+  assertGenericLifecycleAllowed(snapshot, userId);
 
   const isBooker = snapshot.bookedBy?.toString() === userId;
   const isDonor  = snapshot.donor?.toString()    === userId;
@@ -544,6 +580,7 @@ exports.cancelBookingLogic = async (itemId, userId) => {
         _id:      itemId,
         status:   'محجوز',
         bookedBy: oldBookerId,
+        linkedRequestId: null,
         recipientConfirmed: false,
       },
       {
@@ -627,6 +664,7 @@ exports.cancelBookingLogic = async (itemId, userId) => {
       _id:      itemId,
       status:   'محجوز',
       bookedBy: oldBookerId,
+      linkedRequestId: null,
       recipientConfirmed: false,
     },
     releaseUpdate,
@@ -978,11 +1016,13 @@ exports.updateItemLogic = async (itemId, userId, body = {}, file = null) => {
 // ─────────────────────────────────────────────────────────────────────────────
 exports.deleteItemLogic = async (itemId, userId) => {
   const snapshot = await Item.findById(itemId)
-    .select('donor bookedBy waitlist status cloudinaryId title recipientConfirmed')
+    .select('donor bookedBy waitlist status cloudinaryId title recipientConfirmed linkedRequestId')
     .lean();
 
   if (!snapshot)
     throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+
+  assertGenericLifecycleAllowed(snapshot, userId);
 
   const isOwner = snapshot.donor?.toString() === userId?.toString();
   if (!isOwner)
@@ -1004,6 +1044,7 @@ exports.deleteItemLogic = async (itemId, userId) => {
   const deleteFilter = {
     _id: itemId,
     donor: userId,
+    linkedRequestId: null,
     status: { $ne: 'تم التسليم' },
     recipientConfirmed: { $ne: true },
   };
