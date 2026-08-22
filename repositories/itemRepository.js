@@ -9,10 +9,9 @@ const ITEM_DETAILS_PROJECTION = '-__v';
 // ─── جلب غرض للقراءة العامة (تحديث ARCH-02) ───────────────────
 exports.findItemDetails = (itemId) =>
   Item.findById(itemId)
-    .populate('donor',      'name avatar trustScore isVerifiedStudent trustLevel')
+    .populate('donor',      'name avatar phone trustScore isVerifiedStudent trustLevel')
     .populate('safeHub',    'name address city workingHours coordinates') // تم إضافة coordinates
-    .populate('bookedBy',   'name avatar')
-    .populate('waitlist.user', 'name avatar trustLevel') // تم إضافة waitlist
+    .populate('bookedBy',   'name avatar phone email')
     .select(ITEM_DETAILS_PROJECTION);
 
 // ─── دوال إضافية من [ARCH-02] ───────────────────────────────
@@ -78,7 +77,7 @@ async function attachReportIds(items, reportedUserId) {
 // ─── تبرعاتي كمتبرع ──────────────────────────────────────────
 exports.findDonationsByUser = async (userId) => {
   const items = await Item.find({ donor: userId })
-    .populate('bookedBy', 'name avatar trustScore isVerifiedStudent')
+    .populate('bookedBy', 'name avatar phone email trustScore isVerifiedStudent')
     .populate('safeHub',  'name city')
     .sort({ createdAt: -1 })
     .lean();
@@ -90,7 +89,7 @@ exports.findDonationsByUser = async (userId) => {
 // ─── طلبات الاستلام ───────────────────────────────────────────
 exports.findReceivedByUser = async (userId) => {
   const items = await Item.find({ bookedBy: userId })
-    .populate('donor',   'name avatar trustScore isVerifiedStudent')
+    .populate('donor',   'name avatar phone trustScore isVerifiedStudent')
     .populate('safeHub', 'name address city workingHours')
     .sort({ createdAt: -1 })
     .lean();

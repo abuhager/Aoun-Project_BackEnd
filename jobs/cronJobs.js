@@ -11,9 +11,17 @@ const Item       = require('../models/Item');
 const SystemSettings  = require('../models/SystemSettings');
 const { settingsEvents } = require('../models/SystemSettings');
 const { fireSendEmail }  = require('../utils/sendEmail');
-const { generateOtp }    = require('../utils/otp');
+const { escapeHtml }     = require('../services/emailService');
 const DonationRequest    = require('../models/DonationRequest');
 const notifyUser         = require('../utils/notifyUser');  // ✅ NJ-20
+const { getIO }          = require('../socket');
+
+const emitToUser = (userId, event, payload) => {
+  if (!userId) return;
+  try {
+    getIO().to(`user_${userId}`).emit(event, payload);
+  } catch (_) {}
+};
 
 // ══════════════════════════════════════════════════════════════
 // ✅ NJ-19: سجل حالة Cron Jobs — يُساعد في Debugging
@@ -59,7 +67,7 @@ function scheduleQuotaReset(dayOfMonth) {
       const [r1, r2] = await Promise.all([
         User.updateMany(
           { trustLevel: { $lte: 1 }, isBanned: false },
-          { $set: { quota: settings.defaultQuota } }
+          { $set: { quota: settings.defaultUserQuota } }
         ),
         User.updateMany(
           { trustLevel: { $gte: 2 }, isBanned: false },
@@ -77,86 +85,186 @@ function scheduleQuotaReset(dayOfMonth) {
 // ══════════════════════════════════════════════════════════════
 // ✅ NJ-20 FIX: processExpiredItem ترسل إشعار للمستخدم المحظوظ
 // ══════════════════════════════════════════════════════════════
-async function processExpiredItem(item) {
-  const previousBookerId = item.bookedBy;
-  let luckyUser = null;
-  const skippedUsers = [];
+async function findEligibleWaitlistCandidate(item, maxBookings) {
+  const skippedUserIds = [];
+  const excludedUserIds = new Set(
+    [item.donor, item.bookedBy, ...(item.cancelledBy ?? [])]
+      .filter(Boolean)
+      .map((id) => id.toString())
+  );
 
-  if (item.waitlist?.length > 0) {
-    for (const entry of item.waitlist) {
-      const candidate = await User.findOneAndUpdate(
-        { _id: entry.user, quota: { $gt: 0 }, isBanned: false },
-        { $inc: { quota: -1 } },
-        { returnDocument: 'after' }
-      );
-      if (candidate) { luckyUser = candidate; break; }
-      else            { skippedUsers.push(entry.user); }
+  for (const entry of item.waitlist ?? []) {
+    if (!entry.user || excludedUserIds.has(entry.user.toString())) {
+      if (entry.user) skippedUserIds.push(entry.user);
+      continue;
     }
-  }
+    const candidate = await User.findOne({
+      _id: entry.user,
+      isVerified: true,
+      isBanned: { $ne: true },
+      isFrozen: { $ne: true },
+      trustLevel: { $gte: 2 },
+    }).select('_id name email').lean();
 
-  if (skippedUsers.length > 0) {
-    await Item.findByIdAndUpdate(item._id, {
-      $pull: { waitlist: { user: { $in: skippedUsers } } },
+    if (!candidate) {
+      skippedUserIds.push(entry.user);
+      continue;
+    }
+
+    const activeBookings = await Item.countDocuments({
+      _id: { $ne: item._id },
+      bookedBy: candidate._id,
+      status: 'محجوز',
     });
-  }
 
-  if (luckyUser) {
-    const newOtp = generateOtp();
-    try {
-      await Item.findByIdAndUpdate(item._id, {
-        $set: {
-          bookedBy:           luckyUser._id,
-          status:             'محجوز',
-          deliveryOtp:        newOtp,
-          bookedAt:           new Date(),
-          recipientConfirmed: false,
-        },
-        $pull:     { waitlist:    { user: luckyUser._id } },
-        $addToSet: { cancelledBy: previousBookerId },
-      });
-    } catch (updateErr) {
-      await User.findByIdAndUpdate(luckyUser._id, { $inc: { quota: 1 } });
-      console.error(`[Cron] ❌ فشل تحديث الغرض ${item._id}:`, updateErr.message);
-      return;
+    if (activeBookings < maxBookings) {
+      return { candidate, skippedUserIds };
     }
 
-    // ✅ NJ-20: إشعار داخل التطبيق + بريد إلكتروني
-    await notifyUser(luckyUser._id, { // ✅ تعديل: تمرير الـ ID الصريح
-      type:      'booking_promoted',
+    skippedUserIds.push(entry.user);
+  }
+
+  return { candidate: null, skippedUserIds };
+}
+
+async function processExpiredItem(item, settings) {
+  const previousBookerId = item.bookedBy;
+  const { candidate, skippedUserIds } = await findEligibleWaitlistCandidate(
+    item,
+    settings.maxBookingsPerUser ?? 3
+  );
+
+  const resetConfirmation = {
+    recipientConfirmed:   false,
+    recipientConfirmedAt: null,
+    donorConfirmed:       false,
+    donorConfirmedAt:     null,
+    deliveredAt:          null,
+    reminderSent:         false,
+  };
+
+  if (candidate) {
+    const promoted = await Item.findOneAndUpdate(
+      {
+        _id: item._id,
+        status: 'محجوز',
+        bookedBy: previousBookerId,
+        recipientConfirmed: { $ne: true },
+      },
+      {
+        $set: {
+          bookedBy: candidate._id,
+          status:   'محجوز',
+          bookedAt: new Date(),
+          ...resetConfirmation,
+        },
+        $pull: {
+          waitlist: {
+            user: { $in: [...skippedUserIds, candidate._id] },
+          },
+        },
+        $addToSet: { cancelledBy: previousBookerId },
+      },
+      { returnDocument: 'after' }
+    );
+
+    if (!promoted) return;
+
+    emitToUser(candidate._id, 'item:waitlist_promoted', {
+      itemId: item._id.toString(),
+      status: 'محجوز',
+    });
+    emitToUser(item.donor, 'item:booking_transferred', {
+      itemId: item._id.toString(),
+      bookedBy: candidate._id.toString(),
+    });
+
+    await notifyUser(candidate._id, {
+      type:      'waitlist_promoted',
       title:     '🎉 وصل دورك!',
       body:      `انتهى وقت المستلم السابق — الدور وصل لك الآن في "${item.title}".`,
       itemId:    item._id,
-      email:     luckyUser.email,
+      email:     candidate.email,
       actionUrl: `/items/${item._id}`,
     }).catch((err) =>
       console.warn('[Cron] notifyUser فشل:', err.message)
     );
 
+    const safeCandidateName = escapeHtml(candidate.name);
+    const safeItemTitle = escapeHtml(item.title);
     fireSendEmail({
-      email:   luckyUser.email,
+      email:   candidate.email,
       subject: `وصل دورك في: ${item.title} 🎉`,
       message: `
         <div dir="rtl" style="font-family:sans-serif;line-height:1.8;max-width:540px;margin:auto;">
-          <h2>مرحباً ${luckyUser.name}!</h2>
-          <p>انتهى وقت المستلم السابق — الدور وصل لك الآن في <strong>${item.title}</strong>.</p>
+          <h2>مرحباً ${safeCandidateName}!</h2>
+          <p>انتهى وقت المستلم السابق — الدور وصل لك الآن في <strong>${safeItemTitle}</strong>.</p>
           <p>⏱️ لديك مهلة محددة لإتمام الاستلام.</p>
           <p>يرجى التواصل مع المتبرع لتنسيق الاستلام.</p>
         </div>
       `,
     }).catch((err) => console.warn('[Cron] فشل إرسال بريد الترقية:', err.message));
 
+    await notifyUser(item.donor, {
+      type:      'booking_transferred',
+      title:     'تم نقل الحجز تلقائياً 🔄',
+      body:      `انتهت مهلة المستلم السابق وانتقل حجز "${item.title}" للمنتظر التالي.`,
+      itemId:    item._id,
+      actionUrl: `/items/${item._id}`,
+    }).catch((err) => console.warn('[Cron] فشل إشعار المتبرع:', err.message));
+
   } else {
-    await Item.findByIdAndUpdate(item._id, {
+    const releaseUpdate = {
       $set: {
-        status:             'متاح',
-        bookedBy:           null,
-        deliveryOtp:        null,
-        bookedAt:           null,
-        recipientConfirmed: false,
+        status:   'متاح',
+        bookedBy: null,
+        bookedAt: null,
+        ...resetConfirmation,
       },
       $addToSet: { cancelledBy: previousBookerId },
+    };
+    if (skippedUserIds.length > 0) {
+      releaseUpdate.$pull = { waitlist: { user: { $in: skippedUserIds } } };
+    }
+
+    const released = await Item.findOneAndUpdate(
+      {
+        _id: item._id,
+        status: 'محجوز',
+        bookedBy: previousBookerId,
+        recipientConfirmed: { $ne: true },
+      },
+      releaseUpdate,
+      { returnDocument: 'after' }
+    );
+
+    if (!released) return;
+
+    emitToUser(item.donor, 'item:booking_cancelled', {
+      itemId: item._id.toString(),
+      status: 'متاح',
     });
+
+    await notifyUser(item.donor, {
+      type:      'booking_cancelled',
+      title:     'انتهت مهلة الحجز',
+      body:      `عاد "${item.title}" متاحاً بعد انتهاء مهلة المستلم.`,
+      itemId:    item._id,
+      actionUrl: `/items/${item._id}`,
+    }).catch((err) => console.warn('[Cron] فشل إشعار المتبرع:', err.message));
   }
+
+  await notifyUser(previousBookerId, {
+    type:      'booking_cancelled',
+    title:     'انتهت مهلة حجزك',
+    body:      `انتهت مهلة استلام "${item.title}" وتم إلغاء الحجز.`,
+    itemId:    item._id,
+    actionUrl: `/items/${item._id}`,
+  }).catch((err) => console.warn('[Cron] فشل إشعار المستلم السابق:', err.message));
+
+  emitToUser(previousBookerId, 'item:booking_cancelled', {
+    itemId: item._id.toString(),
+  });
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -189,14 +297,15 @@ const initCronJobs = async () => {
       const expiredItems = await Item.find({
         status:   'محجوز',
         bookedAt: { $exists: true, $type: 'date', $lt: threshold },
-      }).select('_id bookedBy waitlist donor title').lean();
+        recipientConfirmed: { $ne: true },
+      }).select('_id bookedBy waitlist cancelledBy donor title').lean();
 
       if (!expiredItems.length) return;
 
       console.log(`[Cron] 🔍 حجوزات منتهية: ${expiredItems.length}`);
 
       const results = await Promise.allSettled(
-        expiredItems.map((item) => processExpiredItem(item))
+        expiredItems.map((item) => processExpiredItem(item, settings))
       );
 
       const failed = results.filter((r) => r.status === 'rejected').length;
@@ -231,6 +340,7 @@ const initCronJobs = async () => {
       const soonExpiring = await Item.find({
         status:             'محجوز',
         bookedAt:           { $exists: true, $type: 'date', $gte: windowFrom, $lt: windowTo },
+        recipientConfirmed: { $ne: true },
         reminderSent:       { $ne: true } // تعديل بسيط لضمان الفلترة بشكل أدق بدلاً من السلوك الافتراضي المشوه
       }).populate('bookedBy', 'name email').lean();
 
@@ -242,17 +352,35 @@ const initCronJobs = async () => {
         soonExpiring.map(async (item) => {
           if (!item.bookedBy || !item.bookedBy._id) return;
 
-          // ✅ إصلاح تمرير المعامل الأول لـ notifyUser
-          await notifyUser(item.bookedBy._id, {
-            type:      'booking_expiry_reminder',
-            title:     '⏰ تذكير: حجزك على وشك الانتهاء',
-            body:      `لديك ساعة تقريباً لإتمام استلام "${item.title}" — تواصل مع المتبرع الآن.`,
-            itemId:    item._id,
-            email:     item.bookedBy.email,
-            actionUrl: `/items/${item._id}`,
-          }).catch((err) => console.warn('[Cron] فشل إشعار التذكير:', err.message));
+          const bookingFilter = {
+            _id:          item._id,
+            status:       'محجوز',
+            bookedBy:     item.bookedBy._id,
+            bookedAt:     item.bookedAt,
+            reminderSent: { $ne: true },
+          };
+          const claim = await Item.updateOne(
+            bookingFilter,
+            { $set: { reminderSent: true } }
+          );
+          if (claim.modifiedCount !== 1) return;
 
-          await Item.findByIdAndUpdate(item._id, { $set: { reminderSent: true } });
+          try {
+            await notifyUser(item.bookedBy._id, {
+              type:      'booking_expiry_reminder',
+              title:     '⏰ تذكير: حجزك على وشك الانتهاء',
+              body:      `لديك ساعة تقريباً لإتمام استلام "${item.title}" — تواصل مع المتبرع الآن.`,
+              itemId:    item._id,
+              email:     item.bookedBy.email,
+              actionUrl: `/items/${item._id}`,
+            });
+          } catch (err) {
+            await Item.updateOne(
+              { ...bookingFilter, reminderSent: true },
+              { $set: { reminderSent: false } }
+            );
+            console.warn('[Cron] فشل إشعار التذكير:', err.message);
+          }
         })
       );
     });

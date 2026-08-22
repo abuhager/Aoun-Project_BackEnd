@@ -7,8 +7,10 @@ const User             = require('../models/User');
 const Item             = require('../models/Item');
 const SystemSettings   = require('../models/SystemSettings');
 const notifyUser       = require('../utils/notifyUser');
+const { deleteFromCloudinary } = require('../utils/uploadToCloudinary');
 const AppError         = require('../utils/AppError');
 const sessionCache     = require('../utils/sessionCache');
+const { getIO }        = require('../socket');
 
 const assertCanManageUser = async (targetId, actorId, actorRole) => {
   const target = await userRepository.findByIdForAdmin(targetId);
@@ -98,17 +100,37 @@ exports.deleteItem = async (itemId, adminId, adminNote) => {
   const donorEmail = item.donor?.email ?? null;
   const itemTitle  = item.title        ?? 'غرض محذوف';
 
-  // ✅ FIX [ADMIN-02]: إشعار المستلم إذا كان الغرض محجوزاً عند حذفه
-  if (item.status === 'محجوز' && item.bookedBy) {
-    await notifyUser(item.bookedBy, {
-      type:   'item_deleted_by_admin',
-      title:  'تم حذف غرض محجوز',
-      body:   `❌ الغرض "${itemTitle}" الذي حجزته تم حذفه من قِبل الإدارة.`,
-      itemId: null,
-    });
+  await Item.deleteOne({ _id: itemId });
+
+  if (item.cloudinaryId) {
+    try {
+      await deleteFromCloudinary(item.cloudinaryId);
+    } catch (err) {
+      console.warn('[Admin Items] تعذر حذف صورة الغرض من Cloudinary:', err.message);
+    }
   }
 
-  await Item.deleteOne({ _id: itemId });
+  const affectedUserIds = [
+    item.donor?._id ?? item.donor,
+    item.bookedBy,
+    ...(item.waitlist ?? []).map((entry) => entry.user),
+  ].filter(Boolean);
+  const uniqueAffectedUserIds = [
+    ...new Map(affectedUserIds.map((id) => [id.toString(), id])).values(),
+  ];
+  for (const userId of uniqueAffectedUserIds) {
+    try {
+      getIO().to(`user_${userId}`).emit('item:deleted', { itemId: item._id });
+    } catch (_) {}
+  }
+  await Promise.allSettled(
+    uniqueAffectedUserIds.map((userId) => notifyUser(userId, {
+      type:   'item_deleted_by_admin',
+      title:  'تم حذف غرض من الإدارة',
+      body:   `حذفت الإدارة الغرض "${itemTitle}" ولم يعد متاحاً.`,
+      itemId: null,
+    }))
+  );
 
   await adminRepo.logAdminAction({
     adminId, action: 'ITEM_HIDE', targetId: itemId, targetModel: 'Item',

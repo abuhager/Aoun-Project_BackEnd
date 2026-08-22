@@ -74,10 +74,10 @@ const ItemSchema = new mongoose.Schema(
       index: true,
     },
     donorConfirmed: {
-  type:    Boolean,
-  default: false,
-  index:   true,
-},
+      type: Boolean,
+      default: false,
+      index: true,
+    },
     recipientConfirmedAt: {
       type: Date,
       default: null,
@@ -86,7 +86,10 @@ const ItemSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
-    
+    reminderSent: {
+      type: Boolean,
+      default: false,
+    },
     deliveredAt: {
       type: Date,
       default: null,
@@ -99,11 +102,10 @@ const ItemSchema = new mongoose.Schema(
       default: false,
     },
     linkedRequestId: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: 'DonationRequest',
-  default: null,
-},
-
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'DonationRequest',
+      default: null,
+    },
   },
   {
     timestamps: true,

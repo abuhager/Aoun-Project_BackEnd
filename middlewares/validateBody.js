@@ -141,7 +141,7 @@ const schemas = {
     description: Joi.string().max(1000).optional().allow('').trim(),
     category:    textField(1, 50).required(),
     location:    textField(2, 100).required(),
-    condition:   textField(2, 50).required(),
+    condition:   Joi.string().valid('جديد', 'مستعمل ممتاز', 'مستعمل جيد').required(),
     safeHub:     objectId().required(),
   }).unknown(false),
 
@@ -157,9 +157,9 @@ const schemas = {
     description: Joi.string().max(1000).optional().allow('').trim(),
     category:    textField(1, 50).optional(),
     location:    textField(2, 100).optional(),
-    condition:   textField(2, 50).optional(),
+    condition:   Joi.string().valid('جديد', 'مستعمل ممتاز', 'مستعمل جيد').optional(),
     safeHub:     objectId().optional(),
-  }).min(1).unknown(false),
+  }).unknown(false),
 
   completeDelivery: Joi.object({
     confirmationType: Joi.string()

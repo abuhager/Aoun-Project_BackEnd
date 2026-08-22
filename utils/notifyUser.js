@@ -16,22 +16,28 @@ const CRITICAL_NOTIFICATION_TYPES = Object.freeze([
 ]);
 
 async function notifyUser(userId, payload) {
-  const isObject     = userId && typeof userId === 'object';
-  const actualUserId = isObject ? userId._id : userId;
-  const userEmail    = payload.email ?? (isObject ? userId.email : null);
+  const hasUserFields = userId && typeof userId === 'object' && userId._id != null;
+  const actualUserId  = hasUserFields ? userId._id : userId;
+  const userEmail     = payload.email ?? (hasUserFields ? userId.email : null);
+  const title         = payload.title ?? 'إشعار جديد';
+  const body          = payload.body ?? payload.message;
 
   if (!actualUserId) {
     throw new AppError('userId مطلوب لإرسال الإشعار', 400, 'USER_ID_REQUIRED');
+  }
+  if (!body) {
+    throw new AppError('محتوى الإشعار مطلوب', 400, 'NOTIFICATION_BODY_REQUIRED');
   }
 
   // ── 1. حفظ الإشعار في DB ─────────────────────────────────────
   const notification = await Notification.create({
     user:           actualUserId,
     type:           payload.type,
-    title:          payload.title,
-    body:           payload.body,
+    title,
+    body,
     itemId:         payload.itemId         ?? null,
     conversationId: payload.conversationId ?? null,
+    actionUrl:      payload.actionUrl      ?? null,
     metadata: {
       ...(payload.metadata ?? {}),
       ...(payload.actionUrl ? { actionUrl: payload.actionUrl } : {}),
@@ -53,6 +59,7 @@ async function notifyUser(userId, payload) {
         body:           notification.body,
         itemId:         notification.itemId         ?? null,
         conversationId: notification.conversationId ?? null,
+        actionUrl:      notification.actionUrl      ?? null,
         metadata:       notification.metadata       ?? null,
         isRead:         notification.isRead,
         createdAt:      notification.createdAt,
@@ -73,11 +80,11 @@ async function notifyUser(userId, payload) {
 
         fireSendEmail({
           email:   userEmail,
-          subject: payload.title,
+          subject: title,
           message: `
             <div dir="rtl" style="font-family:sans-serif;line-height:1.8;color:#191c1d;max-width:560px;margin:auto;">
-              <h2 style="color:#c0392b;margin-bottom:8px;">${payload.title}</h2>
-              <p style="margin:0 0 16px;">${payload.body}</p>
+              <h2 style="color:#c0392b;margin-bottom:8px;">${title}</h2>
+              <p style="margin:0 0 16px;">${body}</p>
               ${payload.actionUrl
                 ? `<a href="${payload.actionUrl}"
                       style="display:inline-block;padding:10px 20px;background:#01696f;

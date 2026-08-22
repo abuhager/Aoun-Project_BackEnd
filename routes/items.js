@@ -2,9 +2,6 @@
 const express = require('express');
 const router  = express.Router();
 
-// ── Models ─────────────────────────────────────────────────────────────────
-const Item = require('../models/Item');
-
 // ── Middlewares ─────────────────────────────────────────────────────────────
 const { requireAuth, optionalAuth } = require('../middlewares/auth');
 const validateObjectId = require('../middlewares/validateObjectId');
@@ -33,43 +30,9 @@ const injectRecipientConfirm = (req, _res, next) => {
   next();
 };
 
-// ✅ [ARCH-WAITLIST]: Middleware يمنع الحاجز الفعلي من استخدام leave-waitlist
-// يحمي من: استدعاء خاطئ يُلغي الحجز بدل مغادرة الـ Waitlist
-const requireWaitlistMember = async (req, res, next) => {
-  try {
-    const item = await Item.findById(req.params.id)
-      .select('waitlist bookedBy')
-      .lean();
-
-    if (!item) {
-      return res.status(404).json({ success: false, msg: 'الغرض غير موجود' });
-    }
-
-    const userId     = req.user.id.toString();
-    const inWaitlist = item.waitlist?.some((w) => w.user.toString() === userId);
-    const isBooker   = item.bookedBy?.toString() === userId;
-
-    // إذا كان الحاجز الفعلي يستدعي leave-waitlist بالخطأ — أرشده للـ endpoint الصح
-    if (isBooker && !inWaitlist) {
-      return res.status(400).json({
-        success: false,
-        code:    'USE_CANCEL_BOOKING',
-        msg:     'أنت الحاجز الفعلي — استخدم إلغاء الحجز وليس مغادرة الانتظار',
-      });
-    }
-
-    if (!inWaitlist && !isBooker) {
-      return res.status(400).json({
-        success: false,
-        code:    'NOT_IN_WAITLIST',
-        msg:     'أنت لست في قائمة الانتظار',
-      });
-    }
-
-    next();
-  } catch (err) {
-    next(err);
-  }
+const injectDonorConfirm = (req, _res, next) => {
+  req.body = { ...req.body, confirmationType: 'donor_confirm' };
+  next();
 };
 
 // ── قراءة (Read Routes) ──────────────────────────────────────────────────────
@@ -112,7 +75,6 @@ router.put(
   '/leave-waitlist/:id',
   requireAuth,
   validateObjectId('id'),
-  requireWaitlistMember,
   leaveWaitlist
 );
 
@@ -130,7 +92,7 @@ router.post(
   '/:id/confirm-delivery',
   requireAuth,
   validateObjectId('id'),
-  validateBody('completeDelivery'),
+  injectDonorConfirm,
   completeDelivery
 );
 
