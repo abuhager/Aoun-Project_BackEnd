@@ -1,55 +1,5 @@
-const Joi = require('joi');
-const SystemSettings = require('../models/SystemSettings');
-
-// ══════════════════════════════════════════════════════════════
-// 1. Validation
-// ══════════════════════════════════════════════════════════════
-
-// ✅ DC-12: التصنيفات ديناميكية من SystemSettings — لا hardcoded
-exports.validateCreateRequest = async (data) => {
-  const settings       = await SystemSettings.getCached();
-  const validCategories = settings.categories;
-
-  return Joi.object({
-    title: Joi.string().trim().min(3).max(100).required().messages({
-      'string.empty': 'عنوان الطلب مطلوب',
-      'string.min':   'العنوان يجب أن يكون 3 أحرف على الأقل',
-      'string.max':   'العنوان لا يتجاوز 100 حرف',
-    }),
-    // ✅ التصنيف من SystemSettings — يتغير ديناميكياً مع تغيير الإعدادات
-    category: Joi.string()
-      .valid(...validCategories)
-      .required()
-      .messages({
-        'string.empty': 'التصنيف مطلوب',
-        'any.only':     `التصنيف غير صالح. المتاح: ${validCategories.join(', ')}`,
-      }),
-    urgency: Joi.string()
-      .valid('low', 'medium', 'high')
-      .default('medium'),
-    description: Joi.string().trim().max(500).optional().allow(''),
-    location: Joi.string().trim().min(2).max(100).required().messages({
-      'string.empty': 'الموقع مطلوب',
-    }),
-  }).validateAsync(data, { abortEarly: false, stripUnknown: true });
-};
-
-exports.validateUpdateRequest = async (data) => {
-  const settings        = await SystemSettings.getCached();
-  const validCategories = settings.categories;
-
-  return Joi.object({
-    title:       Joi.string().trim().min(3).max(100).optional(),
-    category:    Joi.string().valid(...validCategories).optional(),
-    urgency:     Joi.string().valid('low', 'medium', 'high').optional(),
-    description: Joi.string().trim().max(500).optional().allow(''),
-    location:    Joi.string().trim().min(2).max(100).optional(),
-  }).validateAsync(data, { abortEarly: false, stripUnknown: true });
-};
-
-// ══════════════════════════════════════════════════════════════
-// 2. Transformations — مطابقة للـ Frontend DonationRequest interface
-// ══════════════════════════════════════════════════════════════
+// تحقق شكل الطلبات موحّد في middlewares/validateBody.js،
+// والتصنيفات والمواقع الديناميكية تتحقق منها donationRequestService.
 
 exports.toPublicRequest = (req, options = {}) => ({
   _id:         req._id,

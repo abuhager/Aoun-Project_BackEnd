@@ -12,6 +12,7 @@ const AppError         = require('../utils/AppError');
 const sessionCache     = require('../utils/sessionCache');
 const { SOCKET_EVENTS } = require('../socket/contracts');
 const { disconnectUserSockets, emitToUser } = require('../socket/emitter');
+const adminDto = require('../dtos/adminDto');
 
 const notifyBestEffort = async (user, payload, context) => {
   try {
@@ -99,7 +100,12 @@ exports.listUsers = async ({ page = 1, search = '', banned = '' }) => {
     adminRepo.findAllUsers({ page: normalizedPage, search, banned, limit: PAGE_SIZE }),
     adminRepo.countUsers({ search, banned }),
   ]);
-  return { users, total, page: normalizedPage, pages: Math.ceil(total / PAGE_SIZE) };
+  return {
+    users: users.map(adminDto.toAdminUser).filter(Boolean),
+    total,
+    page: normalizedPage,
+    pages: Math.ceil(total / PAGE_SIZE),
+  };
 };
 
 exports.banUser = async (userId, adminId, adminRole, reason, adminNote) => {
@@ -153,7 +159,12 @@ exports.listItems = async ({ page = 1 }) => {
     adminRepo.findAllItems({ page: normalizedPage, limit: PAGE_SIZE }),
     adminRepo.countItems(),
   ]);
-  return { items, total, page: normalizedPage, pages: Math.ceil(total / PAGE_SIZE) };
+  return {
+    items: items.map(adminDto.toAdminItem).filter(Boolean),
+    total,
+    page: normalizedPage,
+    pages: Math.ceil(total / PAGE_SIZE),
+  };
 };
 
 exports.deleteItem = async (itemId, adminId, adminNote) => {
@@ -350,7 +361,12 @@ exports.listAuditLogs = async ({ page = 1 }) => {
     adminRepo.findAdminLogs({ page: normalizedPage, limit: PAGE_SIZE }),
     AdminLog.countDocuments(),
   ]);
-  return { logs, total, page: normalizedPage, pages: Math.ceil(total / PAGE_SIZE) };
+  return {
+    logs: logs.map(adminDto.toAdminAuditLog).filter(Boolean),
+    total,
+    page: normalizedPage,
+    pages: Math.ceil(total / PAGE_SIZE),
+  };
 };
 
 // ─── Promote / Demote ─────────────────────────────────────────

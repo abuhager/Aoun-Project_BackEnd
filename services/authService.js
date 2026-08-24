@@ -44,6 +44,7 @@ const sessionCache   = require('../utils/sessionCache');
 
 
 const { buildGamificationProfile } = require('../utils/gamification');
+const { toAuthUser, toProfileActivityItem } = require('../dtos/authDto');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/tokenUtils');
 const { generateOtp, hashOtp, verifyOtp } = require('../utils/otp');
 const { hashToken } = require('../utils/cryptoUtils');
@@ -103,44 +104,11 @@ const _upgradeStudentTrust = async (user, settings) => {
 };
 
 
-// ✅ [ARCH-NEW-02] isFrozen + isBanned — الـ Frontend يحتاجهما لعرض حالة الحساب
-const buildSafeUser = (user) => ({
-  _id:                user._id,
-  name:               user.name,
-  email:              user.email,
-  phone:              user.phone          ?? null,
-  phoneVerified:      user.phoneVerified  ?? false,
-  avatar:             user.avatar,
-  role:               user.role,
-  trustScore:         user.trustScore,
-  trustLevel:         user.trustLevel     ?? 1,
-  quota:              user.quota,
-  totalDonations:     user.totalDonations ?? 0,
-  isVerified:         user.isVerified,
-  isVerifiedStudent:  user.isVerifiedStudent,
-  isBanned:           user.isBanned       ?? false,
-  isFrozen:           user.isFrozen       ?? false,
-  badges:             user.badges,
-  createdAt:          user.createdAt,
-  gamification:       buildGamificationProfile(user.trustScore, user.totalDonations),
-});
-
-
 const _getProfilePageParams = async (page) => {
   const settings = await SystemSettings.getCached();
   const pageSize = settings?.profilePageSize ?? 10;
   return { pageSize, skip: (page - 1) * pageSize, settings };
 };
-
-const toProfileActivityItem = (item) => ({
-  _id: item._id,
-  title: item.title,
-  category: item.category,
-  status: item.status,
-  imageUrl: item.imageUrl ?? '',
-  createdAt: item.deliveredAt ?? item.createdAt,
-});
-
 
 // ✅ [DUP-NEW-01] دالة مشتركة لإصدار OTP — تُزيل التكرار من 3 أماكن
 // fire-and-forget للبريد: لا ننتظر الإرسال حتى لا نُعطّل الاستجابة
@@ -167,7 +135,7 @@ const _issueVerificationOtp = async (userId, email, name, isStudent, otpExpiryMi
 exports.getCurrentUserLogic = async (userId) => {
   const user = await userRepository.findById(userId);
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود', code: 'USER_NOT_FOUND' } };
-  return { statusCode: 200, body: buildSafeUser(user) };
+  return { statusCode: 200, body: toAuthUser(user) };
 };
 
 
@@ -361,7 +329,7 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
   return {
     statusCode: 200,
     refreshToken,
-    body: { msg: 'تم التحقق من إيميلك بنجاح ✅', user: buildSafeUser(savedSession), accessToken },
+    body: { msg: 'تم التحقق من إيميلك بنجاح ✅', user: toAuthUser(savedSession), accessToken },
   };
 };
 
@@ -477,7 +445,7 @@ exports.loginLogic = async ({ email, password }) => {
   return {
     statusCode: 200,
     refreshToken,
-    body: { msg: 'مرحباً بعودتك 👋', user: buildSafeUser(savedSession), accessToken },
+    body: { msg: 'مرحباً بعودتك 👋', user: toAuthUser(savedSession), accessToken },
   };
 };
 
@@ -571,7 +539,7 @@ exports.refreshLogic = async (rawRefreshToken, clientIp = 'unknown') => {
       statusCode: 200,
       body: {
         accessToken: generateAccessToken(user),
-        user: buildSafeUser(user),
+        user: toAuthUser(user),
         refreshRaceRecovered: true,
       },
     };
@@ -612,7 +580,7 @@ exports.refreshLogic = async (rawRefreshToken, clientIp = 'unknown') => {
         statusCode: 200,
         body: {
           accessToken: generateAccessToken(latest),
-          user: buildSafeUser(latest),
+          user: toAuthUser(latest),
           refreshRaceRecovered: true,
         },
       };
@@ -629,7 +597,7 @@ exports.refreshLogic = async (rawRefreshToken, clientIp = 'unknown') => {
   return {
     statusCode:      200,
     newRefreshToken,
-    body: { accessToken: newAccessToken, user: buildSafeUser(rotated) },
+    body: { accessToken: newAccessToken, user: toAuthUser(rotated) },
   };
 };
 
@@ -793,7 +761,7 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, fileMimeType) => {
 
   sessionCache.invalidate(userId);
 
-  return { statusCode: 200, body: { msg: 'تم تحديث الملف الشخصي بنجاح ✅', user: buildSafeUser(updated) } };
+  return { statusCode: 200, body: { msg: 'تم تحديث الملف الشخصي بنجاح ✅', user: toAuthUser(updated) } };
 };
 
 
@@ -847,7 +815,7 @@ exports.getMeLogic = async (userId, page) => {
   return {
     statusCode: 200,
     body: {
-      user:      buildSafeUser(user),
+      user:      toAuthUser(user),
       donations: donationsResult.map(toProfileActivityItem),
       received:  receivedResult.map(toProfileActivityItem),
       page,

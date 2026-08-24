@@ -133,7 +133,11 @@ exports.setTrustLevelAndQuota = (id, level, quota) =>
     id,
     { trustLevel: level, quota, promotedByAdmin: true },
     { returnDocument: 'after' }
-  ).select('name email trustLevel quota isVerifiedStudent phoneVerified isBanned');
+  ).select(
+    'name email phone avatar role trustLevel trustScore quota totalDonations ' +
+    'isVerified isVerifiedStudent phoneVerified isBanned isFrozen banReason ' +
+    'createdAt updatedAt'
+  );
 
 exports.setTrustLevel = (id, level) =>
   User.findByIdAndUpdate(id, { trustLevel: level }, { returnDocument: 'after' })

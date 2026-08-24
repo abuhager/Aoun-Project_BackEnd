@@ -1,18 +1,14 @@
 // controllers/adminController.js
-const mongoose     = require('mongoose');
 const adminService = require('../services/adminService');
 const asyncHandler = require('../utils/asyncHandler');
 const AppError     = require('../utils/AppError');
-const { validatePromote } = require('../dtos/adminDto');
+const adminDto     = require('../dtos/adminDto');
 
 // ─── مساعد: تنظيف النصوص ──────────────────────────────────────
 const cleanString = (str) => (typeof str === 'string' ? str.trim() : '');
 
 // ─── Users ────────────────────────────────────────────────────
 exports.promoteUser = asyncHandler(async (req, res) => {
-  const { error } = validatePromote(req.body);
-  if (error) throw new AppError(error.details[0].message, 400, 'VALIDATION_ERROR');
-
   const reason    = cleanString(req.body.reason);
   const adminNote = cleanString(req.body.adminNote);
 
@@ -23,13 +19,13 @@ exports.promoteUser = asyncHandler(async (req, res) => {
     reason,
     adminNote
   );
-  return res.status(200).json({ msg: `تمت ترقية ${user.name} ✅`, user });
+  return res.status(200).json({
+    msg: `تمت ترقية ${user.name} ✅`,
+    user: adminDto.toAdminUser(user),
+  });
 });
 
 exports.demoteUser = asyncHandler(async (req, res) => {
-  const { error } = validatePromote(req.body);
-  if (error) throw new AppError(error.details[0].message, 400, 'VALIDATION_ERROR');
-
   const reason    = cleanString(req.body.reason);
   const adminNote = cleanString(req.body.adminNote);
 
@@ -40,7 +36,10 @@ exports.demoteUser = asyncHandler(async (req, res) => {
     reason,
     adminNote
   );
-  return res.status(200).json({ msg: `تم خفض ${user.name}`, user });
+  return res.status(200).json({
+    msg: `تم خفض ${user.name}`,
+    user: adminDto.toAdminUser(user),
+  });
 });
 
 exports.listUsers = asyncHandler(async (req, res) => {
@@ -51,9 +50,6 @@ exports.listUsers = asyncHandler(async (req, res) => {
 exports.banUser = asyncHandler(async (req, res) => {
   const targetUserId = req.params.id;
 
-  if (!mongoose.Types.ObjectId.isValid(targetUserId)) {
-    throw new AppError('قيمة المعرف ممررة بشكل غير صالح', 400, 'INVALID_ID');
-  }
   const reason    = cleanString(req.body.reason);
   const adminNote = cleanString(req.body.adminNote);
 
@@ -67,7 +63,7 @@ exports.banUser = asyncHandler(async (req, res) => {
 
   res.json({
     msg: `تم حظر ${user.name} وتطهير كافة حجوزاته وجلساته النشطة بنجاح 🚫`,
-    user,
+    user: adminDto.toAdminUser(user),
   });
 });
 
@@ -79,7 +75,10 @@ exports.unbanUser = asyncHandler(async (req, res) => {
     req.user.role,
     adminNote
   );
-  res.json({ msg: `تم رفع الحظر عن ${user.name}`, user });
+  res.json({
+    msg: `تم رفع الحظر عن ${user.name}`,
+    user: adminDto.toAdminUser(user),
+  });
 });
 
 // ─── Items ────────────────────────────────────────────────────
@@ -90,8 +89,6 @@ exports.listItems = asyncHandler(async (req, res) => {
 
 exports.deleteItem = asyncHandler(async (req, res) => {
   const adminNote = cleanString(req.body.adminNote);
-  if (!adminNote) throw new AppError('تعليق الحذف مطلوب', 400, 'ADMIN_NOTE_REQUIRED');
-
   await adminService.deleteItem(req.params.id, req.user.id, adminNote);
   res.json({ msg: 'تم حذف الغرض ✅' });
 });

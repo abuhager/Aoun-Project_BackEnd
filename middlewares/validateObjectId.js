@@ -11,9 +11,14 @@ const validateObjectId = (...params) =>
     for (const param of params) {
       const value = req.params[param];
       if (value && !mongoose.Types.ObjectId.isValid(value)) {
+        const message = `المعرّف "${param}" غير صحيح`;
         return res.status(400).json({
-          msg:   `المعرّف "${param}" غير صحيح`,
-          field: param,
+          status:    'fail',
+          message,
+          msg:       message,
+          code:      'INVALID_ID',
+          field:     param,
+          requestId: req.id ?? req.headers?.['x-request-id'] ?? null,
         });
       }
     }

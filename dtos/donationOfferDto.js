@@ -1,36 +1,4 @@
-const Joi = require('joi');
-
-// ══════════════════════════════════════════════════════════════
-// 1. Validation
-// ══════════════════════════════════════════════════════════════
-
-exports.validateCreateOffer = (data) =>
-  Joi.object({
-    // ✅ مطابق لـ DonationOffer Model — condition enum محدد
-    condition: Joi.string()
-      .valid('جديد', 'مستعمل ممتاز', 'مستعمل جيد')
-      .required()
-      .messages({
-        'string.empty': 'حالة الغرض مطلوبة',
-        'any.only':     'حالة الغرض يجب أن تكون: جديد، مستعمل ممتاز، أو مستعمل جيد',
-      }),
-    safeHub: Joi.string().hex().length(24).optional().allow('', null).messages({
-      'string.length': 'معرّف المركز غير صحيح',
-    }),
-    description: Joi.string().trim().max(500).optional().allow(''),
-    // imageUrl يُضاف بعد رفع الصورة في الـ Controller — لا يُرسَل من الـ Client
-  }).validate(data, { abortEarly: false, stripUnknown: true });
-
-exports.validateUpdateOffer = (data) =>
-  Joi.object({
-    condition:   Joi.string().valid('جديد', 'مستعمل ممتاز', 'مستعمل جيد').optional(),
-    safeHub:     Joi.string().hex().length(24).optional().allow('', null),
-    description: Joi.string().trim().max(500).optional().allow(''),
-  }).validate(data, { abortEarly: false, stripUnknown: true });
-
-// ══════════════════════════════════════════════════════════════
-// 2. Transformations — مطابق لـ DonationOffer interface في Frontend
-// ══════════════════════════════════════════════════════════════
+// تحقق شكل الطلبات موحّد في middlewares/validateBody.js.
 
 exports.toPublicOffer = (offer) => ({
   _id:         offer._id,

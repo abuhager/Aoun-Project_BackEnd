@@ -106,6 +106,10 @@ const schemas = {
     adminNote: Joi.string().max(1000).optional().allow('').trim(),
   }).unknown(false),
 
+  unbanUser: Joi.object({
+    adminNote: Joi.string().max(500).optional().allow('').trim(),
+  }).unknown(false),
+
   resolveReport: Joi.object({
     status: Joi.string()
       .valid('reviewed', 'dismissed', 'actioned')
@@ -248,10 +252,14 @@ const validateBody = (schemaName) => (req, res, next) => {
   });
 
   if (error) {
+    const message = 'بيانات غير صالحة';
     return res.status(422).json({
-      msg:    'بيانات غير صالحة',
-      code:   'VALIDATION_ERROR',
-      errors: error.details.map((d) => d.message),
+      status:    'fail',
+      message,
+      msg:       message,
+      code:      'VALIDATION_ERROR',
+      errors:    error.details.map((d) => d.message),
+      requestId: req.id ?? req.headers?.['x-request-id'] ?? null,
     });
   }
 

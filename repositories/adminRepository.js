@@ -28,7 +28,11 @@ const buildUserFilter = ({ search, banned = '' } = {}) => {
 exports.findAllUsers = ({ page = 1, limit = 20, search, banned = '' } = {}) => {
   const filter = buildUserFilter({ search, banned });
   return User.find(filter)
-    .select('-password -refreshToken -verificationOtp -resetPasswordToken')
+    .select(
+      'name email phone avatar role trustLevel trustScore quota totalDonations ' +
+      'isVerified isVerifiedStudent phoneVerified isBanned isFrozen banReason ' +
+      'createdAt updatedAt'
+    )
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(limit)
@@ -64,6 +68,7 @@ exports.adjustTrustScore = (userId, delta) =>
 // ── الأغراض ───────────────────────────────────────────────────
 exports.findAllItems = ({ page = 1, limit = 20 } = {}) =>
   Item.find()
+    .select('title category status imageUrl donor createdAt')
     .populate('donor', 'name email')
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)

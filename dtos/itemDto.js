@@ -1,62 +1,6 @@
 // backend/dtos/itemDto.js
-// ✅ FIX [UX-02]: toPublicItem يقبل requesterId ويُرجع isInWaitlist
-const Joi            = require('joi');
-const SystemSettings = require('../models/SystemSettings');
-
-
-// ============================================
-// 1. Validation
-// ============================================
-
-
-exports.validateCreateItem = async (data) => {
-  const settings        = await SystemSettings.getCached();
-  const validCategories = settings.categories;
-
-  const schema = Joi.object({
-    title: Joi.string().min(3).max(100).required().messages({
-      'string.empty': 'العنوان مطلوب',
-      'string.min':   'اسم الغرض يجب أن يكون 3 أحرف على الأقل',
-    }),
-    category: Joi.string()
-      .valid(...validCategories)
-      .required()
-      .messages({
-        'string.empty': 'التصنيف مطلوب',
-        'any.only':     `التصنيف غير صحيح. المتاح: ${validCategories.join(', ')}`,
-      }),
-    safeHub: Joi.string().hex().length(24).optional().allow('', null).messages({
-      'string.length': 'معرّف المركز غير صحيح',
-    }),
-    description: Joi.string().allow('').max(500),
-  });
-
-  return schema.validateAsync(data, { abortEarly: false });
-};
-
-
-exports.validateUpdateItem = async (data) => {
-  const settings        = await SystemSettings.getCached();
-  const validCategories = settings.categories;
-
-  const schema = Joi.object({
-    title:       Joi.string().min(3).max(100),
-    category:    Joi.string().valid(...validCategories),
-    description: Joi.string().allow('').max(500),
-    location:    Joi.string(),
-    condition:   Joi.string().allow('').max(100),
-    safeHub:     Joi.string().hex().length(24).optional().allow('', null).messages({
-      'string.length': 'معرّف المركز غير صحيح',
-    }),
-  }).unknown(true);
-
-  return schema.validateAsync(data, { abortEarly: false });
-};
-
-
-// ============================================
-// 2. Transformations
-// ============================================
+// تحقق شكل الطلبات موحّد في middlewares/validateBody.js،
+// والتحقق الديناميكي من التصنيفات والمراكز يتم في itemService.
 
 
 const getReferenceId = (value) => value?._id ?? value ?? null;
