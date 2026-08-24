@@ -92,6 +92,14 @@ const schemas = {
       .messages({ 'any.invalid': 'يجب أن تكون كلمة المرور الجديدة مختلفة عن الحالية' }),
   }).unknown(false),
 
+  // ──────────── conversations ───────────────────────────────────────
+  openConversation: Joi.object({
+    itemId:       objectId().required(),
+    targetUserId: objectId().optional(),
+    // Compatibility alias for the previous frontend contract.
+    donorId:      objectId().optional(),
+  }).oxor('targetUserId', 'donorId').unknown(false),
+
   // ──────────── admin ──────────────────────────────────────────────────
   banUser: Joi.object({
     reason:    Joi.string().min(5).max(500).required().trim(),

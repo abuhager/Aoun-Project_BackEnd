@@ -37,6 +37,7 @@ const socketAuthMiddleware = async (socket, next) => {
     socket.userId = identity.id;
     socket.userName = identity.name;
     socket.userRole = identity.role;
+    socket.data.userId = identity.id;
     return next();
   } catch (error) {
     const code = error.code || error.data?.code || 'SOCKET_UNAUTHORIZED';

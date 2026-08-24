@@ -11,12 +11,18 @@ process.env.JWT_REFRESH_EXPIRE = '30d';
 process.env.JWT_ISSUER = 'aoun-api';
 process.env.JWT_AUDIENCE = 'aoun-web';
 process.env.CLIENT_URL = 'https://frontend.example/path-is-ignored';
+process.env.CLOUDINARY_CLOUD_NAME = 'test-cloud';
+process.env.CLOUDINARY_API_KEY = 'test-key';
+process.env.CLOUDINARY_API_SECRET = 'test-secret';
 
 const validateBody = require('../middlewares/validateBody');
 const tokenUtils = require('../utils/tokenUtils');
 const sessionCache = require('../utils/sessionCache');
 const userRepository = require('../repositories/userRepository');
 const authMiddleware = require('../middlewares/auth');
+const authService = require('../services/authService');
+const emailService = require('../services/emailService');
+const SystemSettings = require('../models/SystemSettings');
 const User = require('../models/User');
 const { escapeHtml, getClientOrigin } = require('../services/emailService');
 const {
@@ -152,13 +158,50 @@ test('قالب البريد يهرب HTML ويبني رابط reset من Origin 
   assert.equal(getClientOrigin(), 'https://frontend.example');
 });
 
+test('التسجيل ببريد مفعّل يعيد EMAIL_ALREADY_EXISTS ولا يرسل OTP', async (t) => {
+  const originals = {
+    getCached: SystemSettings.getCached,
+    findByEmail: userRepository.findByEmail,
+    sendVerificationEmail: emailService.sendVerificationEmail,
+  };
+  t.after(() => {
+    SystemSettings.getCached = originals.getCached;
+    userRepository.findByEmail = originals.findByEmail;
+    emailService.sendVerificationEmail = originals.sendVerificationEmail;
+  });
+
+  SystemSettings.getCached = async () => ({
+    otpExpiryMinutes: 10,
+    defaultUserQuota: 2,
+    studentDefaultTrustLevel: 2,
+    universityEmailDomains: [],
+  });
+  userRepository.findByEmail = async () => ({
+    _id: '507f1f77bcf86cd799439099',
+    isVerified: true,
+  });
+  let mailCalls = 0;
+  emailService.sendVerificationEmail = async () => { mailCalls += 1; };
+
+  const result = await authService.registerLogic({
+    name: 'Existing User',
+    email: 'existing@example.com',
+    password: 'StrongPass1',
+    phone: '+962791234567',
+  });
+
+  assert.equal(result.statusCode, 409);
+  assert.equal(result.body.code, 'EMAIL_ALREADY_EXISTS');
+  assert.equal(mailCalls, 0);
+});
+
 test('لا يوجد fallback لهوية ثابتة في Socket chat', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '../socket/chatHandlers.js'),
     'utf8'
   );
   assert.doesNotMatch(source, /6a43f5e5cee3421d5c6498dd/);
-  assert.match(source, /assertParticipant\(convId, currentUserId\)/);
+  assert.match(source, /assertParticipant\(convId, socket\.userId\)/);
 });
 
 test('trustLevel identity contract stays separate from gamification levels', async () => {

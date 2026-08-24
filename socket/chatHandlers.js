@@ -1,203 +1,283 @@
-const repo = require("../repositories/conversationRepository");
-const dto = require("../dtos/conversationDto");
-const Conversation = require("../models/Conversation"); 
-const mongoose = require("mongoose");
+const mongoose = require('mongoose');
+
+const repo = require('../repositories/conversationRepository');
+const dto = require('../dtos/conversationDto');
+const notifyUser = require('../utils/notifyUser');
 
 const MAX_MESSAGE_LENGTH = 2000;
+const MESSAGE_RATE_WINDOW_MS = 10_000;
+const MESSAGE_RATE_MAX = 15;
+const CLIENT_MESSAGE_ID_PATTERN = /^[A-Za-z0-9._:-]{8,100}$/;
 
-/**
- * دالة التحقق من مشاركة المستخدم في المحادثة
- */
-async function assertParticipant(convId, userId) {
-  if (!mongoose.isObjectIdOrHexString(convId) || !mongoose.isObjectIdOrHexString(userId)) {
-    throw Object.assign(new Error('معرّف المحادثة أو المستخدم غير صالح'), { code: 'BAD_REQUEST' });
+const chatError = (message, code, statusCode = 400) => Object.assign(
+  new Error(message),
+  { code, statusCode }
+);
+
+const asId = (value) => (value?._id || value)?.toString();
+
+const participantIds = (conversation) => (
+  [...new Set((conversation?.participants || []).map(asId).filter(Boolean))]
+);
+
+const canSendInConversation = (conversation) => (
+  asId(conversation?.item?.donor) === asId(conversation?.owner)
+  && asId(conversation?.item?.bookedBy) === asId(conversation?.requester)
+);
+
+async function assertParticipant(conversationId, userId) {
+  if (!mongoose.isObjectIdOrHexString(conversationId)) {
+    throw chatError('معرّف المحادثة غير صالح', 'INVALID_CONVERSATION_ID');
+  }
+  if (!mongoose.isObjectIdOrHexString(userId)) {
+    throw chatError('هوية الاتصال غير صالحة', 'SOCKET_UNAUTHORIZED', 401);
   }
 
-  // 1. محاولة البحث بـ ID المحادثة الصريح أولاً
-  let conv = await repo.findConversationById(convId);
-  
-  // 2. 🌟 التطوير الذكي: إذا لم يعثر عليها (الفرونت إند مرر itemId)
-  // نبحث عن المحادثة التي تخص هذا المنتج، بحيث يكون المستخدم الحالي إما السائل (participants) أو صاحب المنتج (owner)
-  if (!conv) {
-    conv = await Conversation.findOne({
-      item: convId,
-      $or: [
-        { participants: userId },
-        { owner: userId },
-        { requester: userId }
-      ]
-    })
-    .populate("item", "title images imageUrl")
-    .populate("owner", "name avatar")
-    .populate("requester", "name avatar");
+  const conversation = await repo.findConversationById(conversationId);
+  if (!conversation) {
+    throw chatError('المحادثة غير موجودة', 'CHAT_NOT_FOUND', 404);
+  }
+  if (!repo.isParticipant(conversation, userId)) {
+    throw chatError('غير مصرح لك بدخول هذه المحادثة', 'CHAT_FORBIDDEN', 403);
   }
 
-  if (!conv) {
-    throw Object.assign(new Error("المحادثة غير موجودة في النظام للغرض المحدّد"), { code: "NOT_FOUND" });
-  }
-
-  // 3. التحقق من الصلاحية (هل المستخدم الحالي جزء من أطراف المحادثة؟)
-  const isOwner = conv.owner?._id?.toString() === userId.toString() || conv.owner?.toString() === userId.toString();
-  const isRequester = conv.requester?._id?.toString() === userId.toString() || conv.requester?.toString() === userId.toString();
-  const isPart = repo.isParticipant(conv, userId);
-
-  if (!isPart && !isOwner && !isRequester) {
-    throw Object.assign(new Error("غير مصرح لك بدخول هذه المحادثة"), { code: "FORBIDDEN" });
-  }
-  
-  return conv;
+  return conversation;
 }
 
-function safeAck(ack, payload) {
-  if (typeof ack === "function") ack(payload);
-}
+const safeAck = (ack, payload) => {
+  if (typeof ack !== 'function') return false;
+  ack(payload);
+  return true;
+};
 
-/**
- * تسجيل مستمعي أحداث الدردشة الفورية
- */
+const sendSocketError = (socket, scope, error, ack) => {
+  const payload = {
+    ok: false,
+    success: false,
+    code: error.code || 'CHAT_ERROR',
+    error: error.statusCode >= 500 ? 'تعذر تنفيذ عملية المحادثة' : error.message,
+  };
+
+  if (!safeAck(ack, payload)) {
+    socket.emit('chat_error', { scope, code: payload.code, msg: payload.error });
+  }
+};
+
+const broadcastConversationRefresh = (io, conversation, conversationId) => {
+  participantIds(conversation).forEach((participantId) => {
+    io.to(`user_${participantId}`).emit('conversation_updated', { conversationId });
+  });
+};
+
+const markReadAndBroadcast = async (io, conversation, conversationId, userId) => {
+  const [markedCount, markedNotificationCount] = await Promise.all([
+    repo.markMessagesRead(conversationId, userId),
+    repo.markMessageNotificationsRead(conversationId, userId),
+  ]);
+  if (markedCount === 0 && markedNotificationCount === 0) return 0;
+
+  if (markedCount > 0) {
+    io.to(`conv_${conversationId}`).emit('messages_read', {
+      conversationId,
+      readBy: userId.toString(),
+    });
+  }
+  if (markedNotificationCount > 0) {
+    io.to(`user_${userId}`).emit('notification:refresh');
+  }
+  broadcastConversationRefresh(io, conversation, conversationId);
+  return markedCount;
+};
+
 function registerChatHandlers(io, socket) {
-  
-  // 1️⃣ حدث دخول الغرفة (Join Room)
-  socket.on("join_room", async ({ convId } = {}, ack) => {
+  let recentMessageTimes = [];
+
+  socket.on('join_room', async ({ convId } = {}, ack) => {
     try {
-      if (!convId) throw Object.assign(new Error("convId مطلوب"), { code: "BAD_REQUEST" });
-      const conv = await assertParticipant(convId, socket.userId);
+      const conversation = await assertParticipant(convId, socket.userId);
+      const conversationId = conversation._id.toString();
 
-      const realConvId = conv._id.toString();
-      socket.join(`conv_${realConvId}`);
-      
-      const messages = await repo.findRecentMessages(realConvId, 50);
-      await repo.markMessagesRead(realConvId, socket.userId);
-
-      socket.to(`conv_${realConvId}`).emit("messages_read", { conversationId: realConvId, readBy: socket.userId });
-      socket.to(`user_${socket.userId}`).emit("conversation_updated");
-
-      const parsedMessages = dto.toMessagesResponse(messages, realConvId).messages;
-
-      safeAck(ack, { ok: true, success: true, messages: parsedMessages });
-      
-      socket.emit("room_joined", {
-        convId: realConvId,
-        messages: parsedMessages,
-      });
-    } catch (err) {
-      console.error("❌ [Socket Join Room Error]:", err.message);
-      safeAck(ack, { ok: false, success: false, error: err.message });
-      socket.emit("chat_error", { scope: "join_room", msg: err.message });
-    }
-  });
-
-  // حدث مغادرة الغرفة
-  socket.on("leave_room", ({ convId } = {}) => {
-    if (convId) socket.leave(`conv_${convId}`);
-  });
-
-  // 2️⃣ حدث إرسال وحفظ الرسالة اللحظية (المعدل والمحصن بالكامل)
-  socket.on("send_message", async ({ convId, text, correlationId } = {}, ack) => {
-  try {
-    const trimmed = (text || "").trim();
-    if (!convId || !trimmed) {
-      throw Object.assign(new Error("بيانات إرسال غير صالحة"), { code: "BAD_REQUEST" });
-    }
-    if (trimmed.length > MAX_MESSAGE_LENGTH) {
-      throw Object.assign(
-        new Error(`الرسالة تتجاوز الحد الأقصى (${MAX_MESSAGE_LENGTH} حرف)`),
-        { code: "MESSAGE_TOO_LONG" }
-      );
-    }
-    if (!socket.userId) {
-      throw Object.assign(new Error("هوية الاتصال غير موجودة"), { code: "UNAUTHORIZED" });
-    }
-
-    const currentUserId = socket.userId;
-    const conv = await assertParticipant(convId, currentUserId);
-    const realConvId = conv._id.toString();
-    socket.join(`conv_${realConvId}`);
-
-    const message = await repo.createMessage({
-      conversationId: realConvId,
-      senderId: currentUserId, 
-      text: trimmed,
-    });
-
-    // 🌟 خطوة الإنقاذ: قراءة الرسالة فوراً للمرسل نفسه لتفادي ظهور عداد (1) لشاشتك
-    await repo.markMessagesRead(realConvId, currentUserId);
-
-    const messageDto = dto.toMessageDto(message, realConvId);
-    const payload = correlationId ? { ...messageDto, correlationId } : messageDto;
-
-    // 6️⃣ بث الرسالة اللحظية للغرفة المشتركة
-    io.to(`conv_${realConvId}`).emit("receive_message", {
-      convId: realConvId, 
-      message: payload
-    });
-
-    // 7️⃣ بث التحديثات لجميع الأطراف
-    if (conv) {
-      const isCurrentSenderOwner = conv.owner?._id?.toString() === currentUserId.toString() || conv.owner?.toString() === currentUserId.toString();
-      const senderUserObj = isCurrentSenderOwner ? conv.owner : conv.requester;
-      
-      const senderName = senderUserObj?.name || socket.userName || "مستخدم عون";
-      const senderAvatar = senderUserObj?.avatar || "";
-
-      const targets = new Set();
-      if (conv.owner) targets.add(conv.owner._id?.toString() || conv.owner.toString());
-      if (conv.requester) targets.add(conv.requester._id?.toString() || conv.requester.toString());
-      (conv.participants || []).forEach(p => targets.add(p._id?.toString() || p.toString()));
-
-      targets.forEach((id) => {
-        // تحديث القوائم والعدادات لكل طرف بشكل مستقل
-        io.to(`user_${id}`).emit("conversation_updated");
-
-        // إرسال الإشعار المنبثق للطرف الآخر فقط وحجبه تماماً عن المرسل
-        if (id !== currentUserId.toString()) {
-          io.to(`user_${id}`).emit("notification_new", {
-            type: "message",
-            conversationId: realConvId,
-            itemId: conv.item?._id || conv.item || null,
-            itemTitle: conv.item?.title || "غرض عون",
-            from: { 
-              _id: currentUserId, 
-              name: senderName,
-              avatar: senderAvatar
-            },
-            preview: trimmed.length > 60 ? `${trimmed.slice(0, 60)}...` : trimmed,
-            createdAt: new Date().toISOString()
-          });
+      for (const room of socket.rooms) {
+        if (room.startsWith('conv_') && room !== `conv_${conversationId}`) {
+          socket.leave(room);
         }
+      }
+      await socket.join(`conv_${conversationId}`);
+
+      const page = await repo.findMessagesPage(conversationId, {
+        page: 1,
+        limit: repo.DEFAULT_MESSAGE_PAGE_SIZE,
       });
+      await markReadAndBroadcast(io, conversation, conversationId, socket.userId);
+
+      safeAck(ack, {
+        ok: true,
+        success: true,
+        conversationId,
+        messages: dto.toMessagesResponse(page.messages, conversationId).messages,
+        page: page.page,
+        totalPages: page.totalPages,
+        canSend: canSendInConversation(conversation),
+      });
+    } catch (error) {
+      console.warn(`[Socket Chat][join_room] ${error.code || 'CHAT_ERROR'}: ${error.message}`);
+      sendSocketError(socket, 'join_room', error, ack);
     }
+  });
 
-    // 8️⃣ إرجاع الـ Ack للـ Frontend
-    return safeAck(ack, { 
-      ok: true,
-      success: true, 
-      message: messageDto, 
-      correlationId: correlationId || null 
-    });
+  socket.on('leave_room', ({ convId } = {}) => {
+    if (!mongoose.isObjectIdOrHexString(convId)) return;
+    const room = `conv_${convId}`;
+    if (!socket.rooms.has(room)) return;
 
-  } catch (err) {
-    console.error("❌ [Socket Send Message Error] فشل إرسال وحفظ الرسالة:", err.message);
-    safeAck(ack, { 
-      ok: false,
-      success: false, 
-      error: err.message, 
-      correlationId: correlationId || null 
-    });
-    socket.emit("chat_error", { scope: "send_message", msg: err.message });
-  }
-});
-
-  // 3️⃣ حدث حالة الكتابة اللحظية (Typing Status)
-  socket.on("typing_status", ({ convId, isTyping } = {}) => {
-    if (!convId) return;
-    if (!socket.rooms.has(`conv_${convId}`)) return;
-    socket.to(`conv_${convId}`).emit("typing_status", {
+    socket.to(room).emit('typing_status', {
       convId,
       userId: socket.userId,
-      isTyping: !!isTyping,
+      isTyping: false,
+    });
+    socket.leave(room);
+  });
+
+  socket.on('send_message', async ({ convId, text, correlationId } = {}, ack) => {
+    try {
+      if (typeof text !== 'string') {
+        throw chatError('نص الرسالة مطلوب', 'INVALID_MESSAGE');
+      }
+      const trimmed = text.trim();
+      if (!trimmed) {
+        throw chatError('لا يمكن إرسال رسالة فارغة', 'INVALID_MESSAGE');
+      }
+      if (trimmed.length > MAX_MESSAGE_LENGTH) {
+        throw chatError(
+          `الرسالة تتجاوز الحد الأقصى (${MAX_MESSAGE_LENGTH} حرف)`,
+          'MESSAGE_TOO_LONG'
+        );
+      }
+      if (correlationId != null && !CLIENT_MESSAGE_ID_PATTERN.test(correlationId)) {
+        throw chatError('معرّف الرسالة غير صالح', 'INVALID_CLIENT_MESSAGE_ID');
+      }
+
+      const now = Date.now();
+      recentMessageTimes = recentMessageTimes.filter(
+        (timestamp) => now - timestamp < MESSAGE_RATE_WINDOW_MS
+      );
+      if (recentMessageTimes.length >= MESSAGE_RATE_MAX) {
+        throw chatError('تم إرسال رسائل كثيرة بسرعة؛ حاول بعد لحظات', 'CHAT_RATE_LIMITED', 429);
+      }
+
+      const conversation = await assertParticipant(convId, socket.userId);
+      const conversationId = conversation._id.toString();
+      if (!canSendInConversation(conversation)) {
+        throw chatError(
+          'هذه المحادثة للقراءة فقط لأن الحجز لم يعد قائماً',
+          'CHAT_BOOKING_ENDED',
+          409
+        );
+      }
+      const room = `conv_${conversationId}`;
+      if (!socket.rooms.has(room)) {
+        throw chatError('افتح المحادثة قبل إرسال الرسالة', 'CHAT_ROOM_NOT_JOINED', 409);
+      }
+      recentMessageTimes.push(now);
+
+      const result = await repo.createMessage({
+        conversationId,
+        senderId: socket.userId,
+        text: trimmed,
+        clientMessageId: correlationId || null,
+      });
+      const message = dto.toMessageDto(result.message, conversationId);
+
+      safeAck(ack, {
+        ok: true,
+        success: true,
+        message,
+        correlationId: correlationId || null,
+      });
+
+      if (!result.created) return;
+
+      io.to(room).emit('receive_message', {
+        convId: conversationId,
+        message,
+      });
+      broadcastConversationRefresh(io, conversation, conversationId);
+
+      const sender = (conversation.participants || [])
+        .find((participant) => asId(participant) === socket.userId.toString());
+      const senderName = sender?.name || socket.userName || 'مستخدم عون';
+      const itemId = asId(conversation.item) || null;
+      const preview = trimmed.length > 100 ? `${trimmed.slice(0, 100)}…` : trimmed;
+      let activeUserIds = new Set();
+      try {
+        const activeSockets = await io.in(room).fetchSockets();
+        activeUserIds = new Set(
+          activeSockets
+            .map((activeSocket) => activeSocket.data?.userId || activeSocket.userId)
+            .filter(Boolean)
+            .map(String)
+        );
+      } catch (error) {
+        console.warn(`[Socket Chat][presence] ${error.message}`);
+      }
+
+      participantIds(conversation)
+        .filter((participantId) => participantId !== socket.userId.toString())
+        .filter((participantId) => !activeUserIds.has(participantId))
+        .forEach((participantId) => {
+          notifyUser(participantId, {
+            type: 'new_message',
+            title: `رسالة جديدة من ${senderName}`,
+            body: preview,
+            itemId,
+            conversationId,
+            metadata: { senderId: socket.userId.toString() },
+          }).catch((error) => {
+            console.warn(`[Socket Chat][notification] ${error.message}`);
+          });
+        });
+    } catch (error) {
+      console.warn(`[Socket Chat][send_message] ${error.code || 'CHAT_ERROR'}: ${error.message}`);
+      sendSocketError(socket, 'send_message', error, ack);
+    }
+  });
+
+  socket.on('mark_read', async ({ convId } = {}, ack) => {
+    try {
+      const conversation = await assertParticipant(convId, socket.userId);
+      const conversationId = conversation._id.toString();
+      if (!socket.rooms.has(`conv_${conversationId}`)) {
+        throw chatError('المحادثة غير مفتوحة', 'CHAT_ROOM_NOT_JOINED', 409);
+      }
+
+      const markedCount = await markReadAndBroadcast(
+        io,
+        conversation,
+        conversationId,
+        socket.userId
+      );
+      safeAck(ack, { ok: true, success: true, markedCount });
+    } catch (error) {
+      sendSocketError(socket, 'mark_read', error, ack);
+    }
+  });
+
+  socket.on('typing_status', ({ convId, isTyping } = {}) => {
+    if (!mongoose.isObjectIdOrHexString(convId) || typeof isTyping !== 'boolean') return;
+    const room = `conv_${convId}`;
+    if (!socket.rooms.has(room)) return;
+
+    socket.to(room).emit('typing_status', {
+      convId,
+      userId: socket.userId,
+      isTyping,
     });
   });
 }
 
-module.exports = { assertParticipant, registerChatHandlers };
+module.exports = {
+  MAX_MESSAGE_LENGTH,
+  assertParticipant,
+  canSendInConversation,
+  registerChatHandlers,
+};

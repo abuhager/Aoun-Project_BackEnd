@@ -10,6 +10,7 @@ exports.toConversationListItem = (conversation, unreadCount = 0) => {
           _id: conversation.item._id?.toString(),
           title: conversation.item.title,
           imageUrl: conversation.item.imageUrl,
+          status: conversation.item.status,
         }
       : null,
     owner: ownerObj
@@ -31,7 +32,8 @@ exports.toConversationListItem = (conversation, unreadCount = 0) => {
     ),
     lastMessage: conversation.lastMessage || "",
     lastMessageAt: conversation.lastMessageAt,
-    unreadCount: Number(unreadCount) || 0, // تعيين رقم صريح لـ React
+    updatedAt: conversation.updatedAt,
+    unreadCount: Number(unreadCount) || 0,
   };
 };
 
@@ -45,6 +47,7 @@ exports.toMessageDto = (message, conversationId) => ({
   text: message.text,
   createdAt: message.createdAt,
   read: message.read ?? false,
+  ...(message.clientMessageId ? { correlationId: message.clientMessageId } : {}),
 });
 
 exports.toMessagesResponse = (messages, conversationId) => ({
