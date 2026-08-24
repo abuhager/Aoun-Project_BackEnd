@@ -127,6 +127,7 @@ exports.findPendingReportsWithCounts = async ({
   page   = 1,
   limit  = 10,
   status = null, // ✅ FIX BUG-06: null = كل الحالات بدون فلتر
+  repeatOffenderThreshold = 5,
 } = {}) => {
   const skip = (page - 1) * limit;
 
@@ -203,6 +204,26 @@ exports.findPendingReportsWithCounts = async ({
       },
     },
     {
+      $lookup: {
+        from: 'reports',
+        let:  { uid: '$reportedUser' },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ['$reportedUser', '$$uid'] },
+                  { $eq: ['$status', 'actioned'] },
+                ],
+              },
+            },
+          },
+          { $count: 'total' },
+        ],
+        as: 'actionedReportsLookup',
+      },
+    },
+    {
       $addFields: {
         reporter:     { $arrayElemAt: ['$reporterData',     0] },
         reportedUser: { $arrayElemAt: ['$reportedUserData', 0] },
@@ -213,8 +234,14 @@ exports.findPendingReportsWithCounts = async ({
         pendingReportsAgainstUser: {
           $ifNull: [{ $arrayElemAt: ['$pendingReportsLookup.total', 0] }, 0],
         },
+        actionedReportsAgainstUser: {
+          $ifNull: [{ $arrayElemAt: ['$actionedReportsLookup.total', 0] }, 0],
+        },
         isRepeatOffender: {
-          $gt: [{ $ifNull: [{ $arrayElemAt: ['$totalReportsLookup.total', 0] }, 0] }, 3],
+          $gte: [
+            { $ifNull: [{ $arrayElemAt: ['$actionedReportsLookup.total', 0] }, 0] },
+            repeatOffenderThreshold,
+          ],
         },
       },
     },
@@ -222,6 +249,7 @@ exports.findPendingReportsWithCounts = async ({
       $project: {
         totalReportsLookup:   0,
         pendingReportsLookup: 0,
+        actionedReportsLookup: 0,
         reporterData:         0,
         reportedUserData:     0,
         relatedItemData:      0,

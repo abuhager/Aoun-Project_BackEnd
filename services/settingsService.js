@@ -1,47 +1,149 @@
-// services/settingsService.js
+const AdminLog = require('../models/AdminLog');
+const SystemSettings = require('../models/SystemSettings');
+const AppError = require('../utils/AppError');
+const { SOCKET_EVENTS } = require('../socket/contracts');
+const { emitToAll } = require('../socket/emitter');
+const {
+  EDITABLE_SETTING_FIELDS,
+  assertSettingsInvariants,
+} = require('../dtos/settingsDto');
 
-const SystemSettings              = require('../models/SystemSettings');
-const { settingsEvents }          = require('../models/SystemSettings');
+const PUBLIC_SETTING_FIELDS = Object.freeze([
+  'categories',
+  'locations',
+  'reportReasons',
+  'platformName',
+  'contactEmail',
+  'maxAvatarSizeMb',
+  'requireHubForBooking',
+  'maintenanceMode',
+  'updatedAt',
+]);
 
-// ─── DC-01 FIX: اشتقاق ALLOWED_FIELDS من الـ Schema تلقائياً ──────────────────
-// الطريقة القديمة كانت قائمة يدوية أفقدت maxActiveDonationsPerUser
-// و maxActiveDonationsLevel2Plus — الآن لا يمكن نسيان أي حقل جديد
-const EXCLUDED_FIELDS = ['_id', '__v', 'createdAt', 'updatedAt'];
-const ALLOWED_FIELDS  = Object.keys(SystemSettings.schema.paths)
-  .filter((field) => !EXCLUDED_FIELDS.includes(field));
+const editableFieldSet = new Set(EDITABLE_SETTING_FIELDS);
 
-
-// ── جلب الإعدادات الكاملة (Admin) ─────────────────────────────────────────────
-exports.getSettings = async () => {
-  return SystemSettings.getCached();
+const normalizeList = (values, { lowercase = false } = {}) => {
+  if (!Array.isArray(values)) return values;
+  const normalized = values
+    .map((value) => String(value).trim())
+    .filter(Boolean)
+    .map((value) => (lowercase ? value.toLowerCase() : value));
+  return [...new Map(normalized.map((value) => [value.toLocaleLowerCase('en'), value])).values()];
 };
 
+const normalizeSettingValue = (key, value) => {
+  if (['categories', 'locations', 'reportReasons'].includes(key)) return normalizeList(value);
+  if (key === 'universityEmailDomains') return normalizeList(value, { lowercase: true });
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return key === 'contactEmail' ? trimmed.toLowerCase() : trimmed;
+  }
+  return value;
+};
 
-// ── تحديث الإعدادات ────────────────────────────────────────────────────────────
-exports.updateSettings = async (updates) => {
-  // تصفية الحقول لمنع حقن إعدادات غير مصرح بها
-  const sanitized = Object.fromEntries(
-    Object.entries(updates).filter(([k]) => ALLOWED_FIELDS.includes(k))
+const valuesEqual = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+
+const toPublicSettings = (settings) => {
+  const source = settings ?? {};
+  const projected = Object.fromEntries(
+    PUBLIC_SETTING_FIELDS.map((field) => [field, source[field]])
   );
 
-  if (Object.keys(sanitized).length === 0) {
-    throw Object.assign(
-      new Error('لا توجد حقول صالحة للتحديث'),
-      { status: 400 }
+  return {
+    categories: projected.categories ?? [],
+    locations: projected.locations ?? [],
+    reportReasons: projected.reportReasons ?? [],
+    platformName: projected.platformName ?? 'عون',
+    contactEmail: projected.contactEmail ?? 'aoun.help.center@gmail.com',
+    maxAvatarSizeMb: projected.maxAvatarSizeMb ?? 5,
+    requireHubForBooking: Boolean(projected.requireHubForBooking),
+    maintenanceMode: Boolean(projected.maintenanceMode),
+    updatedAt: projected.updatedAt
+      ? new Date(projected.updatedAt).toISOString()
+      : null,
+  };
+};
+
+exports.getSettings = () => SystemSettings.getCached();
+
+exports.getPublicSettings = async () => toPublicSettings(await SystemSettings.getCached());
+
+exports.updateSettings = async (updates, actorId) => {
+  const unknownFields = Object.keys(updates).filter((key) => !editableFieldSet.has(key));
+  if (unknownFields.length > 0) {
+    throw new AppError(
+      `حقول إعدادات غير مسموحة: ${unknownFields.join(', ')}`,
+      422,
+      'UNKNOWN_SETTINGS_FIELDS'
     );
   }
 
-  const updated = await SystemSettings.findByIdAndUpdate(
-    'global',
-    { $set: sanitized },
-    { returnDocument: 'after', upsert: true, runValidators: true }
+  const sanitized = Object.fromEntries(
+    Object.entries(updates).map(([key, value]) => [key, normalizeSettingValue(key, value)])
+  );
+  if (Object.keys(sanitized).length === 0) {
+    throw new AppError('لا توجد حقول صالحة للتحديث', 400, 'EMPTY_SETTINGS_UPDATE');
+  }
+
+  const current = await SystemSettings.getInstance();
+  const merged = { ...current, ...sanitized };
+  assertSettingsInvariants(merged);
+
+  const changedFields = Object.keys(sanitized).filter(
+    (key) => !valuesEqual(current[key], sanitized[key])
+  );
+  if (changedFields.length === 0) {
+    return {
+      settings: current,
+      publicSettings: toPublicSettings(current),
+      changedFields,
+    };
+  }
+
+  const changedUpdates = Object.fromEntries(
+    changedFields.map((key) => [key, sanitized[key]])
+  );
+  const updated = await SystemSettings.findOneAndUpdate(
+    { _id: 'global' },
+    { $set: changedUpdates },
+    {
+      returnDocument: 'after',
+      runValidators: true,
+      context: 'query',
+    }
   ).lean();
 
-  // إبطال الـ Cache المركزي فوراً بعد كل تحديث ناجح
-  // DC-04: invalidateCache تُطلق settingsEvents.emit('invalidated') داخلياً
-  SystemSettings.invalidateCache();
+  if (!updated) {
+    throw new AppError('تعذر العثور على إعدادات النظام', 500, 'SETTINGS_NOT_FOUND');
+  }
 
-  return updated;
+  SystemSettings.invalidateCache(changedFields);
+  const publicSettings = toPublicSettings(updated);
+
+  emitToAll(SOCKET_EVENTS.SETTINGS_UPDATED, publicSettings);
+
+  try {
+    await AdminLog.create({
+      adminId: actorId,
+      action: 'SETTINGS_UPDATE',
+      targetId: null,
+      targetModel: null,
+      targetName: 'إعدادات المنصة',
+      reason: `تعديل ${changedFields.length} إعداد/إعدادات`,
+      meta: {
+        changedFields,
+        changes: Object.fromEntries(
+          changedFields.map((key) => [key, { before: current[key], after: updated[key] }])
+        ),
+      },
+    });
+  } catch (error) {
+    console.error('[Settings Audit] تعذر تسجيل تعديل الإعدادات:', error.message);
+  }
+
+  return { settings: updated, publicSettings, changedFields };
 };
 
-
+exports.PUBLIC_SETTING_FIELDS = PUBLIC_SETTING_FIELDS;
+exports.normalizeSettingValue = normalizeSettingValue;
+exports.toPublicSettings = toPublicSettings;

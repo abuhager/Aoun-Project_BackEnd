@@ -8,7 +8,7 @@ exports.findById = (reportId) => Report.findById(reportId);
 
 exports.findByIdPopulated = (reportId) =>
   Report.findById(reportId)
-    .populate('reportedUser', 'name email isBanned')
+    .populate('reportedUser', 'name email isBanned role')
     .populate('reporter',     'name email')
     .populate('relatedItem',  'title');
 
@@ -23,6 +23,9 @@ exports.findExistingPending = (reporterId, reportedUserId, itemId) =>
 
 exports.countByReportedUser = (userId) =>
   Report.countDocuments({ reportedUser: userId });
+
+exports.countActionedByReportedUser = (userId) =>
+  Report.countDocuments({ reportedUser: userId, status: 'actioned' });
 
 // ── تحديث ─────────────────────────────────────────────────────
 exports.save = (report) => report.save();

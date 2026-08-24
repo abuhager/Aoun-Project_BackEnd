@@ -73,7 +73,6 @@ function scheduleQuotaReset(dayOfMonth) {
       console.log(
         `[Cron] 📊 تجديد الكوتا: L0-L1=${r1.modifiedCount}, L2+=${r2.modifiedCount}`
       );
-      SystemSettings.invalidateCache();
     });
   }, { scheduled: true, timezone: 'Asia/Amman' });
 }
@@ -96,6 +95,7 @@ async function findEligibleWaitlistCandidate(item, maxBookings) {
     }
     const candidate = await User.findOne({
       _id: entry.user,
+      role: { $nin: ['admin', 'super_admin'] },
       isVerified: true,
       isBanned: { $ne: true },
       isFrozen: { $ne: true },
@@ -277,7 +277,8 @@ const initCronJobs = async () => {
   const initSettings = await SystemSettings.getCached();
   scheduleQuotaReset(initSettings.quotaResetDayOfMonth);
 
-  settingsEvents.on('invalidated', async () => {
+  settingsEvents.on('invalidated', async ({ changedFields = [] } = {}) => {
+    if (changedFields.length > 0 && !changedFields.includes('quotaResetDayOfMonth')) return;
     try {
       const fresh = await SystemSettings.getCached();
       scheduleQuotaReset(fresh.quotaResetDayOfMonth);

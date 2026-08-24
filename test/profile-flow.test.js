@@ -17,6 +17,7 @@ const leaderboardService = require('../services/leaderboardService');
 const profileRepository = require('../repositories/profileRepository');
 const userRepository = require('../repositories/userRepository');
 const SystemSettings = require('../models/SystemSettings');
+const User = require('../models/User');
 const validateBody = require('../middlewares/validateBody');
 const { buildGamificationProfile } = require('../utils/gamification');
 
@@ -184,6 +185,33 @@ test('public profile returns the privacy-safe activity contract', async (t) => {
   assert.equal(Object.hasOwn(result.body.user, 'phone'), false);
 });
 
+test('legacy users and every active role remain eligible for public profile and leaderboard', async (t) => {
+  const originalFindOne = User.findOne;
+  const filters = [];
+  t.after(() => {
+    User.findOne = originalFindOne;
+  });
+
+  User.findOne = (filter) => {
+    filters.push(filter);
+    return {
+      select() { return this; },
+      lean() { return Promise.resolve(null); },
+    };
+  };
+
+  await userRepository.findPublicProfile(safeUser()._id);
+  await userRepository.findLeaderboardUser(safeUser()._id);
+
+  assert.equal(filters.length, 2);
+  for (const filter of filters) {
+    assert.deepEqual(filter.isBanned, { $ne: true });
+    assert.deepEqual(filter.isFrozen, { $ne: true });
+    assert.equal(filter.isVerified, true);
+  }
+  assert.equal(Object.hasOwn(filters[1], 'role'), false);
+});
+
 test('leaderboard rank uses the same deterministic tie breakers', async (t) => {
   const originals = {
     findUser: userRepository.findLeaderboardUser,
@@ -227,6 +255,22 @@ test('ineligible leaderboard users return a normal state instead of a 404 error'
   });
 });
 
+test('leaderboard list and personal rank both require authentication', () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, '../routes/leaderboard.js'),
+    'utf8'
+  );
+  assert.match(
+    source,
+    /router\.get\('\/'\s*,\s*meLimiter\s*,\s*requireAuth\s*,\s*leaderboardController\.getLeaderboard/
+  );
+  assert.match(
+    source,
+    /router\.get\('\/me'\s*,\s*meLimiter\s*,\s*requireAuth\s*,\s*leaderboardController\.getUserRank/
+  );
+  assert.doesNotMatch(source, /publicLimiter/);
+});
+
 test('profile repositories use the real Item and Rating fields', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '../repositories/profileRepository.js'),
@@ -251,9 +295,9 @@ test('avatar-only profile requests pass body validation; empty requests are reje
   assert.match(controllerSource, /Object\.keys\(updates\)\.length === 0 && !req\.file/);
   assert.match(controllerSource, /NO_PROFILE_CHANGES/);
 
-  const settingsControllerSource = fs.readFileSync(
-    path.join(__dirname, '../controllers/settingsController.js'),
+  const settingsServiceSource = fs.readFileSync(
+    path.join(__dirname, '../services/settingsService.js'),
     'utf8'
   );
-  assert.match(settingsControllerSource, /maxAvatarSizeMb:\s*maxAvatarSizeMb \?\? 5/);
+  assert.match(settingsServiceSource, /maxAvatarSizeMb:\s*projected\.maxAvatarSizeMb \?\? 5/);
 });

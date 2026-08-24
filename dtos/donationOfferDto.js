@@ -14,8 +14,7 @@ exports.validateCreateOffer = (data) =>
         'string.empty': 'حالة الغرض مطلوبة',
         'any.only':     'حالة الغرض يجب أن تكون: جديد، مستعمل ممتاز، أو مستعمل جيد',
       }),
-    safeHub: Joi.string().hex().length(24).required().messages({
-      'string.empty':  'مركز التسليم مطلوب',
+    safeHub: Joi.string().hex().length(24).optional().allow('', null).messages({
       'string.length': 'معرّف المركز غير صحيح',
     }),
     description: Joi.string().trim().max(500).optional().allow(''),
@@ -25,7 +24,7 @@ exports.validateCreateOffer = (data) =>
 exports.validateUpdateOffer = (data) =>
   Joi.object({
     condition:   Joi.string().valid('جديد', 'مستعمل ممتاز', 'مستعمل جيد').optional(),
-    safeHub:     Joi.string().hex().length(24).optional(),
+    safeHub:     Joi.string().hex().length(24).optional().allow('', null),
     description: Joi.string().trim().max(500).optional().allow(''),
   }).validate(data, { abortEarly: false, stripUnknown: true });
 

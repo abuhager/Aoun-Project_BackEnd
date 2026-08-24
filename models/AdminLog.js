@@ -28,6 +28,7 @@ const adminLogSchema = new mongoose.Schema({
       'REPORT_ACTION',
       'ITEM_HIDE',
       'HUB_MANAGE',
+      'SETTINGS_UPDATE',
     ],
     required: true,
   },

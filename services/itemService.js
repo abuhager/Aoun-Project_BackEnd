@@ -64,6 +64,7 @@ const findNextEligibleWaitlistCandidate = async (
     }
     const candidate = await User.findOne({
       _id: candidateId,
+      role: { $nin: ['admin', 'super_admin'] },
       isVerified: true,
       isBanned: { $ne: true },
       isFrozen: { $ne: true },
@@ -234,7 +235,9 @@ exports.createItemLogic = async (body, userId, file) => {
     User.findById(userId).select('isVerified trustLevel quota').lean(),
     SystemSettings.getCached(),
     Item.countDocuments({ donor: userId, status: { $in: ['متاح', 'محجوز'] } }),
-    SafeHub.findOne({ _id: body.safeHub, isActive: { $ne: false } }).lean(),
+    body.safeHub
+      ? SafeHub.findOne({ _id: body.safeHub, isActive: { $ne: false } }).lean()
+      : Promise.resolve(null),
   ]);
 
   if (!user)
@@ -248,7 +251,9 @@ exports.createItemLogic = async (body, userId, file) => {
       403,
       'INSUFFICIENT_TRUST_LEVEL'
     );
-  if (!safeHub)
+  if (settings.requireHubForBooking && !body.safeHub)
+    throw new AppError('يجب اختيار نقطة استلام آمنة', 400, 'SAFE_HUB_REQUIRED');
+  if (body.safeHub && !safeHub)
     throw new AppError('نقطة الاستلام غير موجودة أو غير مفعّلة', 400, 'INVALID_SAFE_HUB');
   if (body.category && !settings.categories?.includes(body.category))
     throw new AppError(`التصنيف "${body.category}" غير مدعوم`, 400, 'INVALID_CATEGORY');
@@ -275,7 +280,7 @@ exports.createItemLogic = async (body, userId, file) => {
       category:     body.category,
       location:     body.location?.trim(),
       condition:    body.condition,
-      safeHub:      body.safeHub,
+      safeHub:      safeHub?._id ?? null,
       donor:        userId,
       imageUrl:     uploadResult.secure_url,
       cloudinaryId: uploadResult.public_id,
@@ -326,10 +331,10 @@ exports.createItemLogic = async (body, userId, file) => {
 // ─────────────────────────────────────────────────────────────────────────────
 exports.bookItemLogic = async (itemId, userId) => {
   const [user, settings, snapshot] = await Promise.all([
-    User.findById(userId).select('isVerified trustLevel').lean(),
+    User.findById(userId).select('isVerified trustLevel role').lean(),
     SystemSettings.getCached(),
     Item.findById(itemId)
-      .select('status donor bookedBy waitlist cancelledBy linkedRequestId')
+      .select('status donor bookedBy waitlist cancelledBy linkedRequestId safeHub')
       .lean(),
   ]);
 
@@ -344,11 +349,25 @@ exports.bookItemLogic = async (itemId, userId) => {
   if (!user.isVerified)
     throw new AppError('يجب تفعيل الحساب أولاً ✅', 403, 'ACCOUNT_NOT_VERIFIED');
 
+  if (isAdminRole(user.role))
+    throw new AppError(
+      'حسابات الإدارة مخصصة للإشراف ولا يمكنها حجز الأغراض',
+      403,
+      'ADMIN_BOOKING_FORBIDDEN'
+    );
+
   if ((user.trustLevel ?? 0) < 2)
     throw new AppError(
       'يجب الترقية إلى المستوى الثاني للحجز 🔒',
       403,
       'INSUFFICIENT_TRUST_LEVEL'
+    );
+
+  if (settings.requireHubForBooking && !snapshot.safeHub)
+    throw new AppError(
+      'هذا الغرض يحتاج إلى نقطة استلام قبل حجزه',
+      409,
+      'SAFE_HUB_REQUIRED'
     );
 
   if (snapshot.donor.toString() === userId.toString())
@@ -880,14 +899,20 @@ exports.updateItemLogic = async (itemId, userId, body = {}, file = null) => {
       'ITEM_NOT_EDITABLE'
     );
 
+  const needsSettings = Boolean(body.category) || Object.hasOwn(body, 'safeHub');
+  const settings = needsSettings ? await SystemSettings.getCached() : null;
+
   if (body.category) {
-    const settings = await SystemSettings.getCached();
     if (!settings.categories?.includes(body.category))
       throw new AppError(
         `التصنيف "${body.category}" غير مدعوم`,
         400,
         'INVALID_CATEGORY'
       );
+  }
+
+  if (Object.hasOwn(body, 'safeHub') && settings?.requireHubForBooking && !body.safeHub) {
+    throw new AppError('يجب اختيار نقطة استلام آمنة', 400, 'SAFE_HUB_REQUIRED');
   }
 
   if (body.safeHub) {
@@ -918,7 +943,11 @@ exports.updateItemLogic = async (itemId, userId, body = {}, file = null) => {
   for (const field of allowedFields) {
     if (!Object.hasOwn(body, field)) continue;
     const value = body[field];
-    updates[field] = typeof value === 'string' ? value.trim() : value;
+    if (field === 'safeHub') {
+      updates[field] = value || null;
+    } else {
+      updates[field] = typeof value === 'string' ? value.trim() : value;
+    }
   }
 
   let uploadedImage = null;

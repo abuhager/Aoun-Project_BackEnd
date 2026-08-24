@@ -17,7 +17,7 @@ const donationOfferSchema = new mongoose.Schema(
     safeHub: {
       type:     mongoose.Schema.Types.ObjectId,
       ref:      'SafeHub',
-      required: true,
+      default:  null,
     },
     condition: {
       type:     String,

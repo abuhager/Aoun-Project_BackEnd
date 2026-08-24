@@ -91,7 +91,8 @@ test('الأحداث العامة تمر عبر emitter موحد ولا تستد
     assert.doesNotMatch(source, /getIO\(\)\.to|`user_\$\{/);
   }
   assert.match(sources[0], /emitToAll\(SOCKET_EVENTS\.LEADERBOARD_UPDATE/);
-  assert.match(sources[4], /disconnectUserSockets/);
+  assert.match(sources[1], /disconnectUserSockets/);
+  assert.doesNotMatch(sources[4], /getIO|disconnectSockets/);
 });
 
 test('هوية Socket تحفظ في socket.data القياسي ولا تنشئ حقولاً مخصصة', () => {

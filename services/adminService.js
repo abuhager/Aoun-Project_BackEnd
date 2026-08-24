@@ -11,7 +11,7 @@ const { deleteFromCloudinary } = require('../utils/uploadToCloudinary');
 const AppError         = require('../utils/AppError');
 const sessionCache     = require('../utils/sessionCache');
 const { SOCKET_EVENTS } = require('../socket/contracts');
-const { emitToUser }   = require('../socket/emitter');
+const { disconnectUserSockets, emitToUser } = require('../socket/emitter');
 
 const assertCanManageUser = async (targetId, actorId, actorRole) => {
   const target = await userRepository.findByIdForAdmin(targetId);
@@ -30,6 +30,52 @@ const assertCanManageUser = async (targetId, actorId, actorRole) => {
     );
   }
   return target;
+};
+
+const applyBanConsequences = async (userId) => {
+  await Promise.all([
+    Item.updateMany(
+      { donor: userId, status: { $in: ['متاح', 'محجوز'] } },
+      {
+        $set: {
+          status: 'مخفي',
+          bookedBy: null,
+          bookedAt: null,
+          recipientConfirmed: false,
+          donorConfirmed: false,
+          recipientConfirmedAt: null,
+          donorConfirmedAt: null,
+        },
+      }
+    ),
+    Item.updateMany(
+      { bookedBy: userId, status: 'محجوز' },
+      {
+        $set: {
+          status: 'متاح',
+          bookedBy: null,
+          bookedAt: null,
+          recipientConfirmed: false,
+          donorConfirmed: false,
+          recipientConfirmedAt: null,
+          donorConfirmedAt: null,
+        },
+      }
+    ),
+    Item.updateMany(
+      { 'waitlist.user': userId },
+      { $pull: { waitlist: { user: userId } } }
+    ),
+  ]);
+
+  try {
+    await disconnectUserSockets(userId, {
+      code: 'ACCOUNT_BANNED',
+      msg: 'تم حظر حسابك من قبل الإدارة 🚫',
+    });
+  } catch (error) {
+    console.warn('[Socket Ban Cleanup] تعذر إنهاء اتصالات المستخدم:', error.message);
+  }
 };
 
 // ─── Stats ────────────────────────────────────────────────────
@@ -55,6 +101,7 @@ exports.banUser = async (userId, adminId, adminRole, reason, adminNote) => {
 
   await userRepository.invalidateUserSession(userId);
   sessionCache.invalidate(userId);
+  await applyBanConsequences(userId);
 
   await adminRepo.logAdminAction({
     adminId, action: 'BAN', targetId: userId, targetModel: 'User',
@@ -154,6 +201,7 @@ exports.listReports = async ({ page = 1, status = null } = {}) => {
     page:   normalizedPage,
     limit:  LIMIT,
     status: cleanStatus,
+    repeatOffenderThreshold: settings.autoReportBanThreshold ?? 5,
   });
 
   return {
@@ -164,7 +212,13 @@ exports.listReports = async ({ page = 1, status = null } = {}) => {
   };
 };
 
-exports.resolveReport = async (reportId, adminId, status, adminNote = null) => {
+exports.resolveReport = async (
+  reportId,
+  adminId,
+  adminRole,
+  status,
+  adminNote = null
+) => {
   const allowedStatuses = ['actioned', 'reviewed', 'dismissed'];
   if (!allowedStatuses.includes(status))
     throw new AppError('حالة غير صالحة للبلاغ', 400, 'INVALID_REPORT_STATUS');
@@ -204,10 +258,34 @@ exports.resolveReport = async (reportId, adminId, status, adminNote = null) => {
       body:   '⚠️ اتخذت الإدارة إجراءً بسبب بلاغ مقدم ضدك.',
       itemId: fullReport?.relatedItem?._id ?? null,
     });
+
+    const settings = await SystemSettings.getCached();
+    const threshold = settings.autoReportBanThreshold ?? 5;
+    const actionedCount = await reportRepository.countActionedByReportedUser(
+      report.reportedUser
+    );
+    const target = fullReport?.reportedUser;
+
+    if (
+      actionedCount >= threshold
+      && target
+      && !target.isBanned
+      && target.role === 'user'
+    ) {
+      await exports.banUser(
+        report.reportedUser,
+        adminId,
+        adminRole,
+        `حظر تلقائي بعد اعتماد ${actionedCount} بلاغات`,
+        `عتبة الحظر التلقائي المضبوطة: ${threshold}`
+      );
+    }
   }
 
   return report;
 };
+
+exports.applyBanConsequences = applyBanConsequences;
 
 // ─── Audit Logs ───────────────────────────────────────────────
 exports.listAuditLogs = async ({ page = 1 }) => {

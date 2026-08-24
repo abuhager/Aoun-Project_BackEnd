@@ -25,8 +25,8 @@ exports.validateCreateItem = async (data) => {
         'string.empty': 'التصنيف مطلوب',
         'any.only':     `التصنيف غير صحيح. المتاح: ${validCategories.join(', ')}`,
       }),
-    safeHub: Joi.string().hex().length(24).required().messages({
-      'string.empty': 'مركز التسليم مطلوب',
+    safeHub: Joi.string().hex().length(24).optional().allow('', null).messages({
+      'string.length': 'معرّف المركز غير صحيح',
     }),
     description: Joi.string().allow('').max(500),
   });

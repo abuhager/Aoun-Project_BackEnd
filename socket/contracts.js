@@ -3,6 +3,7 @@ const SOCKET_EVENTS = Object.freeze({
   AUTH_TOKEN_EXPIRING: 'auth:token_expiring',
   AUTH_TOKEN_EXPIRED: 'auth:token_expired',
   SOCKET_READY: 'socket:ready',
+  SETTINGS_UPDATED: 'settings:updated',
 
   ITEM_BOOKED: 'item:booked',
   ITEM_BOOKING_CANCELLED: 'item:booking_cancelled',

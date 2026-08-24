@@ -8,8 +8,8 @@ const {
   JORDAN_PHONE_REGEX: PHONE_REGEX,
   normalizeJordanPhone,
 } = require('../utils/phoneUtils');
+const { updateSettings } = require('../dtos/settingsDto');
 const OTP_REGEX      = /^\d{6}$/;
-const EMAIL_DOMAIN   = /^@[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+$/;
 
 // ─── Factory Functions & Reusable Rules ─────────────────────────────
 const objectId = () => Joi.string()
@@ -42,7 +42,7 @@ const donationOfferBody = Joi.object({
   condition: Joi.string()
     .valid('جديد', 'مستعمل ممتاز', 'مستعمل جيد')
     .required(),
-  safeHub:     objectId().required(),
+  safeHub:     objectId().optional().allow('', null),
   description: Joi.string().max(500).optional().allow('').trim(),
 }).unknown(false);
 
@@ -157,7 +157,7 @@ const schemas = {
     category:    textField(1, 50).required(),
     location:    textField(2, 100).required(),
     condition:   Joi.string().valid('جديد', 'مستعمل ممتاز', 'مستعمل جيد').required(),
-    safeHub:     objectId().required(),
+    safeHub:     objectId().optional().allow('', null),
   }).unknown(false),
 
   respondToRequest: donationOfferBody,
@@ -168,7 +168,7 @@ const schemas = {
     category:    textField(1, 50).optional(),
     location:    textField(2, 100).optional(),
     condition:   Joi.string().valid('جديد', 'مستعمل ممتاز', 'مستعمل جيد').optional(),
-    safeHub:     objectId().optional(),
+    safeHub:     objectId().optional().allow('', null),
   }).unknown(false),
 
   completeDelivery: Joi.object({
@@ -212,59 +212,7 @@ const schemas = {
   }).min(1).unknown(false),
 
   // ──────────── settings ─────────────────────────────────────────
-  updateSettings: Joi.object({
-    defaultQuota:                   Joi.number().integer().min(1).max(20).optional(),
-    defaultUserQuota:               Joi.number().integer().min(1).max(20).optional(),
-    studentQuota:                   Joi.number().integer().min(1).max(20).optional(),
-    level2Quota:                    Joi.number().integer().min(1).max(20).optional(),
-    maxBookingsPerUser:             Joi.number().integer().min(1).max(10).optional(),
-    maxActiveRequestsPerMonth:      Joi.number().integer().min(1).max(5).optional(),
-    maxActiveDonationsPerUser:      Joi.number().integer().min(1).max(20).optional(),
-    maxActiveDonationsLevel2Plus:   Joi.number().integer().min(1).max(20).optional(),
-    maxPendingOffersPerDonor:       Joi.number().integer().min(1).max(20).optional(),
-    donorQuotaReward:               Joi.number().integer().min(0).max(5).optional(),
-    quotaResetDayOfMonth:           Joi.number().integer().min(1).max(28).optional(),
-    studentDefaultTrustLevel:       Joi.number().integer().min(1).max(2).optional(),
-    minTrustLevelForRequests:       Joi.number().integer().min(1).max(2).optional(),
-    minTrustLevelForDonating:       Joi.number().integer().min(1).max(2).optional(),
-    trustScorePerDonation:          Joi.number().integer().min(0).max(20).optional(),
-    trustScorePerRequest:           Joi.number().integer().min(0).max(10).optional(),
-    ratingThresholdExcellent:       Joi.number().integer().min(1).max(10).optional(),
-    ratingThresholdGood:            Joi.number().integer().min(1).max(10).optional(),
-    ratingThresholdNeutral:         Joi.number().integer().min(1).max(10).optional(),
-    ratingThresholdBad:             Joi.number().integer().min(1).max(10).optional(),
-    bookingExpiryHours:             Joi.number().integer().min(1).max(336).optional(),
-    requestExpiryDays:              Joi.number().integer().min(1).max(180).optional(),
-    otpExpiryMinutes:               Joi.number().integer().min(1).max(60).optional(),
-    maxOtpAttempts:                 Joi.number().integer().min(1).max(10).optional(),
-    resetPasswordExpiryMinutes:     Joi.number().integer().min(5).max(60).optional(),
-    maxAvatarSizeMb:                Joi.number().integer().min(1).max(20).optional(),
-    avatarWidth:                    Joi.number().integer().min(100).max(1000).optional(),
-    avatarHeight:                   Joi.number().integer().min(100).max(1000).optional(),
-    maxPageSize:                    Joi.number().integer().min(5).max(100).optional(),
-    profilePageSize:                Joi.number().integer().min(5).max(50).optional(),
-    adminPageSize:                  Joi.number().integer().min(5).max(100).optional(),
-    adminReportsPageSize:           Joi.number().integer().min(5).max(100).optional(),
-    categories: Joi.array()
-      .items(Joi.string().min(2).max(50).trim())
-      .min(1).max(30).optional(),
-    reportReasons: Joi.array()
-      .items(Joi.string().min(2).max(100).trim())
-      .min(1).max(50).optional(),
-    universityEmailDomains: Joi.array()
-      .items(
-        Joi.string().trim().pattern(EMAIL_DOMAIN)
-          .message('كل نطاق يجب أن يبدأ بـ @ مثل: @ju.edu.jo')
-      )
-      .max(50).optional(),
-    autoReportBanThreshold:         Joi.number().integer().min(1).max(20).optional(),
-    requireHubForBooking:           Joi.boolean().optional(),
-    maintenanceMode:                Joi.boolean().optional(),
-    platformName:                   Joi.string().min(2).max(100).trim().optional(),
-    contactEmail:                   Joi.string()
-                                      .email({ tlds: { allow: false } })
-                                      .trim().optional(),
-  }).min(1).unknown(false),
+  updateSettings,
 
   // ──────────── phone ────────────────────────────────────────────────
   sendOtp: Joi.object({

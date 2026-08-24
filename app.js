@@ -7,6 +7,7 @@ const { randomUUID } = require('crypto');
 
 const { corsOrigin } = require('./config/cors');
 const { globalLimiter, publicLimiter } = require('./middlewares/rateLimiter');
+const maintenanceMode = require('./middlewares/maintenanceMode');
 const errorHandler = require('./middlewares/errorHandler');
 const AppError = require('./utils/AppError');
 
@@ -105,6 +106,7 @@ app.use((req, _res, next) => {
 });
 
 app.use('/api', globalLimiter);
+app.use('/api', maintenanceMode);
 
 app.get('/health/live', publicLimiter, (_req, res) => {
   res.status(200).json({

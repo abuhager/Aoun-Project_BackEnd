@@ -5,9 +5,6 @@ const asyncHandler = require('../utils/asyncHandler');
 const AppError     = require('../utils/AppError');
 const { validatePromote } = require('../dtos/adminDto');
 
-const Item      = require('../models/Item');
-const { disconnectUserSockets } = require('../socket/emitter');
-
 // ─── مساعد: تنظيف النصوص ──────────────────────────────────────
 const cleanString = (str) => (typeof str === 'string' ? str.trim() : '');
 
@@ -57,8 +54,6 @@ exports.banUser = asyncHandler(async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(targetUserId)) {
     throw new AppError('قيمة المعرف ممررة بشكل غير صالح', 400, 'INVALID_ID');
   }
-  const objectIdTarget = new mongoose.Types.ObjectId(targetUserId);
-
   const reason    = cleanString(req.body.reason);
   const adminNote = cleanString(req.body.adminNote);
 
@@ -69,34 +64,6 @@ exports.banUser = asyncHandler(async (req, res) => {
     reason,
     adminNote
   );
-
-  // ── Cascade Ban ─────────────────────────────────────────────
-  await Item.updateMany(
-    { donor: objectIdTarget, status: 'متاح' },
-    { $set: { status: 'ملغى' } }
-  );
-  await Item.updateMany(
-    { donor: objectIdTarget, status: 'محجوز' },
-    { $set: { status: 'ملغى', bookedBy: null, bookedAt: null } }
-  );
-  await Item.updateMany(
-    { bookedBy: objectIdTarget, status: 'محجوز' },
-    { $set: { status: 'متاح', bookedBy: null, bookedAt: null, recipientConfirmed: false, donorConfirmed: false } }
-  );
-  await Item.updateMany(
-    { waitlist: objectIdTarget },
-    { $pull: { waitlist: objectIdTarget } }
-  );
-
-  // ── Socket Disconnect ────────────────────────────────────────
-  try {
-    await disconnectUserSockets(targetUserId, {
-      code: 'ACCOUNT_BANNED',
-      msg: 'تم حظر حسابك من قبل الإدارة 🚫',
-    });
-  } catch (socketErr) {
-    console.warn('[Socket Ban Cleanup] تعذر الاتصال بالسوكت:', socketErr.message);
-  }
 
   res.json({
     msg: `تم حظر ${user.name} وتطهير كافة حجوزاته وجلساته النشطة بنجاح 🚫`,
@@ -154,6 +121,7 @@ exports.resolveReport = asyncHandler(async (req, res) => {
   const report = await adminService.resolveReport(
     req.params.id,
     req.user.id,
+    req.user.role,
     status,
     adminNote
   );

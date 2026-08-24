@@ -37,7 +37,7 @@ const ItemSchema = new mongoose.Schema(
     safeHub: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'SafeHub',
-      required: true,
+      default: null,
     },
     reportCount: {
       type: Number,

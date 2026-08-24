@@ -419,13 +419,17 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
 
   const [alreadyOffered, safeHub, pendingOffersCount] = await Promise.all([
     donationOfferRepository.existsByRequestAndDonor(requestId, donorId),
-    SafeHub.findOne({ _id: body.safeHub, isActive: { $ne: false } }).lean(),
+    body.safeHub
+      ? SafeHub.findOne({ _id: body.safeHub, isActive: { $ne: false } }).lean()
+      : Promise.resolve(null),
     donationOfferRepository.countPendingOffersByDonor(donorId),
   ]);
 
   if (alreadyOffered)
     throw new AppError('لقد قدّمت عرضاً لهذا الطلب مسبقاً ⏳', 409, 'ALREADY_OFFERED');
-  if (!safeHub)
+  if (settings.requireHubForBooking && !body.safeHub)
+    throw new AppError('يجب اختيار نقطة استلام آمنة', 400, 'SAFE_HUB_REQUIRED');
+  if (body.safeHub && !safeHub)
     throw new AppError('نقطة الاستلام غير موجودة أو غير مفعّلة', 400, 'INVALID_SAFE_HUB');
 
   const maxPendingOffers = settings.maxPendingOffersPerDonor ?? DEFAULT_PENDING_OFFERS_LIMIT;
@@ -468,7 +472,7 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
     const offer = await donationOfferRepository.createOffer({
       request: requestId,
       donor: donorId,
-      safeHub: body.safeHub,
+      safeHub: safeHub?._id ?? null,
       condition: body.condition,
       description: body.description?.trim() || null,
       imageUrl: uploaded?.secure_url ?? null,
@@ -587,10 +591,12 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
         isBanned: { $ne: true },
         isFrozen: { $ne: true },
       }).select('_id name trustLevel phoneVerified').session(session).lean(),
-      SafeHub.findOne({
-        _id: offer.safeHub,
-        isActive: { $ne: false },
-      }).select('_id name city address').session(session).lean(),
+      offer.safeHub
+        ? SafeHub.findOne({
+            _id: offer.safeHub,
+            isActive: { $ne: false },
+          }).select('_id name city address').session(session).lean()
+        : Promise.resolve(null),
       Item.countDocuments({ bookedBy: userId, status: 'محجوز' }).session(session),
       Item.countDocuments({ donor: offer.donor, status: { $in: ['متاح', 'محجوز'] } }).session(session),
       DonationOffer.find({
@@ -608,7 +614,9 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
       throw new AppError('المتبرع لم يعد مؤهلاً لإتمام العرض', 409, 'OFFER_DONOR_UNAVAILABLE');
     if (isPhoneVerificationEnabled() && !donor.phoneVerified && (donor.trustLevel ?? 1) < 2)
       throw new AppError('المتبرع لم يعد مؤهلاً لإتمام العرض', 409, 'OFFER_DONOR_UNAVAILABLE');
-    if (!hub)
+    if (settings.requireHubForBooking && !offer.safeHub)
+      throw new AppError('يجب تحديد نقطة تسليم لهذا العرض', 409, 'SAFE_HUB_REQUIRED');
+    if (offer.safeHub && !hub)
       throw new AppError('نقطة التسليم لم تعد متاحة', 409, 'SAFE_HUB_UNAVAILABLE');
 
     const maxBookings = settings.maxBookingsPerUser ?? DEFAULT_BOOKINGS_LIMIT;
@@ -640,7 +648,7 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
       category: request.category,
       location: request.location,
       condition: offer.condition,
-      safeHub: hub._id,
+      safeHub: hub?._id ?? null,
       donor: donor._id,
       imageUrl: offer.imageUrl,
       cloudinaryId: offer.cloudinaryId,
@@ -690,7 +698,9 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
       notifyUser(offer.donor, {
         type: 'offer_accepted',
         title: 'تم قبول عرضك! 🎉',
-        body: `اختارك صاحب الطلب — توجّه إلى ${safeHub.name} لإتمام التسليم.`,
+        body: safeHub
+          ? `اختارك صاحب الطلب — توجّه إلى ${safeHub.name} لإتمام التسليم.`
+          : 'اختارك صاحب الطلب — تواصل معه للاتفاق على طريقة التسليم.',
         itemId: item._id,
         actionUrl: `/items/${item._id}`,
         metadata: {
