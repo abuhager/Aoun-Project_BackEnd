@@ -3,6 +3,11 @@ const mongoose = require('mongoose');
 const repo = require('../repositories/conversationRepository');
 const dto = require('../dtos/conversationDto');
 const notifyUser = require('../utils/notifyUser');
+const {
+  SOCKET_EVENTS,
+  conversationRoom,
+  userRoom,
+} = require('./contracts');
 
 const MAX_MESSAGE_LENGTH = 2000;
 const MESSAGE_RATE_WINDOW_MS = 10_000;
@@ -59,13 +64,20 @@ const sendSocketError = (socket, scope, error, ack) => {
   };
 
   if (!safeAck(ack, payload)) {
-    socket.emit('chat_error', { scope, code: payload.code, msg: payload.error });
+    socket.emit(SOCKET_EVENTS.CHAT_ERROR, {
+      scope,
+      code: payload.code,
+      msg: payload.error,
+    });
   }
 };
 
 const broadcastConversationRefresh = (io, conversation, conversationId) => {
   participantIds(conversation).forEach((participantId) => {
-    io.to(`user_${participantId}`).emit('conversation_updated', { conversationId });
+    io.to(userRoom(participantId)).emit(
+      SOCKET_EVENTS.CONVERSATION_UPDATED,
+      { conversationId }
+    );
   });
 };
 
@@ -77,13 +89,13 @@ const markReadAndBroadcast = async (io, conversation, conversationId, userId) =>
   if (markedCount === 0 && markedNotificationCount === 0) return 0;
 
   if (markedCount > 0) {
-    io.to(`conv_${conversationId}`).emit('messages_read', {
+    io.to(conversationRoom(conversationId)).emit(SOCKET_EVENTS.MESSAGES_READ, {
       conversationId,
       readBy: userId.toString(),
     });
   }
   if (markedNotificationCount > 0) {
-    io.to(`user_${userId}`).emit('notification:refresh');
+    io.to(userRoom(userId)).emit(SOCKET_EVENTS.NOTIFICATION_REFRESH);
   }
   broadcastConversationRefresh(io, conversation, conversationId);
   return markedCount;
@@ -91,24 +103,27 @@ const markReadAndBroadcast = async (io, conversation, conversationId, userId) =>
 
 function registerChatHandlers(io, socket) {
   let recentMessageTimes = [];
+  const userId = socket.data.userId;
+  const userName = socket.data.userName;
 
-  socket.on('join_room', async ({ convId } = {}, ack) => {
+  socket.on(SOCKET_EVENTS.JOIN_ROOM, async ({ convId } = {}, ack) => {
     try {
-      const conversation = await assertParticipant(convId, socket.userId);
+      const conversation = await assertParticipant(convId, userId);
       const conversationId = conversation._id.toString();
+      const targetRoom = conversationRoom(conversationId);
 
       for (const room of socket.rooms) {
-        if (room.startsWith('conv_') && room !== `conv_${conversationId}`) {
+        if (room.startsWith('conv_') && room !== targetRoom) {
           socket.leave(room);
         }
       }
-      await socket.join(`conv_${conversationId}`);
+      await socket.join(targetRoom);
 
       const page = await repo.findMessagesPage(conversationId, {
         page: 1,
         limit: repo.DEFAULT_MESSAGE_PAGE_SIZE,
       });
-      await markReadAndBroadcast(io, conversation, conversationId, socket.userId);
+      await markReadAndBroadcast(io, conversation, conversationId, userId);
 
       safeAck(ack, {
         ok: true,
@@ -125,20 +140,20 @@ function registerChatHandlers(io, socket) {
     }
   });
 
-  socket.on('leave_room', ({ convId } = {}) => {
+  socket.on(SOCKET_EVENTS.LEAVE_ROOM, ({ convId } = {}) => {
     if (!mongoose.isObjectIdOrHexString(convId)) return;
-    const room = `conv_${convId}`;
+    const room = conversationRoom(convId);
     if (!socket.rooms.has(room)) return;
 
-    socket.to(room).emit('typing_status', {
+    socket.to(room).emit(SOCKET_EVENTS.TYPING_STATUS, {
       convId,
-      userId: socket.userId,
+      userId,
       isTyping: false,
     });
     socket.leave(room);
   });
 
-  socket.on('send_message', async ({ convId, text, correlationId } = {}, ack) => {
+  socket.on(SOCKET_EVENTS.SEND_MESSAGE, async ({ convId, text, correlationId } = {}, ack) => {
     try {
       if (typeof text !== 'string') {
         throw chatError('نص الرسالة مطلوب', 'INVALID_MESSAGE');
@@ -165,7 +180,7 @@ function registerChatHandlers(io, socket) {
         throw chatError('تم إرسال رسائل كثيرة بسرعة؛ حاول بعد لحظات', 'CHAT_RATE_LIMITED', 429);
       }
 
-      const conversation = await assertParticipant(convId, socket.userId);
+      const conversation = await assertParticipant(convId, userId);
       const conversationId = conversation._id.toString();
       if (!canSendInConversation(conversation)) {
         throw chatError(
@@ -174,7 +189,7 @@ function registerChatHandlers(io, socket) {
           409
         );
       }
-      const room = `conv_${conversationId}`;
+      const room = conversationRoom(conversationId);
       if (!socket.rooms.has(room)) {
         throw chatError('افتح المحادثة قبل إرسال الرسالة', 'CHAT_ROOM_NOT_JOINED', 409);
       }
@@ -182,7 +197,7 @@ function registerChatHandlers(io, socket) {
 
       const result = await repo.createMessage({
         conversationId,
-        senderId: socket.userId,
+        senderId: userId,
         text: trimmed,
         clientMessageId: correlationId || null,
       });
@@ -197,15 +212,15 @@ function registerChatHandlers(io, socket) {
 
       if (!result.created) return;
 
-      io.to(room).emit('receive_message', {
+      io.to(room).emit(SOCKET_EVENTS.RECEIVE_MESSAGE, {
         convId: conversationId,
         message,
       });
       broadcastConversationRefresh(io, conversation, conversationId);
 
       const sender = (conversation.participants || [])
-        .find((participant) => asId(participant) === socket.userId.toString());
-      const senderName = sender?.name || socket.userName || 'مستخدم عون';
+        .find((participant) => asId(participant) === userId.toString());
+      const senderName = sender?.name || userName || 'مستخدم عون';
       const itemId = asId(conversation.item) || null;
       const preview = trimmed.length > 100 ? `${trimmed.slice(0, 100)}…` : trimmed;
       let activeUserIds = new Set();
@@ -213,7 +228,7 @@ function registerChatHandlers(io, socket) {
         const activeSockets = await io.in(room).fetchSockets();
         activeUserIds = new Set(
           activeSockets
-            .map((activeSocket) => activeSocket.data?.userId || activeSocket.userId)
+            .map((activeSocket) => activeSocket.data?.userId)
             .filter(Boolean)
             .map(String)
         );
@@ -222,7 +237,7 @@ function registerChatHandlers(io, socket) {
       }
 
       participantIds(conversation)
-        .filter((participantId) => participantId !== socket.userId.toString())
+        .filter((participantId) => participantId !== userId.toString())
         .filter((participantId) => !activeUserIds.has(participantId))
         .forEach((participantId) => {
           notifyUser(participantId, {
@@ -231,7 +246,7 @@ function registerChatHandlers(io, socket) {
             body: preview,
             itemId,
             conversationId,
-            metadata: { senderId: socket.userId.toString() },
+            metadata: { senderId: userId.toString() },
           }).catch((error) => {
             console.warn(`[Socket Chat][notification] ${error.message}`);
           });
@@ -242,11 +257,11 @@ function registerChatHandlers(io, socket) {
     }
   });
 
-  socket.on('mark_read', async ({ convId } = {}, ack) => {
+  socket.on(SOCKET_EVENTS.MARK_READ, async ({ convId } = {}, ack) => {
     try {
-      const conversation = await assertParticipant(convId, socket.userId);
+      const conversation = await assertParticipant(convId, userId);
       const conversationId = conversation._id.toString();
-      if (!socket.rooms.has(`conv_${conversationId}`)) {
+      if (!socket.rooms.has(conversationRoom(conversationId))) {
         throw chatError('المحادثة غير مفتوحة', 'CHAT_ROOM_NOT_JOINED', 409);
       }
 
@@ -254,7 +269,7 @@ function registerChatHandlers(io, socket) {
         io,
         conversation,
         conversationId,
-        socket.userId
+        userId
       );
       safeAck(ack, { ok: true, success: true, markedCount });
     } catch (error) {
@@ -262,14 +277,14 @@ function registerChatHandlers(io, socket) {
     }
   });
 
-  socket.on('typing_status', ({ convId, isTyping } = {}) => {
+  socket.on(SOCKET_EVENTS.TYPING_STATUS, ({ convId, isTyping } = {}) => {
     if (!mongoose.isObjectIdOrHexString(convId) || typeof isTyping !== 'boolean') return;
-    const room = `conv_${convId}`;
+    const room = conversationRoom(convId);
     if (!socket.rooms.has(room)) return;
 
-    socket.to(room).emit('typing_status', {
+    socket.to(room).emit(SOCKET_EVENTS.TYPING_STATUS, {
       convId,
-      userId: socket.userId,
+      userId,
       isTyping,
     });
   });

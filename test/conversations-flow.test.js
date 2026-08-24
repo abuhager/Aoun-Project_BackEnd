@@ -210,8 +210,7 @@ test('إعادة إرسال clientMessageId نفسه تُؤكَّد دون بث 
   const directEvents = [];
   const roomEvents = [];
   const socket = {
-    userId: OWNER_ID,
-    userName: 'المتبرع',
+    data: { userId: OWNER_ID, userName: 'المتبرع' },
     rooms: new Set([`user_${OWNER_ID}`]),
     on(event, handler) { handlers.set(event, handler); },
     emit(event, payload) { directEvents.push({ event, payload }); },
@@ -312,7 +311,7 @@ test('Flow 7 يستخدم إشعار new_message الدائم وحدث notificat
 
   assert.match(chatSource, /type:\s*'new_message'/);
   assert.match(chatSource, /notifyUser\(participantId/);
-  assert.match(notifySource, /emit\('notification:new'/);
-  assert.match(chatSource, /notification:refresh/);
+  assert.match(notifySource, /SOCKET_EVENTS\.NOTIFICATION_NEW/);
+  assert.match(chatSource, /SOCKET_EVENTS\.NOTIFICATION_REFRESH/);
   assert.doesNotMatch(chatSource, /notification_new/);
 });

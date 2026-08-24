@@ -21,19 +21,11 @@ const notifyUser             = require('../utils/notifyUser');
 const { validateImageFile }  = require('../utils/imageValidation');
 const { toPublicItem, toDonorItem, toReceiverItem } = require('../dtos/itemDto');
 const { buildGamificationProfile } = require('../utils/gamification');
-const { getIO }              = require('../socket');
+const { SOCKET_EVENTS }      = require('../socket/contracts');
+const { emitToAll, emitToUser } = require('../socket/emitter');
 
 // ── ✅ ARCH-01: ثوابت مشتركة ────────────────────────────────────────────────
 const DEFAULT_MAX_WAITLIST = 10;
-
-const getUserRoom = (userId) => `user_${userId}`;
-
-const emitToUser = (userId, event, payload) => {
-  if (!userId) return;
-  try {
-    getIO().to(getUserRoom(userId.toString())).emit(event, payload);
-  } catch (_) {}
-};
 
 const queueNotification = (userId, payload) => {
   if (!userId) return;
@@ -419,7 +411,7 @@ exports.bookItemLogic = async (itemId, userId) => {
         'ITEM_JUST_BOOKED'
       );
 
-    emitToUser(item.donor._id, 'item:booked', {
+    emitToUser(item.donor._id, SOCKET_EVENTS.ITEM_BOOKED, {
       itemId: item._id,
       bookedBy: userId,
     });
@@ -601,11 +593,11 @@ exports.cancelBookingLogic = async (itemId, userId) => {
     if (!promoted)
       throw new AppError('تعذّر إلغاء الحجز — حاول مرة أخرى', 409, 'CANCEL_CONFLICT');
 
-    emitToUser(candidate._id, 'item:waitlist_promoted', {
+    emitToUser(candidate._id, SOCKET_EVENTS.ITEM_WAITLIST_PROMOTED, {
       itemId: promoted._id,
       status: promoted.status,
     });
-    emitToUser(promoted.donor._id, 'item:booking_transferred', {
+    emitToUser(promoted.donor._id, SOCKET_EVENTS.ITEM_BOOKING_TRANSFERRED, {
       itemId: promoted._id,
       bookedBy: candidate._id,
     });
@@ -625,7 +617,9 @@ exports.cancelBookingLogic = async (itemId, userId) => {
     });
 
     if (isDonor && oldBookerId.toString() !== userId.toString()) {
-      emitToUser(oldBookerId, 'item:booking_cancelled', { itemId: promoted._id });
+      emitToUser(oldBookerId, SOCKET_EVENTS.ITEM_BOOKING_CANCELLED, {
+        itemId: promoted._id,
+      });
       queueNotification(oldBookerId, {
         type:      'booking_cancelled',
         title:     'تم إلغاء حجزك',
@@ -674,7 +668,7 @@ exports.cancelBookingLogic = async (itemId, userId) => {
   if (!released)
     throw new AppError('تعذّر إلغاء الحجز — حاول مرة أخرى', 409, 'CANCEL_CONFLICT');
 
-  emitToUser(released.donor._id, 'item:booking_cancelled', {
+  emitToUser(released.donor._id, SOCKET_EVENTS.ITEM_BOOKING_CANCELLED, {
     itemId: released._id,
     status: released.status,
   });
@@ -687,7 +681,7 @@ exports.cancelBookingLogic = async (itemId, userId) => {
   });
 
   if (isDonor && oldBookerId.toString() !== userId.toString()) {
-    emitToUser(oldBookerId, 'item:booking_cancelled', {
+    emitToUser(oldBookerId, SOCKET_EVENTS.ITEM_BOOKING_CANCELLED, {
       itemId: released._id,
       status: released.status,
     });
@@ -753,7 +747,7 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
       throw new AppError('تعذر تأكيد الاستلام', 400, 'CONFIRM_FAILED');
     }
 
-    emitToUser(item.donor._id, 'item:recipient_confirmed', {
+    emitToUser(item.donor._id, SOCKET_EVENTS.ITEM_RECIPIENT_CONFIRMED, {
       itemId:    item._id,
       itemTitle: item.title,
       message:   '✅ المستلم أكّد الاستلام — بانتظار تأكيدك أنت',
@@ -839,7 +833,7 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
       try { session.endSession(); } catch (_) {}
     }
 
-    emitToUser(deliveredItem.bookedBy._id, 'item:delivered', {
+    emitToUser(deliveredItem.bookedBy._id, SOCKET_EVENTS.ITEM_DELIVERED, {
       itemId:    deliveredItem._id,
       itemTitle: deliveredItem.title,
       message:   '🎉 تم تأكيد التسليم من المتبرع — العملية مكتملة!',
@@ -851,11 +845,9 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
       itemId:    deliveredItem._id,
       actionUrl: `/items/${deliveredItem._id}`,
     });
-    try {
-      getIO().emit('leaderboard:update', {
-        userId: deliveredItem.donor._id.toString(),
-      });
-    } catch (_) {}
+    emitToAll(SOCKET_EVENTS.LEADERBOARD_UPDATE, {
+      userId: deliveredItem.donor._id.toString(),
+    });
 
     return {
       status: 'delivered',
@@ -1072,7 +1064,9 @@ exports.deleteItemLogic = async (itemId, userId) => {
   ].filter(Boolean))];
 
   for (const affectedUserId of affectedUserIds) {
-    emitToUser(affectedUserId, 'item:deleted', { itemId: snapshot._id });
+    emitToUser(affectedUserId, SOCKET_EVENTS.ITEM_DELETED, {
+      itemId: snapshot._id,
+    });
     queueNotification(affectedUserId, {
       type:  'item_deleted',
       title: 'تم حذف الغرض',

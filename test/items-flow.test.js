@@ -508,7 +508,7 @@ test('Schema والإجراءات المجدولة متوافقة مع التأ�
   assert.match(serviceSource, /minTrustLevelForDonating/);
   assert.match(serviceSource, /utils\/imageValidation/);
   assert.match(serviceSource, /totalDonations:\s*1/);
-  assert.match(serviceSource, /leaderboard:update/);
+  assert.match(serviceSource, /SOCKET_EVENTS\.LEADERBOARD_UPDATE/);
   assert.doesNotMatch(cronSource, /deliveryOtp\s*:/);
   assert.match(cronSource, /reminderSent:\s*true/);
   assert.match(cronSource, /claim\.modifiedCount !== 1/);

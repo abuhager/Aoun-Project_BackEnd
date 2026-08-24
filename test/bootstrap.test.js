@@ -97,9 +97,9 @@ test('يرفض Socket token المفقود أو غير الصالح ويقبل �
     isVerified: true,
     sessionVersion: 0,
   });
-  assert.deepEqual(verifySocketToken(token), {
-    id: '507f1f77bcf86cd799439011',
-  });
+  const verified = verifySocketToken(token);
+  assert.equal(verified.id, '507f1f77bcf86cd799439011');
+  assert.ok(verified.expiresAt > Date.now());
 });
 
 test('يعيد liveness بنجاح ويولّد Request ID آمناً', async () => {

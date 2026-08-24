@@ -10,7 +10,8 @@ const notifyUser       = require('../utils/notifyUser');
 const { deleteFromCloudinary } = require('../utils/uploadToCloudinary');
 const AppError         = require('../utils/AppError');
 const sessionCache     = require('../utils/sessionCache');
-const { getIO }        = require('../socket');
+const { SOCKET_EVENTS } = require('../socket/contracts');
+const { emitToUser }   = require('../socket/emitter');
 
 const assertCanManageUser = async (targetId, actorId, actorRole) => {
   const target = await userRepository.findByIdForAdmin(targetId);
@@ -119,9 +120,7 @@ exports.deleteItem = async (itemId, adminId, adminNote) => {
     ...new Map(affectedUserIds.map((id) => [id.toString(), id])).values(),
   ];
   for (const userId of uniqueAffectedUserIds) {
-    try {
-      getIO().to(`user_${userId}`).emit('item:deleted', { itemId: item._id });
-    } catch (_) {}
+    emitToUser(userId, SOCKET_EVENTS.ITEM_DELETED, { itemId: item._id });
   }
   await Promise.allSettled(
     uniqueAffectedUserIds.map((userId) => notifyUser(userId, {

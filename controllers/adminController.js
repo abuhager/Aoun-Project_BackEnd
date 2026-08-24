@@ -6,7 +6,7 @@ const AppError     = require('../utils/AppError');
 const { validatePromote } = require('../dtos/adminDto');
 
 const Item      = require('../models/Item');
-const { getIO } = require('../socket');
+const { disconnectUserSockets } = require('../socket/emitter');
 
 // ─── مساعد: تنظيف النصوص ──────────────────────────────────────
 const cleanString = (str) => (typeof str === 'string' ? str.trim() : '');
@@ -90,11 +90,9 @@ exports.banUser = asyncHandler(async (req, res) => {
 
   // ── Socket Disconnect ────────────────────────────────────────
   try {
-    const io            = getIO();
-    const activeSockets = await io.in(`user_${targetUserId}`).fetchSockets();
-    activeSockets.forEach((socket) => {
-      socket.emit('auth:forced_logout', { msg: 'تم حظر حسابك من قبل الإدارة 🚫' });
-      socket.disconnect(true);
+    await disconnectUserSockets(targetUserId, {
+      code: 'ACCOUNT_BANNED',
+      msg: 'تم حظر حسابك من قبل الإدارة 🚫',
     });
   } catch (socketErr) {
     console.warn('[Socket Ban Cleanup] تعذر الاتصال بالسوكت:', socketErr.message);

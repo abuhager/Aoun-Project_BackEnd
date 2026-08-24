@@ -17,8 +17,16 @@ const verifySocketToken = (token) => {
   let decoded;
   try {
     decoded = verifyAccessToken(token);
-  } catch {
-    throw createSocketAuthError('رمز الاتصال غير صالح أو منتهي الصلاحية');
+  } catch (error) {
+    const code = error?.name === 'TokenExpiredError'
+      ? 'TOKEN_EXPIRED'
+      : 'SOCKET_UNAUTHORIZED';
+    throw createSocketAuthError(
+      code === 'TOKEN_EXPIRED'
+        ? 'رمز الاتصال منتهي الصلاحية'
+        : 'رمز الاتصال غير صالح',
+      code
+    );
   }
 
   const userId = decoded?.user?.id;
@@ -26,18 +34,26 @@ const verifySocketToken = (token) => {
     throw createSocketAuthError('بيانات الهوية داخل الرمز غير صالحة');
   }
 
-  return { id: String(userId) };
+  const expiresAt = Number(decoded.exp) * 1000;
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    throw createSocketAuthError('رمز الاتصال منتهي الصلاحية', 'TOKEN_EXPIRED');
+  }
+
+  return { id: String(userId), expiresAt };
 };
 
 const socketAuthMiddleware = async (socket, next) => {
   const token = socket.handshake.auth?.token;
   try {
-    verifySocketToken(token);
+    const verifiedToken = verifySocketToken(token);
     const identity = await resolveAccessIdentity(token);
-    socket.userId = identity.id;
-    socket.userName = identity.name;
-    socket.userRole = identity.role;
-    socket.data.userId = identity.id;
+    socket.data = {
+      ...socket.data,
+      userId: identity.id,
+      userName: identity.name,
+      userRole: identity.role,
+      tokenExpiresAt: verifiedToken.expiresAt,
+    };
     return next();
   } catch (error) {
     const code = error.code || error.data?.code || 'SOCKET_UNAUTHORIZED';

@@ -4,6 +4,11 @@ const Item = require('../models/Item');
 const repo = require('../repositories/conversationRepository');
 const dto = require('../dtos/conversationDto');
 const AppError = require('../utils/AppError');
+const {
+  SOCKET_EVENTS,
+  conversationRoom,
+  userRoom,
+} = require('../socket/contracts');
 
 const asId = (value) => (value?._id || value)?.toString();
 
@@ -114,7 +119,10 @@ exports.openConversationLogic = async ({ itemId, userId, targetUserId = null, do
 
   if (io && isNew) {
     participantIds(conversation).forEach((participantId) => {
-      io.to(`user_${participantId}`).emit('new_conversation', response.conversation);
+      io.to(userRoom(participantId)).emit(
+        SOCKET_EVENTS.NEW_CONVERSATION,
+        response.conversation
+      );
     });
   }
 
@@ -167,16 +175,19 @@ exports.markConversationReadLogic = async ({ conversationId, userId, io }) => {
 
   if (io && (markedCount > 0 || markedNotificationCount > 0)) {
     if (markedCount > 0) {
-      io.to(`conv_${conversationId}`).emit('messages_read', {
+      io.to(conversationRoom(conversationId)).emit(SOCKET_EVENTS.MESSAGES_READ, {
         conversationId,
         readBy: userId.toString(),
       });
     }
     if (markedNotificationCount > 0) {
-      io.to(`user_${userId}`).emit('notification:refresh');
+      io.to(userRoom(userId)).emit(SOCKET_EVENTS.NOTIFICATION_REFRESH);
     }
     participantIds(conversation).forEach((participantId) => {
-      io.to(`user_${participantId}`).emit('conversation_updated', { conversationId });
+      io.to(userRoom(participantId)).emit(
+        SOCKET_EVENTS.CONVERSATION_UPDATED,
+        { conversationId }
+      );
     });
   }
 

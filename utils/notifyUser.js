@@ -2,6 +2,8 @@
 const Notification   = require('../models/Notification');
 const AppError       = require('./AppError');
 const SystemSettings = require('../models/SystemSettings');
+const { SOCKET_EVENTS } = require('../socket/contracts');
+const { emitToUser } = require('../socket/emitter');
 
 // ✅ جلب platformName من DB مع Cache
 const getPlatformName = async () => {
@@ -44,29 +46,21 @@ async function notifyUser(userId, payload) {
     },
   });
 
-  // ── 2. Socket.io real-time emit — مُعدّل للمسار الجديد ──────────────
+  // ── 2. Socket.io real-time emit ─────────────────────────────
   try {
-    // 💡 تعديل الشات البنيوي: الاستدعاء الجديد من مجلد socket مباشرة
-    const { getIO } = require('../socket');
-    const io = getIO();
-
-    if (io) {
-      io.to(`user_${actualUserId}`).emit('notification:new', {
-        _id:            notification._id,
-        user:           notification.user,
-        type:           notification.type,
-        title:          notification.title,
-        body:           notification.body,
-        itemId:         notification.itemId         ?? null,
-        conversationId: notification.conversationId ?? null,
-        actionUrl:      notification.actionUrl      ?? null,
-        metadata:       notification.metadata       ?? null,
-        isRead:         notification.isRead,
-        createdAt:      notification.createdAt,
-      });
-    } else {
-      console.warn('[notifyUser] Socket.io لم يتم تهيئته بعد (Skip Emit)');
-    }
+    emitToUser(actualUserId, SOCKET_EVENTS.NOTIFICATION_NEW, {
+      _id:            notification._id,
+      user:           notification.user,
+      type:           notification.type,
+      title:          notification.title,
+      body:           notification.body,
+      itemId:         notification.itemId         ?? null,
+      conversationId: notification.conversationId ?? null,
+      actionUrl:      notification.actionUrl      ?? null,
+      metadata:       notification.metadata       ?? null,
+      isRead:         notification.isRead,
+      createdAt:      notification.createdAt,
+    });
   } catch (err) {
     console.error('[notifyUser Socket Error]:', err.message);
   }

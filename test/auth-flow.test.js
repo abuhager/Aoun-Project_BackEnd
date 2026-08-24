@@ -201,7 +201,8 @@ test('لا يوجد fallback لهوية ثابتة في Socket chat', () => {
     'utf8'
   );
   assert.doesNotMatch(source, /6a43f5e5cee3421d5c6498dd/);
-  assert.match(source, /assertParticipant\(convId, socket\.userId\)/);
+  assert.match(source, /const userId = socket\.data\.userId/);
+  assert.match(source, /assertParticipant\(convId, userId\)/);
 });
 
 test('trustLevel identity contract stays separate from gamification levels', async () => {

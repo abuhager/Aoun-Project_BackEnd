@@ -13,17 +13,11 @@ const { settingsEvents } = require('../models/SystemSettings');
 const { fireSendEmail }  = require('../utils/sendEmail');
 const { escapeHtml }     = require('../services/emailService');
 const notifyUser         = require('../utils/notifyUser');  // ✅ NJ-20
-const { getIO }          = require('../socket');
+const { SOCKET_EVENTS }  = require('../socket/contracts');
+const { emitToUser }     = require('../socket/emitter');
 const {
   expireDonationRequestsLogic,
 } = require('../services/donationRequestService');
-
-const emitToUser = (userId, event, payload) => {
-  if (!userId) return;
-  try {
-    getIO().to(`user_${userId}`).emit(event, payload);
-  } catch (_) {}
-};
 
 // ══════════════════════════════════════════════════════════════
 // ✅ NJ-19: سجل حالة Cron Jobs — يُساعد في Debugging
@@ -176,11 +170,11 @@ async function processExpiredItem(item, settings) {
 
     if (!promoted) return;
 
-    emitToUser(candidate._id, 'item:waitlist_promoted', {
+    emitToUser(candidate._id, SOCKET_EVENTS.ITEM_WAITLIST_PROMOTED, {
       itemId: item._id.toString(),
       status: 'محجوز',
     });
-    emitToUser(item.donor, 'item:booking_transferred', {
+    emitToUser(item.donor, SOCKET_EVENTS.ITEM_BOOKING_TRANSFERRED, {
       itemId: item._id.toString(),
       bookedBy: candidate._id.toString(),
     });
@@ -247,7 +241,7 @@ async function processExpiredItem(item, settings) {
 
     if (!released) return;
 
-    emitToUser(item.donor, 'item:booking_cancelled', {
+    emitToUser(item.donor, SOCKET_EVENTS.ITEM_BOOKING_CANCELLED, {
       itemId: item._id.toString(),
       status: 'متاح',
     });
@@ -269,7 +263,7 @@ async function processExpiredItem(item, settings) {
     actionUrl: `/items/${item._id}`,
   }).catch((err) => console.warn('[Cron] فشل إشعار المستلم السابق:', err.message));
 
-  emitToUser(previousBookerId, 'item:booking_cancelled', {
+  emitToUser(previousBookerId, SOCKET_EVENTS.ITEM_BOOKING_CANCELLED, {
     itemId: item._id.toString(),
   });
 }
