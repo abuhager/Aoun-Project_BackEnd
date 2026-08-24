@@ -3,9 +3,13 @@ const Notification = require('../models/Notification');
 
 exports.findLatestByUser = (userId, limit = 20) =>
   Notification.find({ user: userId })
+    .select('_id type title body itemId conversationId actionUrl metadata isRead createdAt')
     .sort({ createdAt: -1 })
     .limit(limit)
     .lean();
+
+exports.countByUser = (userId) =>
+  Notification.countDocuments({ user: userId });
 
 exports.countUnreadByUser = (userId) =>
   Notification.countDocuments({
@@ -24,4 +28,4 @@ exports.markOneReadByUser = (notificationId, userId) =>
     { _id: notificationId, user: userId },
     { $set: { isRead: true } },
     { returnDocument: 'after' }
-  );
+  ).lean();

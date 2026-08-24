@@ -1,6 +1,40 @@
 // models/Notification.js
 const mongoose = require('mongoose');
 
+const NOTIFICATION_TYPES = Object.freeze([
+  'item_booked',
+  'booking_cancelled',
+  'booking_transferred',
+  'booking_expiry_reminder',
+  'waitlist_promoted',
+  'delivery_done',
+  'delivery_completed',
+  'recipient_confirmed',
+  'matching_item',
+  'item_deleted',
+  'item_deleted_by_admin',
+  'new_rating',
+  'report_resolved',
+  'admin_warning',
+  'admin_ban',
+  'account_suspended',
+  'new_message',
+  'request_new_offer',
+  'request_cancelled_by_requester',
+  'request_expired',
+  'offer_accepted',
+  'offer_rejected',
+  'offer_withdrawn',
+]);
+
+const isInternalActionPath = (value) => value == null || (
+  typeof value === 'string'
+  && value.startsWith('/')
+  && !value.startsWith('//')
+  && !value.includes('\\')
+  && !/[\r\n]/.test(value)
+);
+
 const notificationSchema = new mongoose.Schema({
   user: {
     type:     mongoose.Schema.Types.ObjectId,
@@ -10,42 +44,39 @@ const notificationSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: [
-      'item_booked',
-      'booking_cancelled',
-      'booking_transferred',
-      'booking_expiry_reminder',
-      'waitlist_promoted',
-      'delivery_done',
-      'delivery_completed',
-      'recipient_confirmed',
-      'matching_item',
-      'item_deleted',
-      'item_deleted_by_admin',
-      'new_rating',
-      'report_resolved',
-      'admin_warning',
-      'admin_ban',
-      'account_suspended',
-      'new_message',
-      'request_new_offer',
-      'request_cancelled_by_requester',
-      'request_expired',
-      'offer_accepted',
-      'offer_rejected',
-      'offer_withdrawn',
-    ],
+    enum: NOTIFICATION_TYPES,
     required: true,
   },
-  title:   { type: String, required: true },
-  body:    { type: String, required: true },
+  title: {
+    type: String,
+    required: true,
+    trim: true,
+    minlength: 1,
+    maxlength: 160,
+  },
+  body: {
+    type: String,
+    required: true,
+    trim: true,
+    minlength: 1,
+    maxlength: 1000,
+  },
   itemId:  { type: mongoose.Schema.Types.ObjectId, ref: 'Item', default: null },
   conversationId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Conversation',
     default: null,
   },
-  actionUrl: { type: String, default: null, maxlength: 500 },
+  actionUrl: {
+    type: String,
+    default: null,
+    trim: true,
+    maxlength: 500,
+    validate: {
+      validator: isInternalActionPath,
+      message: 'رابط الإشعار يجب أن يكون مساراً داخلياً',
+    },
+  },
   metadata:  { type: mongoose.Schema.Types.Mixed, default: () => ({}) },
   isRead:  { type: Boolean, default: false, index: true },
 }, { timestamps: true });
@@ -54,4 +85,9 @@ const notificationSchema = new mongoose.Schema({
 notificationSchema.index({ user: 1, isRead: 1, createdAt: -1 });
 notificationSchema.index({ createdAt: 1 }, { expireAfterSeconds: 90 * 24 * 60 * 60 });
 
-module.exports = mongoose.model('Notification', notificationSchema);
+const Notification = mongoose.model('Notification', notificationSchema);
+
+Notification.NOTIFICATION_TYPES = NOTIFICATION_TYPES;
+Notification.isInternalActionPath = isInternalActionPath;
+
+module.exports = Notification;

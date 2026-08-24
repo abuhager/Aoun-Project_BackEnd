@@ -22,6 +22,13 @@ const {
 // ══════════════════════════════════════════════════════════════
 // ✅ NJ-19: سجل حالة Cron Jobs — يُساعد في Debugging
 // ══════════════════════════════════════════════════════════════
+const JOB_TIMEZONE = 'Asia/Amman';
+const MAX_BOOKING_JOB_BATCH = 100;
+const scheduledTasks = new Map();
+let initialized = false;
+let initializationPromise = null;
+let settingsInvalidatedHandler = null;
+
 const cronStatus = {
   'quota-reset':              { lastRun: null, lastStatus: 'pending' },
   'expire-old-bookings':      { lastRun: null, lastStatus: 'pending' },
@@ -31,33 +38,65 @@ const cronStatus = {
 
 const runSafe = async (name, fn) => {
   const start = Date.now();
-  cronStatus[name] = { lastRun: new Date(), lastStatus: 'running' };
+  cronStatus[name] = {
+    ...cronStatus[name],
+    lastRun: new Date(),
+    lastStatus: 'running',
+    lastError: null,
+  };
   console.log(`[Cron] ⏳ [${name}] بدأت`);
   try {
     await fn();
-    cronStatus[name].lastStatus = 'success';
-    console.log(`[Cron] ✅ [${name}] اكتملت في ${Date.now() - start}ms`);
+    const duration = Date.now() - start;
+    cronStatus[name] = {
+      ...cronStatus[name],
+      lastFinishedAt: new Date(),
+      lastStatus: 'success',
+      lastDurationMs: duration,
+      lastError: null,
+    };
+    console.log(`[Cron] ✅ [${name}] اكتملت في ${duration}ms`);
   } catch (err) {
-    cronStatus[name].lastStatus = 'failed';
+    cronStatus[name] = {
+      ...cronStatus[name],
+      lastFinishedAt: new Date(),
+      lastStatus: 'failed',
+      lastDurationMs: Date.now() - start,
+      lastError: err.message,
+    };
     console.error(`[Cron] ❌ [${name}] فشلت:`, err.message);
   }
 };
 
-// ✅ للاستخدام في healthcheck endpoint
-exports.getCronStatus = () => ({ ...cronStatus });
+const getCronStatus = () => Object.fromEntries(
+  Object.entries(cronStatus).map(([name, status]) => [
+    name,
+    { ...status, scheduled: scheduledTasks.has(name) },
+  ])
+);
+
+const replaceScheduledTask = (name, expression, handler) => {
+  const existing = scheduledTasks.get(name);
+  if (existing) existing.destroy();
+
+  const task = cron.schedule(expression, handler, {
+    name,
+    noOverlap: true,
+    scheduled: true,
+    timezone: JOB_TIMEZONE,
+  });
+  scheduledTasks.set(name, task);
+  return task;
+};
 
 // ══════════════════════════════════════════════════════════════
 // DC-08: Cron تصفير الكوتا — ديناميكية الجدولة
 // ══════════════════════════════════════════════════════════════
-let _quotaTask = null;
-
 function scheduleQuotaReset(dayOfMonth) {
-  if (_quotaTask) { _quotaTask.stop(); _quotaTask = null; }
-
   const cronExpr = `0 0 ${dayOfMonth} * *`;
   console.log(`[Cron] 📅 جدولة تصفير الكوتا: "${cronExpr}"`);
 
-  _quotaTask = cron.schedule(cronExpr, () => {
+  replaceScheduledTask('quota-reset', cronExpr, () =>
     runSafe('quota-reset', async () => {
       const settings = await SystemSettings.getCached();
       const [r1, r2] = await Promise.all([
@@ -73,8 +112,8 @@ function scheduleQuotaReset(dayOfMonth) {
       console.log(
         `[Cron] 📊 تجديد الكوتا: L0-L1=${r1.modifiedCount}, L2+=${r2.modifiedCount}`
       );
-    });
-  }, { scheduled: true, timezone: 'Asia/Amman' });
+    })
+  );
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -271,139 +310,222 @@ async function processExpiredItem(item, settings) {
 // ══════════════════════════════════════════════════════════════
 // تهيئة كل الـ Cron Jobs
 // ══════════════════════════════════════════════════════════════
-const initCronJobs = async () => {
+const stopCronJobs = async () => {
+  initialized = false;
 
-  // ── 1. تصفير الكوتا (ديناميكي) ─────────────────────────────
-  const initSettings = await SystemSettings.getCached();
-  scheduleQuotaReset(initSettings.quotaResetDayOfMonth);
+  if (settingsInvalidatedHandler) {
+    settingsEvents.off('invalidated', settingsInvalidatedHandler);
+    settingsInvalidatedHandler = null;
+  }
 
-  settingsEvents.on('invalidated', async ({ changedFields = [] } = {}) => {
-    if (changedFields.length > 0 && !changedFields.includes('quotaResetDayOfMonth')) return;
+  const tasks = [...scheduledTasks.values()];
+  scheduledTasks.clear();
+  await Promise.allSettled(
+    tasks.map((task) => Promise.resolve(task.destroy()))
+  );
+};
+
+const initCronJobs = () => {
+  if (initialized) return Promise.resolve(getCronStatus());
+  if (initializationPromise) return initializationPromise;
+
+  initializationPromise = (async () => {
     try {
-      const fresh = await SystemSettings.getCached();
-      scheduleQuotaReset(fresh.quotaResetDayOfMonth);
-    } catch (err) {
-      console.error('[Cron] ❌ فشل تحديث جدول الكوتا:', err.message);
-    }
-  });
+      const initSettings = await SystemSettings.getCached();
+      scheduleQuotaReset(initSettings.quotaResetDayOfMonth);
 
+      settingsInvalidatedHandler = async ({ changedFields = [] } = {}) => {
+        if (
+          !initialized
+          || (
+            changedFields.length > 0
+            && !changedFields.includes('quotaResetDayOfMonth')
+          )
+        ) {
+          return;
+        }
 
-  // ── 2. فحص الحجوزات المنتهية (كل ساعة) ─────────────────────
-  cron.schedule('0 * * * *', () => {
-    runSafe('expire-old-bookings', async () => {
-      const settings  = await SystemSettings.getCached();
-      const expiryMs  = settings.bookingExpiryHours * 60 * 60 * 1000;
-      const threshold = new Date(Date.now() - expiryMs);
+        try {
+          const fresh = await SystemSettings.getCached();
+          if (initialized) scheduleQuotaReset(fresh.quotaResetDayOfMonth);
+        } catch (error) {
+          console.error('[Cron] ❌ فشل تحديث جدول الكوتا:', error.message);
+        }
+      };
+      settingsEvents.on('invalidated', settingsInvalidatedHandler);
 
-      // ✅ تحصين الفحص: جلب المستندات التي تحتوي على تاريخ حقيقي وصالح فقط لمنع الـ Cast Error
-      const expiredItems = await Item.find({
-        status:   'محجوز',
-        linkedRequestId: null,
-        bookedAt: { $exists: true, $type: 'date', $lt: threshold },
-        recipientConfirmed: { $ne: true },
-      }).select('_id bookedBy waitlist cancelledBy donor title linkedRequestId').lean();
-
-      if (!expiredItems.length) return;
-
-      console.log(`[Cron] 🔍 حجوزات منتهية: ${expiredItems.length}`);
-
-      const results = await Promise.allSettled(
-        expiredItems.map((item) => processExpiredItem(item, settings))
-      );
-
-      const failed = results.filter((r) => r.status === 'rejected').length;
-      console.log(`[Cron] اكتمل: نجح ${expiredItems.length - failed}/${expiredItems.length}`);
-      if (failed) {
-        results
-          .filter((r) => r.status === 'rejected')
-          .forEach((r) => console.error('  > فشل:', r.reason?.message));
-      }
-    });
-  }, { scheduled: true, timezone: 'Asia/Amman' });
-
-
- // ── 3. ✅ NJ-18: تذكير قبل انتهاء الحجز بساعة (كل ساعة) ─────
-  cron.schedule('30 * * * *', () => {
-    runSafe('booking-reminder', async () => {
-      const settings = await SystemSettings.getCached();
-      
-      // تأمين القيمة وحمايتها في حال لم تكن رقماً صالحاً
-      const expiryHours = Number(settings.bookingExpiryHours) || 24; 
-      const expiryMs   = expiryHours * 60 * 60 * 1000;
-      
-      const windowFrom = new Date(Date.now() - expiryMs + 60 * 60 * 1000); 
-      const windowTo   = new Date(Date.now() - expiryMs + 90 * 60 * 1000); 
-
-      // 🛑 التحقق من صلاحية التواريخ قبل إرسال الاستعلام لقاعدة البيانات لمنع الـ Cast Error
-      if (isNaN(windowFrom.getTime()) || isNaN(windowTo.getTime())) {
-        throw new Error(`حسابات النطاق الزمني غير صالحة: windowFrom=${windowFrom}, windowTo=${windowTo}`);
-      }
-
-      // ✅ تحصين الفحص للتذكير أيضاً من الحقول المشوهة وجودة الـ Date
-      const soonExpiring = await Item.find({
-        status:             'محجوز',
-        linkedRequestId:    null,
-        bookedAt:           { $exists: true, $type: 'date', $gte: windowFrom, $lt: windowTo },
-        recipientConfirmed: { $ne: true },
-        reminderSent:       { $ne: true } // تعديل بسيط لضمان الفلترة بشكل أدق بدلاً من السلوك الافتراضي المشوه
-      }).populate('bookedBy', 'name email').lean();
-
-      if (!soonExpiring.length) return;
-
-      console.log(`[Cron] ⏰ حجوزات قاربت الانتهاء: ${soonExpiring.length}`);
-
-      await Promise.allSettled(
-        soonExpiring.map(async (item) => {
-          if (!item.bookedBy || !item.bookedBy._id) return;
-
-          const bookingFilter = {
-            _id:          item._id,
-            status:       'محجوز',
-            bookedBy:     item.bookedBy._id,
-            bookedAt:     item.bookedAt,
-            linkedRequestId: null,
-            reminderSent: { $ne: true },
-          };
-          const claim = await Item.updateOne(
-            bookingFilter,
-            { $set: { reminderSent: true } }
+      replaceScheduledTask('expire-old-bookings', '0 * * * *', () =>
+        runSafe('expire-old-bookings', async () => {
+          const settings = await SystemSettings.getCached();
+          const expiryHours = Number(settings.bookingExpiryHours) || 24;
+          const threshold = new Date(
+            Date.now() - (expiryHours * 60 * 60 * 1000)
           );
-          if (claim.modifiedCount !== 1) return;
 
-          try {
-            await notifyUser(item.bookedBy._id, {
-              type:      'booking_expiry_reminder',
-              title:     '⏰ تذكير: حجزك على وشك الانتهاء',
-              body:      `لديك ساعة تقريباً لإتمام استلام "${item.title}" — تواصل مع المتبرع الآن.`,
-              itemId:    item._id,
-              email:     item.bookedBy.email,
-              actionUrl: `/items/${item._id}`,
-            });
-          } catch (err) {
-            await Item.updateOne(
-              { ...bookingFilter, reminderSent: true },
-              { $set: { reminderSent: false } }
+          const expiredItems = await Item.find({
+            status: 'محجوز',
+            bookedBy: { $type: 'objectId' },
+            linkedRequestId: null,
+            bookedAt: { $exists: true, $type: 'date', $lt: threshold },
+            recipientConfirmed: { $ne: true },
+          })
+            .sort({ bookedAt: 1 })
+            .limit(MAX_BOOKING_JOB_BATCH)
+            .select('_id bookedBy waitlist cancelledBy donor title linkedRequestId')
+            .lean();
+
+          if (!expiredItems.length) return;
+
+          console.log(`[Cron] 🔍 حجوزات منتهية: ${expiredItems.length}`);
+          const results = await Promise.allSettled(
+            expiredItems.map((item) => processExpiredItem(item, settings))
+          );
+          const failed = results.filter(
+            (result) => result.status === 'rejected'
+          ).length;
+
+          console.log(
+            `[Cron] اكتمل: نجح ${expiredItems.length - failed}/${expiredItems.length}`
+          );
+          results
+            .filter((result) => result.status === 'rejected')
+            .forEach((result) =>
+              console.error('  > فشل:', result.reason?.message)
             );
-            console.warn('[Cron] فشل إشعار التذكير:', err.message);
+          if (failed > 0) {
+            throw new AggregateError(
+              results
+                .filter((result) => result.status === 'rejected')
+                .map((result) => result.reason),
+              `فشلت معالجة ${failed} حجوزات منتهية`
+            );
           }
         })
       );
-    });
-  }, { scheduled: true, timezone: 'Asia/Amman' });
 
-  // ── 4. أرشفة طلبات التبرع المنتهية كل ساعة ────────────────
-  cron.schedule('15 * * * *', () => {
-    runSafe('expire-donation-requests', async () => {
-      const { expiredCount } = await expireDonationRequestsLogic(
-        new Date(),
-        { limit: 500 }
+      // تعمل كل 15 دقيقة وتغطي نافذة 15 دقيقة كاملة بلا فجوات.
+      replaceScheduledTask('booking-reminder', '*/15 * * * *', () =>
+        runSafe('booking-reminder', async () => {
+          const settings = await SystemSettings.getCached();
+          const expiryHours = Number(settings.bookingExpiryHours) || 24;
+          const expiryMs = expiryHours * 60 * 60 * 1000;
+          const now = Date.now();
+          // أول محاولة قبل 60–75 دقيقة، وتبقى الحجوزات غير المذكّرة
+          // مؤهلة للمحاولة مجدداً حتى لحظة الانتهاء.
+          const windowFrom = new Date(now - expiryMs);
+          const windowTo = new Date(now - expiryMs + (75 * 60 * 1000));
+
+          if (
+            Number.isNaN(windowFrom.getTime())
+            || Number.isNaN(windowTo.getTime())
+          ) {
+            throw new Error('حسابات نطاق تذكير الحجز غير صالحة');
+          }
+
+          const soonExpiring = await Item.find({
+            status: 'محجوز',
+            bookedBy: { $type: 'objectId' },
+            linkedRequestId: null,
+            bookedAt: {
+              $exists: true,
+              $type: 'date',
+              $gte: windowFrom,
+              $lt: windowTo,
+            },
+            recipientConfirmed: { $ne: true },
+            reminderSent: { $ne: true },
+          })
+            .sort({ bookedAt: 1 })
+            .limit(MAX_BOOKING_JOB_BATCH)
+            .populate('bookedBy', 'name email')
+            .lean();
+
+          if (!soonExpiring.length) return;
+
+          console.log(
+            `[Cron] ⏰ حجوزات قاربت الانتهاء: ${soonExpiring.length}`
+          );
+
+          const reminderResults = await Promise.allSettled(
+            soonExpiring.map(async (item) => {
+              if (!item.bookedBy?._id) return;
+
+              const bookingFilter = {
+                _id: item._id,
+                status: 'محجوز',
+                bookedBy: item.bookedBy._id,
+                bookedAt: item.bookedAt,
+                linkedRequestId: null,
+                reminderSent: { $ne: true },
+              };
+              const claim = await Item.updateOne(
+                bookingFilter,
+                { $set: { reminderSent: true } }
+              );
+              if (claim.modifiedCount !== 1) return;
+
+              try {
+                await notifyUser(item.bookedBy, {
+                  type: 'booking_expiry_reminder',
+                  title: '⏰ تذكير: حجزك على وشك الانتهاء',
+                  body: `لديك ساعة تقريباً لإتمام استلام "${item.title}" — تواصل مع المتبرع الآن.`,
+                  itemId: item._id,
+                  actionUrl: `/items/${item._id}`,
+                });
+              } catch (error) {
+                await Item.updateOne(
+                  { ...bookingFilter, reminderSent: true },
+                  { $set: { reminderSent: false } }
+                );
+                console.warn('[Cron] فشل إشعار التذكير:', error.message);
+                throw error;
+              }
+            })
+          );
+          const failedReminders = reminderResults.filter(
+            (result) => result.status === 'rejected'
+          );
+          if (failedReminders.length > 0) {
+            throw new AggregateError(
+              failedReminders.map((result) => result.reason),
+              `فشل إرسال ${failedReminders.length} تذكيرات حجز`
+            );
+          }
+        })
       );
-      if (expiredCount > 0) {
-        console.log(`[Cron] 🧹 ${expiredCount} طلب تبرع انتهت صلاحيته`);
-      }
-    });
-  }, { scheduled: true, timezone: 'Asia/Amman' });
 
+      replaceScheduledTask(
+        'expire-donation-requests',
+        '15 * * * *',
+        () => runSafe('expire-donation-requests', async () => {
+          const { expiredCount } = await expireDonationRequestsLogic(
+            new Date(),
+            { limit: 500 }
+          );
+          if (expiredCount > 0) {
+            console.log(
+              `[Cron] 🧹 ${expiredCount} طلب تبرع انتهت صلاحيته`
+            );
+          }
+        })
+      );
+
+      initialized = true;
+      return getCronStatus();
+    } catch (error) {
+      await stopCronJobs();
+      throw error;
+    }
+  })().finally(() => {
+    initializationPromise = null;
+  });
+
+  return initializationPromise;
 };
 
-module.exports = { initCronJobs, getCronStatus: exports.getCronStatus };
+module.exports = {
+  getCronStatus,
+  initCronJobs,
+  runSafe,
+  stopCronJobs,
+};

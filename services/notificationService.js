@@ -1,21 +1,40 @@
 // services/notificationService.js
 const notificationRepository = require('../repositories/notificationRepository');
 const AppError = require('../utils/AppError');
+const { toNotificationDto } = require('../dtos/notificationDto');
 
-exports.getNotificationsLogic = async (userId) => {
-  const [notifications, unreadCount] = await Promise.all([
-    notificationRepository.findLatestByUser(userId, 20),
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 50;
+
+const normalizeLimit = (value) => {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return DEFAULT_LIMIT;
+  return Math.min(MAX_LIMIT, Math.max(1, parsed));
+};
+
+exports.getNotificationsLogic = async (userId, { limit } = {}) => {
+  const safeLimit = normalizeLimit(limit);
+  const [notifications, unreadCount, totalCount] = await Promise.all([
+    notificationRepository.findLatestByUser(userId, safeLimit),
     notificationRepository.countUnreadByUser(userId),
+    notificationRepository.countByUser(userId),
   ]);
 
-  return { notifications, unreadCount };
+  return {
+    notifications: notifications.map(toNotificationDto),
+    unreadCount,
+    totalCount,
+    hasMore: totalCount > notifications.length,
+    limit: safeLimit,
+  };
 };
 
 exports.markAllReadLogic = async (userId) => {
-  await notificationRepository.markAllReadByUser(userId);
+  const result = await notificationRepository.markAllReadByUser(userId);
 
   return {
     msg: 'تم تعليم الكل مقروءاً ✅',
+    updatedCount: result.modifiedCount ?? 0,
   };
 };
 
@@ -31,5 +50,8 @@ exports.markOneReadLogic = async (notificationId, userId) => {
 
   return {
     msg: 'تم ✅',
+    notification: toNotificationDto(notification),
   };
 };
+
+exports.normalizeLimit = normalizeLimit;

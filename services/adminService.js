@@ -13,6 +13,14 @@ const sessionCache     = require('../utils/sessionCache');
 const { SOCKET_EVENTS } = require('../socket/contracts');
 const { disconnectUserSockets, emitToUser } = require('../socket/emitter');
 
+const notifyBestEffort = async (user, payload, context) => {
+  try {
+    await notifyUser(user, payload);
+  } catch (error) {
+    console.warn(`[Admin Notification][${context}] ${error.message}`);
+  }
+};
+
 const assertCanManageUser = async (targetId, actorId, actorRole) => {
   const target = await userRepository.findByIdForAdmin(targetId);
   if (!target) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
@@ -98,6 +106,14 @@ exports.banUser = async (userId, adminId, adminRole, reason, adminNote) => {
   await assertCanManageUser(userId, adminId, adminRole);
   const user = await adminRepo.banUser(userId, reason, adminId);
   if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
+
+  await notifyBestEffort(user, {
+    type:  'admin_ban',
+    title: 'تم حظر حسابك',
+    body:  reason
+      ? `حظرت الإدارة حسابك. السبب: ${reason}`
+      : 'حظرت الإدارة حسابك بسبب مخالفة سياسات المنصة.',
+  }, 'ban');
 
   await userRepository.invalidateUserSession(userId);
   sessionCache.invalidate(userId);
@@ -252,12 +268,12 @@ exports.resolveReport = async (
   });
 
   if (status === 'actioned' && report.reportedUser) {
-    await notifyUser(report.reportedUser, {
+    await notifyBestEffort(fullReport?.reportedUser ?? report.reportedUser, {
       type:   'admin_warning',
       title:  'تحذير من الإدارة',
       body:   '⚠️ اتخذت الإدارة إجراءً بسبب بلاغ مقدم ضدك.',
       itemId: fullReport?.relatedItem?._id ?? null,
-    });
+    }, 'report-warning');
 
     const settings = await SystemSettings.getCached();
     const threshold = settings.autoReportBanThreshold ?? 5;

@@ -1,14 +1,19 @@
-// utils/notifyUser.js — ✅ FIXED WITH NEW SOCKET MODULE IMPORT
-const Notification   = require('../models/Notification');
-const AppError       = require('./AppError');
+const Notification = require('../models/Notification');
+const User = require('../models/User');
+const AppError = require('./AppError');
 const SystemSettings = require('../models/SystemSettings');
+const { toNotificationDto } = require('../dtos/notificationDto');
+const { escapeHtml, getClientOrigin } = require('../services/emailService');
 const { SOCKET_EVENTS } = require('../socket/contracts');
 const { emitToUser } = require('../socket/emitter');
 
-// ✅ جلب platformName من DB مع Cache
 const getPlatformName = async () => {
-  const settings = await SystemSettings.getCached();
-  return settings?.platformName ?? 'عون';
+  try {
+    const settings = await SystemSettings.getCached();
+    return settings?.platformName ?? 'عون';
+  } catch {
+    return 'عون';
+  }
 };
 
 const CRITICAL_NOTIFICATION_TYPES = Object.freeze([
@@ -17,92 +22,194 @@ const CRITICAL_NOTIFICATION_TYPES = Object.freeze([
   'account_suspended',
 ]);
 
-async function notifyUser(userId, payload) {
+const normalizeActionUrl = (value) => {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string') {
+    throw new AppError(
+      'رابط الإشعار غير صالح',
+      400,
+      'INVALID_NOTIFICATION_ACTION_URL'
+    );
+  }
+
+  const normalized = value.trim();
+  if (
+    normalized.length > 500
+    || !Notification.isInternalActionPath(normalized)
+  ) {
+    throw new AppError(
+      'رابط الإشعار يجب أن يكون مساراً داخلياً',
+      400,
+      'INVALID_NOTIFICATION_ACTION_URL'
+    );
+  }
+  return normalized;
+};
+
+const normalizeRequiredText = (value, field, maxLength) => {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  if (!normalized) {
+    throw new AppError(
+      `${field} مطلوب لإرسال الإشعار`,
+      400,
+      'NOTIFICATION_CONTENT_REQUIRED'
+    );
+  }
+  return normalized.slice(0, maxLength);
+};
+
+const normalizeMetadata = (metadata) => {
+  if (metadata == null) return {};
+  if (typeof metadata !== 'object' || Array.isArray(metadata)) {
+    throw new AppError(
+      'بيانات الإشعار الإضافية غير صالحة',
+      400,
+      'INVALID_NOTIFICATION_METADATA'
+    );
+  }
+
+  let serialized;
+  try {
+    serialized = JSON.stringify(metadata);
+  } catch {
+    throw new AppError(
+      'بيانات الإشعار الإضافية غير قابلة للحفظ',
+      400,
+      'INVALID_NOTIFICATION_METADATA'
+    );
+  }
+
+  if (Buffer.byteLength(serialized, 'utf8') > 4096) {
+    throw new AppError(
+      'بيانات الإشعار الإضافية كبيرة جداً',
+      400,
+      'NOTIFICATION_METADATA_TOO_LARGE'
+    );
+  }
+
+  return metadata;
+};
+
+const toAbsoluteClientUrl = (actionUrl) => {
+  if (!actionUrl) return null;
+  try {
+    const clientOrigin = getClientOrigin();
+    const target = new URL(actionUrl, clientOrigin);
+    return target.origin === clientOrigin ? target.toString() : null;
+  } catch {
+    return null;
+  }
+};
+
+async function notifyUser(userId, payload = {}) {
   const hasUserFields = userId && typeof userId === 'object' && userId._id != null;
-  const actualUserId  = hasUserFields ? userId._id : userId;
-  const userEmail     = payload.email ?? (hasUserFields ? userId.email : null);
-  const title         = payload.title ?? 'إشعار جديد';
-  const body          = payload.body ?? payload.message;
+  const actualUserId = hasUserFields ? userId._id : userId;
 
   if (!actualUserId) {
     throw new AppError('userId مطلوب لإرسال الإشعار', 400, 'USER_ID_REQUIRED');
   }
-  if (!body) {
-    throw new AppError('محتوى الإشعار مطلوب', 400, 'NOTIFICATION_BODY_REQUIRED');
+  if (!Notification.NOTIFICATION_TYPES.includes(payload.type)) {
+    throw new AppError('نوع الإشعار غير صالح', 400, 'INVALID_NOTIFICATION_TYPE');
   }
 
-  // ── 1. حفظ الإشعار في DB ─────────────────────────────────────
+  const userEmail = payload.email ?? (hasUserFields ? userId.email : null);
+  const title = normalizeRequiredText(
+    payload.title ?? 'إشعار جديد',
+    'عنوان الإشعار',
+    160
+  );
+  const body = normalizeRequiredText(
+    payload.body ?? payload.message,
+    'محتوى الإشعار',
+    1000
+  );
+  const actionUrl = normalizeActionUrl(payload.actionUrl);
+  const metadata = normalizeMetadata(payload.metadata);
+
   const notification = await Notification.create({
-    user:           actualUserId,
-    type:           payload.type,
+    user: actualUserId,
+    type: payload.type,
     title,
     body,
-    itemId:         payload.itemId         ?? null,
+    itemId: payload.itemId ?? null,
     conversationId: payload.conversationId ?? null,
-    actionUrl:      payload.actionUrl      ?? null,
-    metadata: {
-      ...(payload.metadata ?? {}),
-      ...(payload.actionUrl ? { actionUrl: payload.actionUrl } : {}),
-    },
+    actionUrl,
+    metadata,
   });
 
-  // ── 2. Socket.io real-time emit ─────────────────────────────
   try {
-    emitToUser(actualUserId, SOCKET_EVENTS.NOTIFICATION_NEW, {
-      _id:            notification._id,
-      user:           notification.user,
-      type:           notification.type,
-      title:          notification.title,
-      body:           notification.body,
-      itemId:         notification.itemId         ?? null,
-      conversationId: notification.conversationId ?? null,
-      actionUrl:      notification.actionUrl      ?? null,
-      metadata:       notification.metadata       ?? null,
-      isRead:         notification.isRead,
-      createdAt:      notification.createdAt,
-    });
-  } catch (err) {
-    console.error('[notifyUser Socket Error]:', err.message);
+    emitToUser(
+      actualUserId,
+      SOCKET_EVENTS.NOTIFICATION_NEW,
+      toNotificationDto(notification)
+    );
+  } catch (error) {
+    console.error('[notifyUser Socket Error]:', error.message);
   }
 
-  // ── 3. بريد احتياطي للإشعارات الحرجة فقط ────────────────────
   if (CRITICAL_NOTIFICATION_TYPES.includes(payload.type)) {
-    if (userEmail) {
+    let resolvedEmail = userEmail;
+    if (!resolvedEmail) {
+      try {
+        const user = await User.findById(actualUserId).select('email').lean();
+        resolvedEmail = user?.email ?? null;
+      } catch (error) {
+        console.warn(
+          '[notifyUser] تعذر جلب بريد مستلم الإشعار:',
+          error.message
+        );
+      }
+    }
+
+    if (resolvedEmail) {
       try {
         const platformName = await getPlatformName();
+        const safePlatformName = escapeHtml(platformName);
+        const safeTitle = escapeHtml(title);
+        const safeBody = escapeHtml(body);
+        const absoluteActionUrl = toAbsoluteClientUrl(actionUrl);
+        const safeActionUrl = absoluteActionUrl
+          ? escapeHtml(absoluteActionUrl)
+          : null;
         const { fireSendEmail } = require('./sendEmail');
 
         fireSendEmail({
-          email:   userEmail,
+          email: resolvedEmail,
           subject: title,
           message: `
             <div dir="rtl" style="font-family:sans-serif;line-height:1.8;color:#191c1d;max-width:560px;margin:auto;">
-              <h2 style="color:#c0392b;margin-bottom:8px;">${title}</h2>
-              <p style="margin:0 0 16px;">${body}</p>
-              ${payload.actionUrl
-                ? `<a href="${payload.actionUrl}"
+              <h2 style="color:#c0392b;margin-bottom:8px;">${safeTitle}</h2>
+              <p style="margin:0 0 16px;">${safeBody}</p>
+              ${safeActionUrl
+                ? `<a href="${safeActionUrl}"
                       style="display:inline-block;padding:10px 20px;background:#01696f;
                              color:#fff;border-radius:8px;text-decoration:none;font-weight:bold;">
-                       Anputation Application
+                       فتح منصة ${safePlatformName}
                      </a>`
                 : ''
               }
               <hr style="border:none;border-top:1px solid #edeeef;margin:20px 0;" />
               <p style="font-size:11px;color:#747775;">
-                هذا إشعار إداري رسمي من منصة ${platformName}.
+                هذا إشعار إداري رسمي من منصة ${safePlatformName}.
               </p>
             </div>
           `,
-        }).catch((emailErr) =>
-          console.error('[notifyUser Email Fallback] فشل الإرسال:', emailErr.message)
+        }).catch((emailError) =>
+          console.error(
+            '[notifyUser Email Fallback] فشل الإرسال:',
+            emailError.message
+          )
         );
-      } catch (importErr) {
-        console.warn('[notifyUser] تعذر تحميل sendEmail:', importErr.message);
+      } catch (emailError) {
+        console.warn(
+          '[notifyUser] تعذر تجهيز بريد الإشعار:',
+          emailError.message
+        );
       }
     } else {
       console.warn(
-        `[notifyUser] ⚠️ إشعار حرج "${payload.type}" للمستخدم ${actualUserId}` +
-        ` — لم يُرسل بريد: حقل email غير متوفر في payload أو user object.`
+        `[notifyUser] إشعار حرج "${payload.type}" للمستخدم ${actualUserId}`
+        + ' — لم يُرسل بريد لعدم توفر عنوان البريد.'
       );
     }
   }
@@ -111,5 +218,7 @@ async function notifyUser(userId, payload) {
 }
 
 notifyUser.CRITICAL_TYPES = CRITICAL_NOTIFICATION_TYPES;
+notifyUser.normalizeActionUrl = normalizeActionUrl;
+notifyUser.normalizeMetadata = normalizeMetadata;
 
 module.exports = notifyUser;

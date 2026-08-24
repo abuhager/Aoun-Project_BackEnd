@@ -16,6 +16,9 @@ let shutdownPromise = null;
 let processHandlersRegistered = false;
 
 const closeResources = async () => {
+  const { stopCronJobs } = require('./jobs/cronJobs');
+  await stopCronJobs();
+
   if (runtime.io) {
     const { resetIO } = require('./socket');
     await new Promise((resolve) => runtime.io.close(resolve));

@@ -13,6 +13,25 @@ const AppError = require('./utils/AppError');
 
 const app = express();
 
+const getBackgroundJobsHealth = () => {
+  try {
+    const { getCronStatus } = require('./jobs/cronJobs');
+    return Object.fromEntries(
+      Object.entries(getCronStatus()).map(([name, job]) => [
+        name,
+        {
+          status: job.lastStatus,
+          scheduled: job.scheduled,
+          lastRun: job.lastRun,
+          lastFinishedAt: job.lastFinishedAt ?? null,
+        },
+      ])
+    );
+  } catch {
+    return {};
+  }
+};
+
 const trustProxyValue = process.env.TRUST_PROXY
   ?? (process.env.NODE_ENV === 'production' ? '1' : 'loopback');
 app.set('trust proxy', /^\d+$/.test(trustProxyValue) ? Number(trustProxyValue) : trustProxyValue);
@@ -123,6 +142,7 @@ app.get(['/health', '/health/ready'], publicLimiter, (_req, res) => {
   res.status(dbOk ? 200 : 503).json({
     status: dbOk ? 'ok' : 'degraded',
     database: ['disconnected', 'connected', 'connecting', 'disconnecting'][dbState] ?? 'unknown',
+    backgroundJobs: getBackgroundJobsHealth(),
     uptime: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
   });
