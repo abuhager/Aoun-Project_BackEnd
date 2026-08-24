@@ -239,10 +239,28 @@ exports.resolveReport = async (
   if (!allowedStatuses.includes(status))
     throw new AppError('حالة غير صالحة للبلاغ', 400, 'INVALID_REPORT_STATUS');
 
-  const report = await adminRepo.resolveReport(reportId, adminId, status, adminNote);
-  if (!report) throw new AppError('البلاغ غير موجود', 404, 'REPORT_NOT_FOUND');
+  const existingReport = await reportRepository.findByIdPopulated(reportId);
+  if (!existingReport) {
+    throw new AppError('البلاغ غير موجود', 404, 'REPORT_NOT_FOUND');
+  }
+  if (existingReport.status !== 'pending') {
+    throw new AppError('تم البت في هذا البلاغ مسبقاً', 409, 'REPORT_ALREADY_RESOLVED');
+  }
 
-  // ✅ FIX [ADMIN-01]: استخدام reportRepository.findByIdPopulated بدل require داخل الدالة
+  const report = await adminRepo.resolvePendingReport(
+    reportId,
+    adminId,
+    status,
+    adminNote
+  );
+  if (!report) {
+    throw new AppError(
+      'سبق لمشرف آخر البت في هذا البلاغ',
+      409,
+      'REPORT_RESOLUTION_CONFLICT'
+    );
+  }
+
   const fullReport = await reportRepository.findByIdPopulated(reportId);
 
   const statusLabel = {
@@ -267,12 +285,31 @@ exports.resolveReport = async (
     },
   });
 
+  const reporterMessage = {
+    actioned:  'تمت مراجعة بلاغك واتخاذ إجراء مناسب.',
+    reviewed:  'تمت مراجعة بلاغك وإغلاقه بعد التحقق.',
+    dismissed: 'تمت مراجعة بلاغك ولم يتم اعتماد إجراء عليه.',
+  }[status];
+
+  if (fullReport?.reporter?._id) {
+    await notifyBestEffort(fullReport.reporter, {
+      type:      'report_resolved',
+      title:     'تمت معالجة بلاغك',
+      body:      reporterMessage,
+      itemId:    fullReport?.relatedItem?._id ?? null,
+      actionUrl: '/dashboard',
+      metadata:  { reportId: String(reportId), status },
+    }, 'report-resolution');
+  }
+
   if (status === 'actioned' && report.reportedUser) {
     await notifyBestEffort(fullReport?.reportedUser ?? report.reportedUser, {
       type:   'admin_warning',
       title:  'تحذير من الإدارة',
       body:   '⚠️ اتخذت الإدارة إجراءً بسبب بلاغ مقدم ضدك.',
       itemId: fullReport?.relatedItem?._id ?? null,
+      actionUrl: '/dashboard',
+      metadata: { reportId: String(reportId), status },
     }, 'report-warning');
 
     const settings = await SystemSettings.getCached();
@@ -298,7 +335,7 @@ exports.resolveReport = async (
     }
   }
 
-  return report;
+  return fullReport ?? report;
 };
 
 exports.applyBanConsequences = applyBanConsequences;

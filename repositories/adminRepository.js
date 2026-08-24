@@ -73,16 +73,15 @@ exports.findAllItems = ({ page = 1, limit = 20 } = {}) =>
 exports.countItems = () => Item.countDocuments();
 
 // ── البلاغات ──────────────────────────────────────────────────
-// ✅ FIX BUG-04: يقبل adminNote ويحفظه في الـ document
-exports.resolveReport = (reportId, adminId, status, adminNote = null) =>
-  Report.findByIdAndUpdate(
-    reportId,
+exports.resolvePendingReport = (reportId, adminId, status, adminNote) =>
+  Report.findOneAndUpdate(
+    { _id: reportId, status: 'pending' },
     {
       $set: {
         status,
         resolvedBy: adminId,
         resolvedAt: new Date(),
-        ...(adminNote ? { adminNote } : {}),
+        adminNote,
       },
     },
     { returnDocument: 'after' }

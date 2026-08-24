@@ -35,6 +35,13 @@ const indexGroups = [
       { key: { reportedUser: 1, status: 1 }, name: 'reportedUser_status' },
       { key: { status: 1, createdAt: -1 }, name: 'status_createdAt' },
       { key: { reporter: 1 }, name: 'reporter' },
+      {
+        key: { reporter: 1, reportedUser: 1, relatedItem: 1, status: 1 },
+        unique: true,
+        partialFilterExpression: { status: 'pending' },
+        name: 'pending_report_context_unique',
+        replaceIfDifferent: true,
+      },
     ],
   },
   {

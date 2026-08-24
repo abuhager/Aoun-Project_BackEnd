@@ -1,10 +1,16 @@
 // repositories/reportRepository.js
 const Report = require('../models/Report');
+const Item   = require('../models/Item');
 
 // ── قراءة ─────────────────────────────────────────────────────
 exports.createReport = (payload) => Report.create(payload);
 
 exports.findById = (reportId) => Report.findById(reportId);
+
+exports.findContextItem = (itemId) =>
+  Item.findById(itemId)
+    .select('donor bookedBy status')
+    .lean();
 
 exports.findByIdPopulated = (reportId) =>
   Report.findById(reportId)
@@ -19,7 +25,7 @@ exports.findExistingPending = (reporterId, reportedUserId, itemId) =>
     reportedUser: reportedUserId,
     relatedItem:  itemId ?? null,
     status:       'pending',
-  });
+  }).select('_id').lean();
 
 exports.countByReportedUser = (userId) =>
   Report.countDocuments({ reportedUser: userId });
@@ -28,11 +34,18 @@ exports.countActionedByReportedUser = (userId) =>
   Report.countDocuments({ reportedUser: userId, status: 'actioned' });
 
 // ── تحديث ─────────────────────────────────────────────────────
-exports.save = (report) => report.save();
-
-exports.resolve = (reportId, adminId, status) =>
-  Report.findByIdAndUpdate(
-    reportId,
-    { $set: { status, resolvedBy: adminId, resolvedAt: new Date() } },
-    { new: true }
+exports.submitAppeal = ({ reportId, userId, appealText, appealedAt }) =>
+  Report.findOneAndUpdate(
+    {
+      _id:          reportId,
+      reportedUser: userId,
+      status:       'pending',
+      appealText:   null,
+      $or: [
+        { appealDeadline: { $gte: appealedAt } },
+        { appealDeadline: null },
+      ],
+    },
+    { $set: { appealText, appealedAt } },
+    { returnDocument: 'after' }
   );

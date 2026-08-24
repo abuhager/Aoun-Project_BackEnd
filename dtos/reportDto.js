@@ -1,38 +1,24 @@
-// dtos/reportDto.js — النسخة المُصلَحة الكاملة
-const Joi = require('joi');
-
-// ✅ REASONS مصدر الحقيقة الوحيد — يُستخدم في الـ validation والـ Schema
-const REASONS = [
+const DEFAULT_REPORT_REASONS = Object.freeze([
   'لم يُسلّم الغرض',
   'معلومات مضللة',
   'سلوك غير لائق',
   'غرض مختلف عن الوصف',
   'أخرى',
-];
+]);
 
-exports.REPORT_REASONS = REASONS;
+const toId = (value) => {
+  if (!value) return null;
+  return String(value._id ?? value);
+};
 
-// ✅ BUG-07: استخدام Joi.valid(...REASONS) ليطابق ما يُخزَّن في DB
-exports.validateReport = (body) =>
-  Joi.object({
-    reportedUser: Joi.string().hex().length(24).required(),
-    relatedItem:  Joi.string().hex().length(24).optional(),
-    reason:       Joi.string().valid(...REASONS).required()
-      .messages({ 'any.only': `السبب يجب أن يكون أحد: ${REASONS.join(', ')}` }),
-    details:      Joi.string().max(1000).optional().allow('').trim(),
-  }).validate(body, { abortEarly: false, stripUnknown: true });
-
-exports.validateAppeal = (body) =>
-  Joi.object({
-    appealText: Joi.string().min(10).max(1000).required().trim(),
-  }).validate(body, { abortEarly: false, stripUnknown: true });
+exports.DEFAULT_REPORT_REASONS = DEFAULT_REPORT_REASONS;
 
 // ✅ BUG-01: إضافة resolvedBy و appealDeadline لـ toReportResponse
 exports.toReportResponse = (report) => ({
-  _id:            report._id,
-  reporter:       report.reporter,
-  reportedUser:   report.reportedUser,
-  relatedItem:    report.relatedItem,
+  _id:            toId(report._id),
+  reporter:       toId(report.reporter),
+  reportedUser:   toId(report.reportedUser),
+  relatedItem:    toId(report.relatedItem),
   reason:         report.reason,
   details:        report.details,
   status:         report.status,
@@ -40,7 +26,7 @@ exports.toReportResponse = (report) => ({
   appealText:     report.appealText    ?? null,
   appealedAt:     report.appealedAt    ?? null,
   appealDeadline: report.appealDeadline ?? null, // ✅ يُظهر للمستخدم متى تنتهي نافذة الطعن
-  resolvedBy:     report.resolvedBy    ?? null,  // ✅ BUG-01
+  resolvedBy:     toId(report.resolvedBy),
   resolvedAt:     report.resolvedAt    ?? null,
   createdAt:      report.createdAt,
   updatedAt:      report.updatedAt,

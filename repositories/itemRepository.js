@@ -58,6 +58,7 @@ async function attachReportIds(items, reportedUserId) {
 
   const reports = await Report.find(query)
     .select('relatedItem _id')
+    .sort({ createdAt: -1 })
     .lean();
 
   // map: itemId → reportId (نأخذ أحدث بلاغ إن وُجد أكثر من واحد)
@@ -82,8 +83,8 @@ exports.findDonationsByUser = async (userId) => {
     .sort({ createdAt: -1 })
     .lean();
 
-  // بدون reportedUserId — البلاغ على الغرض بغض النظر عن المُبلَّغ عنه
-  return attachReportIds(items, null);
+  // لا نعرض زر الاعتراض إلا إذا كان صاحب لوحة التحكم هو المُبلَّغ عنه.
+  return attachReportIds(items, userId);
 };
 
 // ─── طلبات الاستلام ───────────────────────────────────────────

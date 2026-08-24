@@ -133,9 +133,9 @@ const schemas = {
 
   // ──────────── reports ──────────────────────────────────────────────
   createReport: Joi.object({
-    reportedUser: objectId().required(),
-    relatedItem:  objectId().optional(),
-    reason:       Joi.string().min(3).max(300).required().trim(),
+    reportedUserId: objectId().required(),
+    itemId:         objectId().optional(),
+    reason:         Joi.string().min(2).max(100).required().trim(),
     details:      Joi.string().max(1000).optional().allow('').trim(),
   }).unknown(false),
 

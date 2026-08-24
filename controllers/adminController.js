@@ -98,14 +98,14 @@ exports.deleteItem = asyncHandler(async (req, res) => {
 
 // ─── Reports ──────────────────────────────────────────────────
 exports.listReports = asyncHandler(async (req, res) => {
-  // ✅ FIX BUG-06: لا default — null يعني "كل الحالات"
   const { page = 1, status } = req.query;
 
   const ALLOWED_STATUSES = ['pending', 'actioned', 'dismissed', 'reviewed'];
-  // إذا لم تُرسَل status أو كانت خارج القائمة → null = جميع الحالات
-  const safeStatus = ALLOWED_STATUSES.includes(status) ? status : null;
+  if (status && !ALLOWED_STATUSES.includes(status)) {
+    throw new AppError('فلتر حالة البلاغ غير صالح', 422, 'INVALID_REPORT_STATUS');
+  }
 
-  const result = await adminService.listReports({ page, status: safeStatus });
+  const result = await adminService.listReports({ page, status: status || null });
   res.json(result);
 });
 
