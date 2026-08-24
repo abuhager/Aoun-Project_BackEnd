@@ -76,6 +76,7 @@ const schemas = {
   }).unknown(false),
 
   resetPassword: Joi.object({
+    token: Joi.string().hex().length(64).required(),
     password: passwordRule.required(),
   }).unknown(false),
 

@@ -150,9 +150,9 @@ app.get(['/health', '/health/ready'], publicLimiter, (_req, res) => {
 
 app.use('/api', require('./routes'));
 
-app.use((req, _res, next) => {
+app.use((_req, _res, next) => {
   next(new AppError(
-    `المسار غير موجود: ${req.method} ${req.originalUrl}`,
+    'المسار المطلوب غير موجود',
     404,
     'ROUTE_NOT_FOUND'
   ));

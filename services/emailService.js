@@ -95,7 +95,8 @@ exports.sendPasswordResetEmail = async (
   expiryMinutes = 15
 ) => {
   const platformName = await getPlatformName();
-  const resetUrl = `${getClientOrigin()}/reset-password/${encodeURIComponent(resetToken)}`;
+  // الـ fragment لا يُرسل إلى Next.js أو proxy/access logs أو Referer.
+  const resetUrl = `${getClientOrigin()}/reset-password#token=${encodeURIComponent(resetToken)}`;
   const safeName = escapeHtml(name);
   const safeResetUrl = escapeHtml(resetUrl);
 

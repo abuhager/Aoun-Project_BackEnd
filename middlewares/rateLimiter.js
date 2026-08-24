@@ -12,16 +12,18 @@ let limiterInstances = {};
 const definitions = {
   globalLimiter: ['RATE_LIMIT_GLOBAL', 15 * 60 * 1000, 200, 'rl:global:', 'global'],
   loginLimiter: ['RATE_LIMIT_LOGIN', 15 * 60 * 1000, 10, 'rl:login:', 'تسجيل الدخول', 'email'],
-  registerLimiter: ['RATE_LIMIT_REGISTER', 60 * 60 * 1000, 5, 'rl:register:', 'التسجيل'],
+  registerLimiter: ['RATE_LIMIT_REGISTER', 60 * 60 * 1000, 5, 'rl:register:', 'التسجيل', 'email'],
   forgotPasswordLimiter: ['RATE_LIMIT_FORGOT', 60 * 60 * 1000, 5, 'rl:forgot:', 'استعادة كلمة المرور', 'email'],
-  resetPasswordLimiter: ['RATE_LIMIT_RESET_PASSWORD', 60 * 60 * 1000, 10, 'rl:reset-password:', 'تعيين كلمة المرور'],
+  resetPasswordLimiter: ['RATE_LIMIT_RESET_PASSWORD', 60 * 60 * 1000, 10, 'rl:reset-password:', 'تعيين كلمة المرور', 'token'],
   refreshLimiter: ['RATE_LIMIT_REFRESH', 60 * 1000, 60, 'rl:refresh:', 'تجديد الجلسة'],
-  otpLimiter: ['RATE_LIMIT_OTP', 15 * 60 * 1000, 10, 'rl:otp:', 'التحقق من الكود'],
-  resendOtpLimiter: ['RATE_LIMIT_RESEND_OTP', 60 * 60 * 1000, 5, 'rl:resend-otp:', 'إعادة إرسال كود التحقق'],
-  uploadLimiter: ['RATE_LIMIT_UPLOAD', 60 * 60 * 1000, 30, 'rl:upload:', 'رفع الملفات'],
+  otpLimiter: ['RATE_LIMIT_OTP', 15 * 60 * 1000, 10, 'rl:otp:', 'التحقق من الكود', 'email'],
+  resendOtpLimiter: ['RATE_LIMIT_RESEND_OTP', 60 * 60 * 1000, 5, 'rl:resend-otp:', 'إعادة إرسال كود التحقق', 'email'],
+  uploadLimiter: ['RATE_LIMIT_UPLOAD', 60 * 60 * 1000, 30, 'rl:upload:', 'رفع الملفات', 'user'],
   meLimiter: ['RATE_LIMIT_ME', 60 * 1000, 60, 'rl:me:', 'جلب بيانات المستخدم'],
   publicLimiter: ['RATE_LIMIT_PUBLIC', 15 * 60 * 1000, 100, 'rl:public:', 'تصفح البيانات العامة'],
   phoneVerifyLimiter: ['RATE_LIMIT_PHONE_VERIFY', 60 * 60 * 1000, 10, 'rl:phone-verify:', 'التحقق من الهاتف', 'user'],
+  actionLimiter: ['RATE_LIMIT_ACTION', 60 * 1000, 30, 'rl:action:', 'تنفيذ العمليات', 'user'],
+  donationActionLimiter: ['RATE_LIMIT_DONATION_ACTION', 60 * 1000, 10, 'rl:donation-action:', 'عمليات طلبات التبرع', 'user'],
 };
 
 const buildStore = (prefix) => {
@@ -33,11 +35,17 @@ const buildStore = (prefix) => {
 };
 
 const emailKeyGenerator = (req) => {
-  const ip = ipKeyGenerator(req.ip);
   const email = String(req.body?.email ?? '').trim().toLowerCase();
-  if (!email) return ip;
+  if (!email) return ipKeyGenerator(req.ip);
   const digest = createHash('sha256').update(email).digest('hex').slice(0, 24);
-  return `${ip}:${digest}`;
+  return `email:${digest}`;
+};
+
+const tokenKeyGenerator = (req) => {
+  const token = String(req.body?.token ?? '').trim();
+  if (!token) return ipKeyGenerator(req.ip);
+  const digest = createHash('sha256').update(token).digest('hex').slice(0, 24);
+  return `token:${digest}`;
 };
 
 const userKeyGenerator = (req) =>
@@ -64,7 +72,9 @@ const createLimiter = (definition) => {
     legacyHeaders: false,
     keyGenerator: keyType === 'email'
       ? emailKeyGenerator
-      : (keyType === 'user' ? userKeyGenerator : undefined),
+      : (keyType === 'user'
+          ? userKeyGenerator
+          : (keyType === 'token' ? tokenKeyGenerator : undefined)),
     store: buildStore(storePrefix),
     message: {
       status: 429,
@@ -173,8 +183,15 @@ module.exports = {
   refreshLimiter: delegate('refreshLimiter'),
   publicLimiter: delegate('publicLimiter'),
   phoneVerifyLimiter: delegate('phoneVerifyLimiter'),
+  actionLimiter: delegate('actionLimiter'),
+  donationActionLimiter: delegate('donationActionLimiter'),
   otpLimiter: delegate('otpLimiter'),
   resendOtpLimiter: delegate('resendOtpLimiter'),
   uploadLimiter: delegate('uploadLimiter'),
   meLimiter: delegate('meLimiter'),
+  _private: {
+    emailKeyGenerator,
+    tokenKeyGenerator,
+    userKeyGenerator,
+  },
 };

@@ -4,7 +4,7 @@
 // إصلاحات الجولات السابقة المحفوظة:
 // ✅ [ARCH-01]     حذف resendLimiter الـ Inline
 // ✅ [SEC-AUTH-01] resend-otp يستخدم schema 'resendOtp'
-// ✅ [SEC-04]      token في URL Path
+// ✅ [FLOW14]      reset token داخل JSON body حتى لا يظهر في API access logs
 // ✅ [SEC-05]      meLimiter على مسارات /me
 // ═══════════════════════════════════════════════════════════════
 
@@ -16,6 +16,10 @@ const authController        = require('../controllers/authController');
 const validateObjectId      = require('../middlewares/validateObjectId');
 const validateBody          = require('../middlewares/validateBody');
 const { upload, verifyImageBuffer } = require('../middlewares/upload');
+const {
+  requireTrustedBrowserRequest,
+  setPrivateNoStore,
+} = require('../middlewares/requestSecurity');
 
 const {
   loginLimiter,
@@ -27,7 +31,18 @@ const {
   resendOtpLimiter,
   meLimiter,
   publicLimiter,
+  uploadLimiter,
 } = require('../middlewares/rateLimiter');
+
+router.use(setPrivateNoStore);
+
+const conditionalUploadRateLimit = (req, res, next) => {
+  const contentType = req.headers['content-type'] ?? '';
+  if (contentType.includes('multipart/form-data')) {
+    return uploadLimiter(req, res, next);
+  }
+  return next();
+};
 
 const conditionalUpload = (req, res, next) => {
   const ct = req.headers['content-type'] ?? '';
@@ -48,53 +63,49 @@ const conditionalVerify = (req, res, next) => {
 
 router.post('/register',
   registerLimiter,
+  requireTrustedBrowserRequest,
   validateBody('register'),
   authController.register
 );
 
 router.post('/verify-email',
   otpLimiter,
+  requireTrustedBrowserRequest,
   validateBody('verifyEmail'),
   authController.verifyEmail
 );
 
 router.post('/resend-otp',
   resendOtpLimiter,
+  requireTrustedBrowserRequest,
   validateBody('resendOtp'),
   authController.resendOtp
 );
 
 router.post('/login',
   loginLimiter,
+  requireTrustedBrowserRequest,
   validateBody('login'),
   authController.login
 );
 
 router.post('/forgot-password',
   forgotPasswordLimiter,
+  requireTrustedBrowserRequest,
   validateBody('forgotPassword'),
   authController.forgotPassword
 );
 
-const validateResetTokenParam = (req, res, next) => {
-  if (!/^[a-f\d]{64}$/i.test(req.params.token ?? '')) {
-    return res.status(400).json({
-      msg: 'رابط إعادة التعيين غير صالح أو منتهي الصلاحية',
-      code: 'INVALID_RESET_TOKEN',
-    });
-  }
-  return next();
-};
-
-router.post('/reset-password/:token',
+router.post('/reset-password',
   resetPasswordLimiter,
-  validateResetTokenParam,
+  requireTrustedBrowserRequest,
   validateBody('resetPassword'),
   authController.resetPassword
 );
 
 router.post('/refresh',
   refreshLimiter,
+  requireTrustedBrowserRequest,
   authController.refreshToken
 );
 
@@ -124,6 +135,7 @@ router.get('/me/profile',
 );
 
 router.post('/logout',
+  requireTrustedBrowserRequest,
   requireAuth,
   authController.logout
 );
@@ -131,6 +143,7 @@ router.post('/logout',
 router.put('/me',
   meLimiter,
   requireAuth,
+  conditionalUploadRateLimit,
   conditionalUpload,
   conditionalVerify,
   validateBody('updateMe'),
@@ -139,6 +152,7 @@ router.put('/me',
 
 router.put('/me/password',
   meLimiter,
+  requireTrustedBrowserRequest,
   requireAuth,
   validateBody('updatePassword'),
   authController.updatePassword

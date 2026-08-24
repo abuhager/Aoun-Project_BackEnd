@@ -1,21 +1,15 @@
 const express  = require('express');
 const router   = express.Router();
-const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
 const { requireAuth, optionalAuth } = require('../middlewares/auth');
 const validateObjectId = require('../middlewares/validateObjectId');
 const validateBody     = require('../middlewares/validateBody');
 const drController     = require('../controllers/donationRequestController');
 const { upload, verifyImageBuffer } = require('../middlewares/upload');
-
-const strictLimiter = rateLimit({
-  windowMs:        60 * 1000,
-  max:             10,
-  standardHeaders: true,
-  legacyHeaders:   false,
-  message: { msg: 'طلبات كثيرة جداً، يرجى المحاولة بعد دقيقة ⏳', code: 'TOO_MANY_REQUESTS' },
-  keyGenerator: (req) => req.user?.id ?? ipKeyGenerator(req.ip),
-});
+const {
+  donationActionLimiter,
+  uploadLimiter,
+} = require('../middlewares/rateLimiter');
 
 // ── قراءة ────────────────────────────────────────────────────
 router.get('/',   optionalAuth, drController.getRequests);
@@ -25,7 +19,7 @@ router.get('/me', requireAuth, drController.getMyRequests);
 router.post(
   '/',
   requireAuth,
-  strictLimiter,
+  donationActionLimiter,
   validateBody('createDonationRequest'),
   drController.createRequest
 );
@@ -33,7 +27,7 @@ router.post(
 router.patch(
   '/:id/cancel',
   requireAuth,
-  strictLimiter,
+  donationActionLimiter,
   validateObjectId('id'),
   drController.cancelRequest
 );
@@ -42,7 +36,8 @@ router.patch(
 router.post(
   '/:id/offer',
   requireAuth,
-  strictLimiter,
+  donationActionLimiter,
+  uploadLimiter,
   validateObjectId('id'),
   upload.single('image'),
   verifyImageBuffer,
@@ -69,7 +64,7 @@ router.get(
 router.post(
   '/:id/offers/:offerId/accept',
   requireAuth,
-  strictLimiter,
+  donationActionLimiter,
   validateObjectId('id'),
   validateObjectId('offerId'),
   drController.acceptOffer
@@ -78,7 +73,7 @@ router.post(
 router.patch(
   '/:id/offers/:offerId/reject',
   requireAuth,
-  strictLimiter,
+  donationActionLimiter,
   validateObjectId('id'),
   validateObjectId('offerId'),
   drController.rejectOffer
@@ -87,7 +82,7 @@ router.patch(
 router.patch(
   '/:id/offers/:offerId/withdraw',
   requireAuth,
-  strictLimiter,
+  donationActionLimiter,
   validateObjectId('id'),
   validateObjectId('offerId'),
   drController.withdrawOffer

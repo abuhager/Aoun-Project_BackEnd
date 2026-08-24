@@ -1,11 +1,12 @@
 const AppError = require('../utils/AppError');
+const multer = require('multer');
 
 // ── حوِّل أخطاء Mongoose المعروفة إلى AppError ────────────────
 const normalizeMongo = (err) => {
   // CastError — معرِّف MongoDB غير صالح
   if (err.name === 'CastError') {
     return new AppError(
-      `قيمة غير صالحة للحقل "${err.path}": ${err.value}`,
+      `قيمة غير صالحة للحقل "${err.path}"`,
       400,
       'INVALID_ID'
     );
@@ -13,11 +14,8 @@ const normalizeMongo = (err) => {
 
   // Duplicate Key — قيمة فريدة موجودة مسبقاً
   if (err.code === 11000) {
-    const field  = Object.keys(err.keyValue ?? {})[0] ?? 'حقل';
-    const value  = err.keyValue?.[field];
-    const safeVal = typeof value === 'string' && value.length < 60 ? ` "${value}"` : '';
     return new AppError(
-      `${field}${safeVal} مستخدم مسبقاً`,
+      'إحدى القيم الفريدة مستخدمة مسبقاً',
       409,
       'DUPLICATE_KEY'
     );
@@ -25,11 +23,28 @@ const normalizeMongo = (err) => {
 
   // ValidationError — فشل validate() في Mongoose
   if (err.name === 'ValidationError') {
-    const messages = Object.values(err.errors).map((e) => e.message).join(' | ');
-    return new AppError(messages, 422, 'VALIDATION_ERROR');
+    return new AppError('بيانات غير صالحة', 422, 'VALIDATION_ERROR');
   }
 
   return err; // لا تغيير
+};
+
+const normalizeUpload = (err) => {
+  if (!(err instanceof multer.MulterError)) return err;
+
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return new AppError(
+      'حجم الصورة يتجاوز الحد المسموح',
+      413,
+      'IMAGE_TOO_LARGE'
+    );
+  }
+
+  return new AppError(
+    'بيانات رفع الملف تتجاوز الحدود المسموحة',
+    400,
+    'UPLOAD_LIMIT_EXCEEDED'
+  );
 };
 
 // ── ✅ FIX-02: أخطاء CORS ─────────────────────────────────────
@@ -52,6 +67,7 @@ const errorHandler = (err, req, res, next) => {
   // ✅ تطبيق normalizers بالترتيب
   let error = normalizeMongo(err);
   error     = normalizeCors(error);
+  error     = normalizeUpload(error);
 
   // تحديد ما إذا كان AppError رسمياً
   const isAppError  = error instanceof AppError;
@@ -76,7 +92,7 @@ const errorHandler = (err, req, res, next) => {
         requestId,
         message:   error.message,
         stack:     error.stack,
-        url:       req.originalUrl,
+        url:       req.path || req.originalUrl?.split('?')[0],
         method:    req.method,
         userId:    req.user?.id || req.user?._id,
       });
@@ -92,7 +108,7 @@ const errorHandler = (err, req, res, next) => {
       : (process.env.NODE_ENV === 'production'
           ? 'حدث خطأ داخلي في الخادم. يرجى المحاولة لاحقاً.'
           : error.message),
-    code:      isAppError ? error.code : (error.code || 'INTERNAL_SERVER_ERROR'),
+    code:      isAppError ? error.code : 'INTERNAL_SERVER_ERROR',
     requestId: requestId, // 💡 إرسال الـ ID للـ Frontend لربط التذاكر وبلاغات الأعطال بسجلات الخادم فوراُ
   };
   body.msg = body.message;

@@ -11,6 +11,11 @@ const ROLES = Object.freeze({
   SUPER_ADMIN: 'super_admin',
 });
 
+const setAuthenticatedResponseHeaders = (res) => {
+  res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+};
+
 const getBearerToken = (authorization) => {
   if (typeof authorization !== 'string') return null;
   const match = authorization.match(/^Bearer\s+(\S+)$/i);
@@ -89,7 +94,8 @@ const resolveAccessIdentity = async (token) => {
   return state;
 };
 
-exports.requireAuth = async (req, _res, next) => {
+exports.requireAuth = async (req, res, next) => {
+  setAuthenticatedResponseHeaders(res);
   const token = getBearerToken(req.headers.authorization);
   if (!token) {
     return next(new AppError('لا يوجد توكن، الوصول مرفوض 🔒', 401, 'NO_TOKEN'));
@@ -147,7 +153,7 @@ exports.requireLevel2 = (req, _res, next) => {
   return next();
 };
 
-exports.optionalAuth = async (req, _res, next) => {
+exports.optionalAuth = async (req, res, next) => {
   const token = getBearerToken(req.headers.authorization);
   if (!token) {
     req.user = null;
@@ -155,6 +161,7 @@ exports.optionalAuth = async (req, _res, next) => {
   }
 
   try {
+    setAuthenticatedResponseHeaders(res);
     req.user = await resolveAccessIdentity(token);
   } catch {
     req.user = null;
@@ -166,3 +173,4 @@ exports.ROLES = ROLES;
 exports.getBearerToken = getBearerToken;
 exports.loadAuthState = loadAuthState;
 exports.resolveAccessIdentity = resolveAccessIdentity;
+exports.setAuthenticatedResponseHeaders = setAuthenticatedResponseHeaders;

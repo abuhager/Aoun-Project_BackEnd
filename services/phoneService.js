@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const AppError = require('../utils/AppError');
 const { verifyFirebasePhoneToken } = require('../integrations/smsService');
 const sessionCache = require('../utils/sessionCache');
 const {
@@ -10,7 +11,7 @@ const {
 } = require('../utils/phoneUtils');
 
 const serviceError = (message, status, code) =>
-  Object.assign(new Error(message), { status, code });
+  new AppError(message, status, code);
 
 exports.verifyPhoneWithFirebase = async (userId, idToken) => {
   if (!isPhoneVerificationEnabled()) {

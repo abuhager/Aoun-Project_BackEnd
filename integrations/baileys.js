@@ -10,6 +10,7 @@ const {
   DisconnectReason,
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
+const AppError = require('../utils/AppError');
 
 let sock          = null;
 let isConnecting  = false; // ✅ NJ-17: حماية من reconnect storm
@@ -70,9 +71,10 @@ async function connectToWhatsApp() {
 exports.sendWhatsAppOtp = async (phone, otp) => {
   // ✅ NJ-16: رسالة خطأ واضحة بدل crash
   if (!sock) {
-    throw Object.assign(
-      new Error('WhatsApp (Baileys) غير متصل — استخدم whatsappService.js في Production'),
-      { status: 503, code: 'WA_NOT_CONNECTED' }
+    throw new AppError(
+      'WhatsApp (Baileys) غير متصل — استخدم whatsappService.js في Production',
+      503,
+      'WA_NOT_CONNECTED'
     );
   }
 

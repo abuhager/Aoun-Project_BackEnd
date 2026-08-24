@@ -12,6 +12,7 @@
 
 const { initializeApp, getApps, cert } = require('firebase-admin/app');
 const { getAuth }                       = require('firebase-admin/auth');
+const AppError                          = require('../utils/AppError');
 
 // ─── تهيئة Firebase Admin (مرة واحدة فقط) ───────────────────
 const initFirebase = () => {
@@ -42,24 +43,27 @@ exports.verifyFirebasePhoneToken = async (idToken) => {
   try {
     decoded = await getAuth().verifyIdToken(idToken, true);
   } catch {
-    throw Object.assign(
-      new Error('رمز التحقق من الهاتف غير صالح أو منتهي الصلاحية'),
-      { status: 401, code: 'INVALID_PHONE_TOKEN' }
+    throw new AppError(
+      'رمز التحقق من الهاتف غير صالح أو منتهي الصلاحية',
+      401,
+      'INVALID_PHONE_TOKEN'
     );
   }
 
   if (decoded.firebase?.sign_in_provider !== 'phone') {
-    throw Object.assign(
-      new Error('يجب استخدام Firebase Phone Auth للتحقق من الرقم'),
-      { status: 400, code: 'INVALID_PHONE_AUTH_PROVIDER' }
+    throw new AppError(
+      'يجب استخدام Firebase Phone Auth للتحقق من الرقم',
+      400,
+      'INVALID_PHONE_AUTH_PROVIDER'
     );
   }
 
   // decoded.phone_number موجود فقط إذا تم التوثيق عبر Phone Auth
   if (!decoded.phone_number) {
-    throw Object.assign(
-      new Error('الـ Token لا يحتوي على رقم هاتف — تأكد من استخدام Firebase Phone Auth'),
-      { status: 400, code: 'NO_PHONE_IN_TOKEN' }
+    throw new AppError(
+      'الـ Token لا يحتوي على رقم هاتف — تأكد من استخدام Firebase Phone Auth',
+      400,
+      'NO_PHONE_IN_TOKEN'
     );
   }
 

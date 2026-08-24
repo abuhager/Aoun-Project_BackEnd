@@ -1,6 +1,6 @@
 // controllers/authController.js
 // ✅ FIX [SEC-03]       : SESSION_ACTIVE_OPTIONS.maxAge ديناميكي من env
-// ✅ FIX [SEC-CTRL-01]  : resetPassword يستخدم req.params.token لا req.body.token
+// ✅ FIX [FLOW14]       : resetPassword يستقبل token داخل JSON body لا URL
 // ✅ FIX [PERF-CTRL-01] : parsePage مع حد أقصى + حماية من skip سالب
 // ✅ FIX [DUP-CTRL-01]  : parsePage دالة مشتركة تحذف التكرار
 // ✅ FIX [ARCH-CTRL-01] : SESSION_ACTIVE_OPTIONS مستورد من tokenUtils — لا تعريف محلي
@@ -10,8 +10,11 @@ const authService = require('../services/authService');
 const asyncHandler = require('../utils/asyncHandler');
 
 const {
+  REFRESH_COOKIE_NAME,
+  LEGACY_REFRESH_COOKIE_NAME,
   REFRESH_COOKIE_OPTIONS,
   CLEAR_REFRESH_COOKIE_OPTIONS,
+  LEGACY_CLEAR_REFRESH_COOKIE_OPTIONS,
   SESSION_ACTIVE_OPTIONS,        // ✅ [ARCH-CTRL-01] مستورد من tokenUtils
   CLEAR_SESSION_ACTIVE_OPTIONS,  // ✅ [ARCH-CTRL-01] مستورد من tokenUtils
 } = require('../utils/tokenUtils');
@@ -25,6 +28,34 @@ const parsePage = (raw) => {
   return (!p || p < 1) ? 1 : Math.min(p, 500);
 };
 
+const clearSessionCookies = (res) => {
+  res.clearCookie(REFRESH_COOKIE_NAME, CLEAR_REFRESH_COOKIE_OPTIONS);
+  if (REFRESH_COOKIE_NAME !== LEGACY_REFRESH_COOKIE_NAME) {
+    res.clearCookie(
+      LEGACY_REFRESH_COOKIE_NAME,
+      LEGACY_CLEAR_REFRESH_COOKIE_OPTIONS
+    );
+  }
+  res.clearCookie('session_active', CLEAR_SESSION_ACTIVE_OPTIONS);
+};
+
+const setSessionCookies = (res, refreshToken) => {
+  res.cookie(REFRESH_COOKIE_NAME, refreshToken, REFRESH_COOKIE_OPTIONS);
+  if (REFRESH_COOKIE_NAME !== LEGACY_REFRESH_COOKIE_NAME) {
+    res.clearCookie(
+      LEGACY_REFRESH_COOKIE_NAME,
+      LEGACY_CLEAR_REFRESH_COOKIE_OPTIONS
+    );
+  }
+  res.cookie('session_active', '1', SESSION_ACTIVE_OPTIONS);
+};
+
+const readRefreshCookie = (req) => (
+  req.cookies?.[REFRESH_COOKIE_NAME]
+  ?? req.cookies?.[LEGACY_REFRESH_COOKIE_NAME]
+  ?? null
+);
+
 // ─── 1. التسجيل ────────────────────────────────────────────────
 exports.register = asyncHandler(async (req, res) => {
   const result = await authService.registerLogic(req.body);
@@ -36,8 +67,7 @@ exports.verifyEmail = asyncHandler(async (req, res) => {
   const result = await authService.verifyEmailLogic(req.body);
 
   if (result.statusCode === 200 && result.refreshToken) {
-    res.cookie('refreshToken',   result.refreshToken, REFRESH_COOKIE_OPTIONS);
-    res.cookie('session_active', '1',                 SESSION_ACTIVE_OPTIONS);
+    setSessionCookies(res, result.refreshToken);
   }
 
   return res.status(result.statusCode).json(result.body);
@@ -54,8 +84,7 @@ exports.login = asyncHandler(async (req, res) => {
   const result = await authService.loginLogic(req.body);
 
   if (result.statusCode === 200 && result.refreshToken) {
-    res.cookie('refreshToken',   result.refreshToken, REFRESH_COOKIE_OPTIONS);
-    res.cookie('session_active', '1',                 SESSION_ACTIVE_OPTIONS);
+    setSessionCookies(res, result.refreshToken);
   }
 
   return res.status(result.statusCode).json(result.body);
@@ -91,11 +120,8 @@ exports.forgotPassword = asyncHandler(async (req, res) => {
 
 // ─── 8. إعادة تعيين كلمة المرور ───────────────────────────────
 exports.resetPassword = asyncHandler(async (req, res) => {
-  // ✅ [SEC-CTRL-01] req.params.token بدل req.body.token
-  // المسار /reset-password/:token — الـ token في URL Path لا في الـ body
-  // منع تسريبه في Server Logs أو Proxy Logs التي تُسجّل الـ body
   const result = await authService.resetPasswordLogic(
-    req.params.token,
+    req.body.token,
     req.body.password
   );
   return res.status(result.statusCode).json(result.body);
@@ -106,18 +132,16 @@ exports.refreshToken = asyncHandler(async (req, res) => {
   const clientIp = req.ip ?? req.socket?.remoteAddress ?? 'unknown';
 
   const result = await authService.refreshLogic(
-    req.cookies?.refreshToken,
+    readRefreshCookie(req),
     clientIp
   );
 
   if (result.clearCookie) {
-    res.clearCookie('refreshToken',   CLEAR_REFRESH_COOKIE_OPTIONS);
-    res.clearCookie('session_active', CLEAR_SESSION_ACTIVE_OPTIONS);
+    clearSessionCookies(res);
   }
 
   if (result.statusCode === 200 && result.newRefreshToken) {
-    res.cookie('refreshToken',   result.newRefreshToken, REFRESH_COOKIE_OPTIONS);
-    res.cookie('session_active', '1',                    SESSION_ACTIVE_OPTIONS);
+    setSessionCookies(res, result.newRefreshToken);
   }
 
   return res.status(result.statusCode).json(result.body);
@@ -126,8 +150,7 @@ exports.refreshToken = asyncHandler(async (req, res) => {
 // ─── 10. تسجيل الخروج ─────────────────────────────────────────
 exports.logout = asyncHandler(async (req, res) => {
   const result = await authService.logoutLogic(req.user.id);
-  res.clearCookie('refreshToken',   CLEAR_REFRESH_COOKIE_OPTIONS);
-  res.clearCookie('session_active', CLEAR_SESSION_ACTIVE_OPTIONS);
+  clearSessionCookies(res);
   return res.status(result.statusCode).json(result.body);
 });
 
@@ -177,9 +200,14 @@ exports.updatePassword = asyncHandler(async (req, res) => {
   });
 
   if (result.statusCode === 200) {
-    res.clearCookie('refreshToken',   CLEAR_REFRESH_COOKIE_OPTIONS);
-    res.clearCookie('session_active', CLEAR_SESSION_ACTIVE_OPTIONS);
+    clearSessionCookies(res);
   }
 
   return res.status(result.statusCode).json(result.body);
 });
+
+exports._private = {
+  clearSessionCookies,
+  readRefreshCookie,
+  setSessionCookies,
+};

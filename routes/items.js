@@ -7,6 +7,10 @@ const { requireAuth, optionalAuth } = require('../middlewares/auth');
 const validateObjectId = require('../middlewares/validateObjectId');
 const validateBody     = require('../middlewares/validateBody');
 const { upload, verifyImageBuffer } = require('../middlewares/upload');
+const {
+  actionLimiter,
+  uploadLimiter,
+} = require('../middlewares/rateLimiter');
 
 // ── Controllers ─────────────────────────────────────────────────────────────
 const {
@@ -50,6 +54,8 @@ router.get(
 router.post(
   '/',
   requireAuth,
+  actionLimiter,
+  uploadLimiter,
   upload.single('image'),
   verifyImageBuffer,
   validateBody('createItem'),
@@ -59,6 +65,7 @@ router.post(
 router.put(
   '/book/:id',
   requireAuth,
+  actionLimiter,
   validateObjectId('id'),
   bookItem
 );
@@ -66,6 +73,7 @@ router.put(
 router.put(
   '/cancel/:id',
   requireAuth,
+  actionLimiter,
   validateObjectId('id'),
   cancelBooking
 );
@@ -74,6 +82,7 @@ router.put(
 router.put(
   '/leave-waitlist/:id',
   requireAuth,
+  actionLimiter,
   validateObjectId('id'),
   leaveWaitlist
 );
@@ -82,6 +91,7 @@ router.put(
 router.post(
   '/:id/confirm-receipt',
   requireAuth,
+  actionLimiter,
   validateObjectId('id'),
   injectRecipientConfirm,
   completeDelivery
@@ -91,6 +101,7 @@ router.post(
 router.post(
   '/:id/confirm-delivery',
   requireAuth,
+  actionLimiter,
   validateObjectId('id'),
   injectDonorConfirm,
   completeDelivery
@@ -100,6 +111,7 @@ router.post(
 router.put(
   '/complete/:id',
   requireAuth,
+  actionLimiter,
   validateObjectId('id'),
   validateBody('completeDelivery'),
   completeDelivery
@@ -109,6 +121,8 @@ router.put(
 router.put(
   '/:id',
   requireAuth,
+  actionLimiter,
+  uploadLimiter,
   validateObjectId('id'),
   upload.single('image'),
   verifyImageBuffer,
@@ -119,6 +133,7 @@ router.put(
 router.delete(
   '/:id',
   requireAuth,
+  actionLimiter,
   validateObjectId('id'),
   deleteItem
 );

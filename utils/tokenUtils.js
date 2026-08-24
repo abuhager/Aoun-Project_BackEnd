@@ -6,8 +6,7 @@
 const jwt           = require('jsonwebtoken');
 const crypto        = require('crypto');
 const { hashToken } = require('./cryptoUtils');
-
-const isProduction = process.env.NODE_ENV === 'production';
+const { parseDurationMs } = require('../config/env');
 
 const JWT_SECRET         = process.env.JWT_SECRET;
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
@@ -23,52 +22,71 @@ if (!JWT_SECRET || !JWT_REFRESH_SECRET || !JWT_ACCESS_EXPIRE || !JWT_REFRESH_EXP
   );
 }
 
-// ✅ FIX [SEC-02]: تحويل "7d" / "30m" / "1h" → milliseconds
+// ✅ تحويل "7d" / "30m" / "1h" إلى milliseconds مع حد أعلى آمن للكوكي.
 const parseExpireToMs = (expStr) => {
-  const match = String(expStr ?? '7d').match(/^(\d+)([smhd])$/);
-  if (!match) {
-    console.warn(`[tokenUtils] قيمة JWT_REFRESH_EXPIRE غير قابلة للتحليل: "${expStr}" — سيُستخدم 7 أيام افتراضياً`);
-    return 7 * 24 * 60 * 60 * 1000;
-  }
-  const [, num, unit] = match;
-  const unitMap = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
-  return parseInt(num, 10) * unitMap[unit];
+  const parsed = parseDurationMs(expStr);
+  const maxRefreshMs = 90 * 24 * 60 * 60 * 1000;
+  if (parsed && parsed <= maxRefreshMs) return parsed;
+
+  console.warn(
+    `[tokenUtils] قيمة JWT_REFRESH_EXPIRE غير قابلة للتحليل بأمان: "${expStr}" — سيُستخدم 7 أيام افتراضياً`
+  );
+  return 7 * 24 * 60 * 60 * 1000;
 };
 
-// ── Refresh Token Cookie ─────────────────────────────────────
-const REFRESH_COOKIE_OPTIONS = {
-  httpOnly: true,
-  secure:   isProduction,
-  sameSite: isProduction ? 'none' : 'lax',
-  maxAge:   parseExpireToMs(JWT_REFRESH_EXPIRE),
-  path:     '/api/auth',
-  priority: 'high',
+const buildCookieConfiguration = (env = process.env) => {
+  const production = env.NODE_ENV === 'production';
+  const refreshCookieName = production ? '__Secure-aoun_refresh' : 'refreshToken';
+  const refreshMaxAge = parseExpireToMs(env.JWT_REFRESH_EXPIRE);
+  const commonRefreshOptions = {
+    httpOnly: true,
+    secure: production,
+    // كل طلبات المتصفح تمر عبر Next.js /api rewrite من نفس الموقع.
+    sameSite: 'lax',
+    path: '/api/auth',
+    priority: 'high',
+  };
+
+  return {
+    REFRESH_COOKIE_NAME: refreshCookieName,
+    LEGACY_REFRESH_COOKIE_NAME: 'refreshToken',
+    REFRESH_COOKIE_OPTIONS: {
+      ...commonRefreshOptions,
+      maxAge: refreshMaxAge,
+    },
+    CLEAR_REFRESH_COOKIE_OPTIONS: { ...commonRefreshOptions },
+    LEGACY_CLEAR_REFRESH_COOKIE_OPTIONS: {
+      httpOnly: true,
+      secure: production,
+      sameSite: production ? 'none' : 'lax',
+      path: '/api/auth',
+      priority: 'high',
+    },
+    SESSION_ACTIVE_OPTIONS: {
+      httpOnly: false,
+      secure: production,
+      sameSite: 'lax',
+      maxAge: refreshMaxAge,
+      path: '/',
+    },
+    CLEAR_SESSION_ACTIVE_OPTIONS: {
+      httpOnly: false,
+      secure: production,
+      sameSite: 'lax',
+      path: '/',
+    },
+  };
 };
 
-const CLEAR_REFRESH_COOKIE_OPTIONS = {
-  httpOnly: true,
-  secure:   isProduction,
-  sameSite: isProduction ? 'none' : 'lax',
-  path:     '/api/auth',
-  priority: 'high',
-};
-
-// ✅ [ARCH-CTRL-01] session_active كوكي غير حساس يُقرأ بـ JS (httpOnly: false مقصود)
-// نُقل من authController ليكون كل Cookie config في مكان واحد
-const SESSION_ACTIVE_OPTIONS = {
-  httpOnly: false,
-  secure:   isProduction,
-  sameSite: isProduction ? 'none' : 'lax',
-  maxAge:   parseExpireToMs(JWT_REFRESH_EXPIRE),
-  path:     '/',
-};
-
-const CLEAR_SESSION_ACTIVE_OPTIONS = {
-  httpOnly: false,
-  secure:   isProduction,
-  sameSite: isProduction ? 'none' : 'lax',
-  path:     '/',
-};
+const {
+  REFRESH_COOKIE_NAME,
+  LEGACY_REFRESH_COOKIE_NAME,
+  REFRESH_COOKIE_OPTIONS,
+  CLEAR_REFRESH_COOKIE_OPTIONS,
+  LEGACY_CLEAR_REFRESH_COOKIE_OPTIONS,
+  SESSION_ACTIVE_OPTIONS,
+  CLEAR_SESSION_ACTIVE_OPTIONS,
+} = buildCookieConfiguration();
 
 // ── Payload ──────────────────────────────────────────────────
 const _extractPayload = (user) => ({
@@ -116,9 +134,13 @@ module.exports = {
   generateRefreshToken,
   verifyAccessToken,
   verifyRefreshToken,
+  REFRESH_COOKIE_NAME,
+  LEGACY_REFRESH_COOKIE_NAME,
   REFRESH_COOKIE_OPTIONS,
   CLEAR_REFRESH_COOKIE_OPTIONS,
+  LEGACY_CLEAR_REFRESH_COOKIE_OPTIONS,
   SESSION_ACTIVE_OPTIONS,         // ✅ [ARCH-CTRL-01] مُصدَّر
   CLEAR_SESSION_ACTIVE_OPTIONS,   // ✅ [ARCH-CTRL-01] مُصدَّر
+  buildCookieConfiguration,
   parseExpireToMs,
 };

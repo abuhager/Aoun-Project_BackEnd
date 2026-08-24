@@ -53,12 +53,14 @@ test('يطبع أرقام الأردن إلى E.164 ويقبل عقد التسج
   assert.equal(req.body.phone, '+962791234567');
 });
 
-test('عقد reset-password لا يطلب التوكن داخل body', async () => {
+test('عقد reset-password يرسل التوكن داخل JSON body لا داخل API URL', async () => {
+  const token = 'a'.repeat(64);
   const { req, response } = await runValidation('resetPassword', {
+    token,
     password: 'AnotherPass2',
   });
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(req.body, { password: 'AnotherPass2' });
+  assert.deepEqual(req.body, { token, password: 'AnotherPass2' });
 });
 
 test('كل Refresh Token فريد ويحمل رقم نسخة الجلسة', () => {

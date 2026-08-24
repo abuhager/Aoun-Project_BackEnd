@@ -1,25 +1,10 @@
 // middlewares/upload.js ✅ مصحّح — فحص Magic Bytes
 const multer = require('multer');
-
-const MAX_SIZE = parseInt(process.env.UPLOAD_MAX_SIZE_BYTES || String(5 * 1024 * 1024));
-
-// Magic bytes للصور المسموحة فقط
-// المصدر: https://en.wikipedia.org/wiki/List_of_file_signatures
-const MAGIC_BYTES = {
-  'image/jpeg': [
-    [0xFF, 0xD8, 0xFF],            // JPEG
-  ],
-  'image/jpg': [
-    [0xFF, 0xD8, 0xFF],
-  ],
-  'image/png': [
-    [0x89, 0x50, 0x4E, 0x47],     // PNG: ‰PNG
-  ],
-  'image/webp': [
-    // RIFF....WEBP
-    null,                           // سنتحقق بطريقة مختلفة أدناه
-  ],
-};
+const AppError = require('../utils/AppError');
+const {
+  ALLOWED_IMAGE_TYPES,
+  MAX_IMAGE_SIZE,
+} = require('../utils/imageValidation');
 
 /**
  * يتحقق من Magic Bytes الفعلية للملف
@@ -32,7 +17,6 @@ const verifyMagicBytes = (buffer, mimetype) => {
 
   switch (mimetype) {
     case 'image/jpeg':
-    case 'image/jpg':
       // يبدأ بـ FF D8 FF
       return buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF;
 
@@ -58,42 +42,65 @@ const verifyMagicBytes = (buffer, mimetype) => {
   }
 };
 
-const ALLOWED_MIMETYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-
 const fileFilter = (_req, file, cb) => {
-  // ✅ فحص أولي على الـ mimetype المُعلَن
-  if (!ALLOWED_MIMETYPES.includes(file.mimetype)) {
+  if (
+    typeof file.originalname !== 'string'
+    || Buffer.byteLength(file.originalname, 'utf8') > 255
+    || /[\0\r\n]/.test(file.originalname)
+  ) {
     return cb(
-      new Error('نوع الملف غير مدعوم — الصور المسموحة: JPEG, PNG, WEBP فقط'),
+      new AppError('اسم الملف غير صالح', 400, 'INVALID_FILE_NAME'),
       false
     );
   }
-  // ✅ الـ Magic Bytes سيُفحص في authService بعد رفع الملف للذاكرة
-  // (multer يحتاج الـ buffer أولاً — نفحصه في الـ controller)
-  cb(null, true);
+
+  if (!ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
+    return cb(
+      new AppError(
+        'نوع الملف غير مدعوم — الصور المسموحة: JPEG, PNG, WEBP فقط',
+        415,
+        'INVALID_IMAGE_TYPE'
+      ),
+      false
+    );
+  }
+  return cb(null, true);
 };
 
 const upload = multer({
-  storage:    multer.memoryStorage(),
-  limits:     { fileSize: MAX_SIZE, files: 1 },
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: MAX_IMAGE_SIZE,
+    files: 1,
+    fields: 12,
+    parts: 13,
+    fieldSize: 16 * 1024,
+    fieldNameSize: 100,
+  },
   fileFilter,
 });
 
 // ✅ Middleware إضافي يُستدعى بعد upload.single()
 // يتحقق من Magic Bytes بعد تحميل الملف في الذاكرة
-const verifyImageBuffer = (req, res, next) => {
+const verifyImageBuffer = (req, _res, next) => {
   if (!req.file) return next(); // لا ملف → تمرير للـ controller
 
   const { buffer, mimetype } = req.file;
 
   if (!verifyMagicBytes(buffer, mimetype)) {
-    return res.status(400).json({
-      msg:  'محتوى الملف لا يتطابق مع نوعه المُعلَن 🚫',
-      code: 'INVALID_FILE_CONTENT',
-    });
+    return next(new AppError(
+      'محتوى الملف لا يتطابق مع نوعه المُعلَن 🚫',
+      400,
+      'INVALID_FILE_CONTENT'
+    ));
   }
 
-  next();
+  return next();
 };
 
-module.exports = { upload, verifyImageBuffer };
+module.exports = {
+  fileFilter,
+  upload,
+  verifyImageBuffer,
+  verifyMagicBytes,
+};
