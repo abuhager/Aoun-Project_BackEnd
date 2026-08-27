@@ -21,10 +21,10 @@ exports.findWithPhoneOtp = (userId) =>
 /** بعد التحقق الناجح — احذف OTP وارفع trustLevel */
 exports.confirmPhoneVerified = (userId, phone) =>
   User.findByIdAndUpdate(userId, {
-    $set:   { phone, trustLevel: 2, isVerifiedPhone: true },
+    $set:   { phone, trustLevel: 2, phoneVerified: true },
     $unset: { phoneOtp: '', phoneOtpExpiry: '', phoneOtpSentAt: '' },
-  });
+  }, { new: true, runValidators: true });
 
 /** تحقق هل الهاتف مسجّل مسبقاً لمستخدم آخر */
 exports.findByPhone = (phone) =>
-  User.findOne({ phone }).select('_id').lean();
+  User.findOne({ phone, phoneVerified: true }).select('_id').lean();

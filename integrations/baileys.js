@@ -9,12 +9,28 @@ const {
   useMultiFileAuthState,
   DisconnectReason,
 } = require('@whiskeysockets/baileys');
-const { Boom } = require('@hapi/boom');
 const AppError = require('../utils/AppError');
+const SystemSettings = require('../models/SystemSettings');
 
 let sock          = null;
 let isConnecting  = false; // ✅ NJ-17: حماية من reconnect storm
 let reconnectTimer = null;
+
+const cleanPhone = (phone) => {
+  let normalized = String(phone ?? '').replace(/[\s\-().]/g, '');
+  normalized = normalized.replace(/^\+|^00/, '');
+  if (/^07\d{8}$/.test(normalized)) normalized = `962${normalized.slice(1)}`;
+  return normalized;
+};
+
+const getPlatformName = async () => {
+  try {
+    const settings = await SystemSettings.getCached();
+    return settings?.platformName ?? process.env.PLATFORM_NAME ?? 'عون';
+  } catch {
+    return process.env.PLATFORM_NAME ?? 'عون';
+  }
+};
 
 // ── ✅ NJ-17: Reconnect مع حماية ─────────────────────────────
 async function connectToWhatsApp() {
@@ -39,25 +55,32 @@ async function connectToWhatsApp() {
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
-      isConnecting = false;
-
       if (connection === 'open') {
+        isConnecting = false;
         console.log('[Baileys] ✅ متصل بواتساب بنجاح');
         if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
       }
 
       if (connection === 'close') {
-        const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
+        isConnecting = false;
+        sock = null;
+        const reason = lastDisconnect?.error?.output?.statusCode
+          ?? lastDisconnect?.error?.statusCode;
         const shouldReconnect = reason !== DisconnectReason.loggedOut;
 
         console.warn(`[Baileys] ⚠️ انقطع الاتصال — سبب: ${reason}`);
 
         if (shouldReconnect) {
-          // ✅ NJ-17: تأخير 5 ثوانٍ قبل إعادة المحاولة
-          reconnectTimer = setTimeout(() => connectToWhatsApp(), 5_000);
+          if (!reconnectTimer) {
+            // ✅ NJ-17: تأخير 5 ثوانٍ قبل إعادة المحاولة
+            reconnectTimer = setTimeout(() => {
+              reconnectTimer = null;
+              void connectToWhatsApp();
+            }, 5_000);
+            reconnectTimer.unref?.();
+          }
         } else {
           console.error('[Baileys] 🔒 تم تسجيل الخروج — يجب مسح auth_info يدوياً');
-          sock = null;
         }
       }
     });
@@ -78,17 +101,26 @@ exports.sendWhatsAppOtp = async (phone, otp) => {
     );
   }
 
-  const cleanPhone = String(phone).replace(/^\\+|^00|\\s|-/g, '');
-  const jid = `${cleanPhone}@s.whatsapp.net`;
+  const normalizedPhone = cleanPhone(phone);
+  if (!/^\d{7,15}$/.test(normalizedPhone)) {
+    throw new AppError('رقم الهاتف غير صالح لإرسال OTP', 400, 'INVALID_PHONE');
+  }
+  if (!/^\d{6}$/.test(String(otp))) {
+    throw new AppError('رمز OTP غير صالح', 400, 'INVALID_OTP');
+  }
 
-  await sock.send_message(jid, {
-    text: `🔐 رمز التحقق في منصة *${PLATFORM_NAME}*: *${otp}*\n⏱️ صالح 10 دقائق فقط.\n⚠️ لا تشاركه مع أحد.`,
+  const jid = `${normalizedPhone}@s.whatsapp.net`;
+  const platformName = await getPlatformName();
+
+  await sock.sendMessage(jid, {
+    text: `🔐 رمز التحقق في منصة *${platformName}*: *${otp}*\n⏱️ صالح 10 دقائق فقط.\n⚠️ لا تشاركه مع أحد.`,
   });
 };
 
 // ✅ NJ-15 FIX: لا auto-connect عند require() — يجب استدعاؤها صراحةً
 // في server.js أو app.js:  require('./integrations/baileys').connect();
 exports.connect = connectToWhatsApp;
+exports._private = { cleanPhone, getPlatformName };
 
 // ✅ للاستخدام المحلي فقط — تحقق من البيئة قبل الاتصال التلقائي
 if (process.env.NODE_ENV === 'development' && process.env.USE_BAILEYS === 'true') {

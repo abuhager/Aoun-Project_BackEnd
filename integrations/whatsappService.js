@@ -1,11 +1,32 @@
 // integrations/whatsappService.js
 const axios          = require('axios');
 const SystemSettings = require('../models/SystemSettings'); // ✅ إضافة
+const AppError       = require('../utils/AppError');
 
-const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_ID;
-const ACCESS_TOKEN    = process.env.WHATSAPP_TOKEN;
 const API_VERSION     = 'v20.0';
 const BASE_URL        = `https://graph.facebook.com/${API_VERSION}`;
+
+const getConfig = () => {
+  const phoneNumberId = process.env.WHATSAPP_PHONE_ID;
+  const accessToken = process.env.WHATSAPP_TOKEN;
+  const configuredUrl = process.env.WHATSAPP_API_URL;
+  let apiUrl = '';
+  if (configuredUrl?.includes('{PHONE_NUMBER_ID}')) {
+    apiUrl = phoneNumberId
+      ? configuredUrl.replace('{PHONE_NUMBER_ID}', phoneNumberId)
+      : '';
+  } else if (configuredUrl) {
+    apiUrl = configuredUrl;
+  } else if (phoneNumberId) {
+    apiUrl = `${BASE_URL}/${phoneNumberId}/messages`;
+  }
+
+  return {
+    enabled: process.env.WHATSAPP_ENABLED === 'true',
+    accessToken,
+    apiUrl,
+  };
+};
 
 // ✅ جلب platformName من DB مع Cache
 const getPlatformName = async () => {
@@ -44,7 +65,11 @@ const withRetry = async (fn, retries = 2, delayMs = 500) => {
 
 // ── إرسال رسالة نصية ─────────────────────────────────────────
 const sendText = async (to, text) => {
-  if (!PHONE_NUMBER_ID || !ACCESS_TOKEN) {
+  const { enabled, accessToken, apiUrl } = getConfig();
+  if (!enabled) {
+    return { success: false, reason: 'DISABLED' };
+  }
+  if (!apiUrl || !accessToken) {
     console.warn('[WhatsApp] متغيرات البيئة غير مضبوطة — تخطي الإرسال');
     return { success: false, reason: 'ENV_NOT_SET' };
   }
@@ -57,7 +82,7 @@ const sendText = async (to, text) => {
 
   const { data } = await withRetry(() =>
     axios.post(
-      `${BASE_URL}/${PHONE_NUMBER_ID}/messages`,
+      apiUrl,
       {
         messaging_product: 'whatsapp',
         to:   cleanedPhone,
@@ -66,7 +91,7 @@ const sendText = async (to, text) => {
       },
       {
         headers: {
-          Authorization:  `Bearer ${ACCESS_TOKEN}`,
+          Authorization:  `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
         timeout: 10_000,
@@ -99,12 +124,15 @@ exports.sendWhatsAppOtp = async (phone, otp) => {
       message: apiErr?.message ?? err.message,
       phone:   cleanPhone(phone),
     });
-    throw Object.assign(
-      new Error(apiErr?.message ?? 'فشل إرسال رسالة واتساب ❌'),
-      { status: 502, code: apiErr?.code ?? 'WA_SEND_FAILED' }
+    throw new AppError(
+      apiErr?.message ?? 'فشل إرسال رسالة واتساب ❌',
+      502,
+      apiErr?.code ? `WA_${apiErr.code}` : 'WA_SEND_FAILED'
     );
   }
 };
+
+exports._private = { cleanPhone, getConfig };
 
 // ── إشعار تأكيد التسليم (Non-blocking) ───────────────────────
 exports.sendDeliveryConfirmation = async (phone, itemTitle, role) => {
