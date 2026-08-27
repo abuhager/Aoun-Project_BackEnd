@@ -17,6 +17,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@faker-js/faker": "^10.6.0",
     "axios": "^1.16.1",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^2.9.0",
@@ -44,5 +45,16 @@
   },
   "overrides": {
     "uuid": "^11.1.1"
-  }
+  },
+  "directories": {
+    "test": "test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abuhager/Aoun-Project_BackEnd.git"
+  },
+  "bugs": {
+    "url": "https://github.com/abuhager/Aoun-Project_BackEnd/issues"
+  },
+  "homepage": "https://github.com/abuhager/Aoun-Project_BackEnd#readme"
 }

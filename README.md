@@ -16,18 +16,16 @@ The backend service for **Aoun**, a donation coordination platform built with No
 
 ```bash
 npm ci
-cp .env.example .env
 npm run dev
 ```
 
 On Windows PowerShell:
 
 ```powershell
-Copy-Item .env.example .env
 npm run dev
 ```
 
-Replace every `replace-with-...` value and configure Cloudinary and Brevo before testing the flows that depend on them.
+Create a local `.env` file before starting the service. The required keys are validated centrally in `config/env.js`; configure MongoDB, authentication secrets, allowed origins, Cloudinary, and Brevo before testing flows that depend on them.
 
 ## Verification
 
@@ -61,4 +59,4 @@ utils/                   Shared utilities
 
 ## Environment variables
 
-Required and optional values are documented in [`.env.example`](.env.example). Never commit `.env`, API keys, secrets, or runtime credentials.
+Local values belong in `.env`, while hosted values belong in the deployment platform's environment settings. Never commit `.env`, API keys, secrets, or runtime credentials. `config/env.js` is the source of truth for required variables and production validation rules.
