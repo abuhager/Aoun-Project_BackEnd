@@ -21,9 +21,6 @@ const sendEmail = async (options) => {
   const platformName = await getPlatformName();
   const senderName   = `منصة ${platformName} المجتمعية`;
   const senderEmail  = process.env.PLATFORM_EMAIL ?? 'aoun.help.center@gmail.com';
-  const controller   = new AbortController();
-  const timeoutId    = setTimeout(() => controller.abort(), 10_000);
-  timeoutId.unref?.();
 
   try {
     const body = {
@@ -45,7 +42,6 @@ const sendEmail = async (options) => {
         'content-type': 'application/json',
       },
       body: JSON.stringify(body),
-      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -65,8 +61,6 @@ const sendEmail = async (options) => {
       message: error.message,
       to:      options.email,
     });
-  } finally {
-    clearTimeout(timeoutId);
   }
 };
 

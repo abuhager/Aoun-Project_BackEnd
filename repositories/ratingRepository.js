@@ -3,38 +3,25 @@ const Rating = require('../models/Rating');
 const Item   = require('../models/Item');
 const User   = require('../models/User');
 
-const withSession = (query, session) => (
-  session ? query.session(session) : query
-);
-
 // اختيار الحقول المطلوبة فقط للأداء وعدم جلب بيانات ضخمة
-exports.findItemById = (itemId, session = null) =>
-  withSession(
-    Item.findById(itemId).select('donor bookedBy status title isRated'),
-    session
-  );
+exports.findItemById = (itemId) =>
+  Item.findById(itemId)
+    .select('donor bookedBy status title isRated');
 
-exports.findExistingRating = ({ itemId, raterId }, session = null) =>
-  withSession(Rating.findOne({ item: itemId, rater: raterId }), session);
+exports.findExistingRating = ({ itemId, raterId }) =>
+  Rating.findOne({ item: itemId, rater: raterId });
 
-exports.createRating = async (payload, session = null) => {
-  if (!session) return Rating.create(payload);
-  const [rating] = await Rating.create([payload], { session });
-  return rating;
-};
+exports.createRating = (payload) =>
+  Rating.create(payload);
 
-exports.markItemRated = (itemId, session = null) =>
-  Item.findByIdAndUpdate(
-    itemId,
-    { isRated: true },
-    { new: true, runValidators: true, ...(session ? { session } : {}) }
-  );
+exports.markItemRated = (itemId) =>
+  Item.findByIdAndUpdate(itemId, { isRated: true }, { new: true });
 
-exports.incrementUserTrustScore = (userId, trustDelta, session = null) =>
+exports.incrementUserTrustScore = (userId, trustDelta) =>
   User.findByIdAndUpdate(
     userId,
     { $inc: { trustScore: trustDelta } },
-    { new: true, runValidators: true, ...(session ? { session } : {}) }
+    { new: true }
   );
 
 exports.findRatingsForUser = (userId) =>

@@ -1,52 +1,64 @@
 # Aoun Backend
 
-Backend service for **Aoun**, an experimental full-stack donation platform built to demonstrate secure, organized donation workflows between donors and recipients.
+The backend service for **Aoun**, a donation coordination platform built with Node.js, Express, MongoDB, and Socket.IO. It provides REST APIs and real-time events for donation items, needs and offers, bookings, handovers, conversations, notifications, profiles, reports, and administration.
 
-Aoun is a personal technical project. It is not presented as a production service with real users.
+> Current status: the core product flows are complete. The project is undergoing cleanup, testing, and production-readiness work before a limited pilot. This repository does not ship demo credentials or a database-wiping seed script.
 
-## Overview
+## Requirements
 
-The backend is built with Node.js and Express.js. It provides REST APIs, real-time events through Socket.IO, authentication and authorization workflows, donation management, safe-hub coordination, notifications, reporting, and administrative tools.
+- Node.js 20.19 or newer
+- Local MongoDB or MongoDB Atlas
+- Cloudinary for image uploads
+- Brevo for account verification and password-reset emails
+- Redis for shared rate limiting when production runs more than one server instance
 
-The codebase follows a layered architecture to separate request handling, business rules, data access, validation, and shared utilities.
+## Local setup
 
-## Tech Stack
+```bash
+npm ci
+cp .env.example .env
+npm run dev
+```
 
-- Node.js
-- Express.js
-- MongoDB and Mongoose
-- Socket.IO
-- JWT authentication
-- Cookie-based request handling
-- Helmet, CORS, and rate limiting
-- Cloudinary and other external integrations where configured
+On Windows PowerShell:
 
-## Main Features
+```powershell
+Copy-Item .env.example .env
+npm run dev
+```
 
-- User registration, login, account verification, password reset, and phone authentication flows
-- JWT-based authentication and role-based authorization
-- Donation item and donation-request management
-- Safe Hub management for direct public handovers
-- Double-confirmation handover workflow between donor and recipient
-- Real-time conversations, notifications, and application events using Socket.IO
-- Ratings, leaderboards, reports, moderation, and admin settings
-- Validation and authorization for state-changing requests
+Replace every `replace-with-...` value and configure Cloudinary and Brevo before testing the flows that depend on them.
 
-## Architecture
+## Verification
 
-.
-├── app.js
-├── server.js
-├── config/
-├── controllers/
-├── dtos/
-├── integrations/
-├── jobs/
-├── middlewares/
-├── models/
-├── repositories/
-├── routes/
-├── scripts/
-├── services/
-├── socket/
-└── utils/
+```bash
+npm run verify
+```
+
+- `check` performs a syntax check across every current JavaScript file.
+- `test` runs contract, flow, security, and regression tests.
+- `verify` runs both checks in sequence.
+- `db:indexes` synchronizes the required MongoDB indexes using the active environment.
+
+## Project structure
+
+```text
+app.js / server.js       Express composition and HTTP/Socket.IO startup
+config/                  Environment, MongoDB, CORS, and Cloudinary
+controllers/             HTTP request handlers
+dtos/                    Privacy-safe response contracts
+integrations/            Active third-party integrations
+jobs/                    Scheduled background jobs
+middlewares/             Authentication, validation, security, and uploads
+models/                  Mongoose schemas
+repositories/            Data access
+routes/                  REST routes
+services/                Business rules
+socket/                  Authentication, contracts, and real-time chat
+test/                    Flow and regression tests
+utils/                   Shared utilities
+```
+
+## Environment variables
+
+Required and optional values are documented in [`.env.example`](.env.example). Never commit `.env`, API keys, secrets, or runtime credentials.

@@ -18,6 +18,7 @@ const {
   deleteFromCloudinary,
 } = require('../utils/uploadToCloudinary');
 const notifyUser             = require('../utils/notifyUser');
+const escapeRegex            = require('../utils/escapeRegex');
 const { validateImageFile }  = require('../utils/imageValidation');
 const { toPublicItem, toDonorItem, toReceiverItem } = require('../dtos/itemDto');
 const { buildGamificationProfile } = require('../utils/gamification');
@@ -91,10 +92,6 @@ const findNextEligibleWaitlistCandidate = async (
 
   return { candidate: null, skippedUserIds };
 };
-
-// ✅ SEC-01: escapeRegex يمنع ReDoS
-const escapeRegex = (str = '') =>
-  String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').slice(0, 100);
 
 const isAdminRole = (role) => ['admin', 'super_admin'].includes(role);
 

@@ -240,7 +240,7 @@ test('رسائل production لا تسرّب أكواد أو تفاصيل أخط�
   }
 });
 
-test('reset token لا يوجد في API path وملفات اعتماد Baileys مستثناة من Git', () => {
+test('reset token لا يوجد في API path وملفات اعتماد التشغيل المحلية مستثناة من Git', () => {
   const authRoutes = read('routes/auth.js');
   const emailService = read('services/emailService.js');
   const gitignore = read('.gitignore');
@@ -250,5 +250,5 @@ test('reset token لا يوجد في API path وملفات اعتماد Baileys 
   assert.match(authRoutes, /requireTrustedBrowserRequest/);
   assert.match(emailService, /reset-password#token=/);
   assert.match(gitignore, /auth_info\//);
+  assert.match(gitignore, /\.runtime\//);
 });
-

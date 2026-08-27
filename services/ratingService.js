@@ -1,5 +1,4 @@
 // services/ratingService.js
-const mongoose         = require('mongoose');
 const ratingRepository = require('../repositories/ratingRepository');
 const SystemSettings   = require('../models/SystemSettings');
 const notifyUser       = require('../utils/notifyUser');
@@ -15,89 +14,60 @@ const calcTrustDelta = (score, s) => {
 };
 
 exports.submitRating = async ({ itemId, raterId, score, comment }) => {
-  const settings = await SystemSettings.getCached();
-  const session = await mongoose.startSession();
-  let committed;
+  const [item, settings] = await Promise.all([
+    ratingRepository.findItemById(itemId),
+    SystemSettings.getCached(),
+  ]);
 
-  try {
-    session.startTransaction();
+  if (!item)
+    throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
 
-    const item = await ratingRepository.findItemById(itemId, session);
-    if (!item)
-      throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+  if (item.status !== 'تم التسليم')
+    throw new AppError('لا يمكن التقييم قبل تأكيد التسليم', 400, 'ITEM_NOT_DELIVERED');
 
-    if (item.status !== 'تم التسليم')
-      throw new AppError('لا يمكن التقييم قبل تأكيد التسليم', 400, 'ITEM_NOT_DELIVERED');
+  const isDonor    = item.donor?.toString()    === raterId.toString();
+  const isReceiver = item.bookedBy?.toString() === raterId.toString();
 
-    const isDonor    = item.donor?.toString()    === raterId.toString();
-    const isReceiver = item.bookedBy?.toString() === raterId.toString();
+  if (!isDonor && !isReceiver)
+    throw new AppError('فقط المتبرع أو المستلم يمكنه تقييم هذا الغرض', 403, 'NOT_PARTICIPANT');
 
-    if (!isDonor && !isReceiver)
-      throw new AppError('فقط المتبرع أو المستلم يمكنه تقييم هذا الغرض', 403, 'NOT_PARTICIPANT');
+  const ratee = isDonor ? item.bookedBy : item.donor;
 
-    const ratee = isDonor ? item.bookedBy : item.donor;
-    if (!ratee)
-      throw new AppError('لا يوجد طرف آخر صالح للتقييم لهذا الغرض', 400, 'RATEE_NOT_FOUND');
+  if (!ratee)
+    throw new AppError('لا يوجد طرف آخر صالح للتقييم لهذا الغرض', 400, 'RATEE_NOT_FOUND');
 
-    if (ratee.toString() === raterId.toString())
-      throw new AppError('لا يمكنك تقييم نفسك', 400, 'SELF_RATING');
+  // حماية ضد تقييم النفس
+  if (ratee.toString() === raterId.toString())
+    throw new AppError('لا يمكنك تقييم نفسك', 400, 'SELF_RATING');
 
-    const exists = await ratingRepository.findExistingRating({ itemId, raterId }, session);
-    if (exists)
-      throw new AppError('لقد قيّمت هذا الغرض مسبقاً ✅', 409, 'ALREADY_RATED');
+  const exists = await ratingRepository.findExistingRating({ itemId, raterId });
+  if (exists)
+    throw new AppError('لقد قيّمت هذا الغرض مسبقاً ✅', 409, 'ALREADY_RATED');
 
-    const trustDelta = calcTrustDelta(score, settings);
-    const rating = await ratingRepository.createRating({
-      item: itemId,
-      rater: raterId,
-      ratee,
-      score,
-      comment: comment ?? '',
-      isHandoverConfirmed: true,
-      trustDelta,
-    }, session);
+  const trustDelta = calcTrustDelta(score, settings);
 
-    const updatedItem = await ratingRepository.markItemRated(itemId, session);
-    if (!updatedItem)
-      throw new AppError('تعذر تحديث حالة تقييم الغرض', 409, 'RATING_ITEM_UPDATE_FAILED');
+  const rating = await ratingRepository.createRating({
+    item: itemId,
+    rater: raterId,
+    ratee,
+    score,
+    comment: comment ?? '',
+    isHandoverConfirmed: true,
+    trustDelta,
+  });
 
-    const updatedRatee = await ratingRepository.incrementUserTrustScore(
-      ratee,
-      trustDelta,
-      session
-    );
-    if (!updatedRatee)
-      throw new AppError('المستخدم المستفيد من التقييم غير موجود', 409, 'RATEE_NOT_FOUND');
-
-    await session.commitTransaction();
-    committed = {
-      rating,
-      ratee,
-      itemId: item._id,
-      itemTitle: item.title,
-    };
-  } catch (error) {
-    if (session.inTransaction()) await session.abortTransaction();
-    if (error?.code === 11000) {
-      throw new AppError('لقد قيّمت هذا الغرض مسبقاً ✅', 409, 'ALREADY_RATED');
-    }
-    throw error;
-  } finally {
-    await session.endSession();
-  }
-
-  try {
-    await notifyUser(committed.ratee, {
+  await Promise.all([
+    ratingRepository.markItemRated(itemId),
+    ratingRepository.incrementUserTrustScore(ratee, trustDelta),
+    notifyUser(ratee, {
       type:   'new_rating',
       title:  'حصلت على تقييم جديد ⭐',
-      body:   `تقييمك على "${committed.itemTitle}": ${score}/10`,
-      itemId: committed.itemId,
-    });
-  } catch (error) {
-    console.error('[ratingService] تعذر إرسال إشعار التقييم بعد حفظه:', error.message);
-  }
+      body:   `تقييمك على "${item.title}": ${score}/10`,
+      itemId: item._id,
+    }),
+  ]);
 
-  return committed.rating;
+  return rating;
 };
 
 exports.getUserRatings = async (userId) => {
