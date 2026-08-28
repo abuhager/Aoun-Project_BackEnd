@@ -38,6 +38,8 @@ const messageSchema = new mongoose.Schema(
 messageSchema.index({ conversation: 1, createdAt: 1 });
 // Speeds up unread-count queries (conversation + sender + read)
 messageSchema.index({ conversation: 1, sender: 1, read: 1 });
+// Navbar unread total filters equality fields before excluding the current sender.
+messageSchema.index({ conversation: 1, read: 1, sender: 1 });
 // Socket retries with the same client id must not create duplicate messages.
 messageSchema.index(
   { conversation: 1, sender: 1, clientMessageId: 1 },

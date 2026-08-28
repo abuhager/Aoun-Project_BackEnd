@@ -4,7 +4,7 @@ const Conversation = require('../models/Conversation');
 const Message = require('../models/Message');
 const Notification = require('../models/Notification');
 
-const POPULATE_ITEM = 'title images imageUrl status donor bookedBy';
+const POPULATE_ITEM = 'title imageUrl status donor bookedBy';
 const POPULATE_USER = 'name avatar';
 const DEFAULT_MESSAGE_PAGE_SIZE = 50;
 
@@ -54,6 +54,22 @@ exports.findUserConversations = async (userId) => (
     .sort({ lastMessageAt: -1, updatedAt: -1 })
     .lean()
 );
+
+exports.countUnreadForUser = async (userId) => {
+  const actualUserId = toObjectId(userId);
+  const conversationIds = await Conversation.distinct(
+    '_id',
+    { participants: actualUserId }
+  );
+
+  if (!conversationIds.length) return 0;
+
+  return Message.countDocuments({
+    conversation: { $in: conversationIds },
+    sender: { $ne: actualUserId },
+    read: false,
+  });
+};
 
 exports.isParticipant = (conversation, userId) => (
   (conversation?.participants || []).some((participant) => {

@@ -103,6 +103,10 @@ const indexGroups = [
         name: 'conversation_1_sender_1_read_1',
       },
       {
+        key: { conversation: 1, read: 1, sender: 1 },
+        name: 'conversation_1_read_1_sender_1',
+      },
+      {
         key: { conversation: 1, sender: 1, clientMessageId: 1 },
         unique: true,
         partialFilterExpression: { clientMessageId: { $type: 'string' } },

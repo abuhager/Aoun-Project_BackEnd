@@ -138,7 +138,7 @@ exports.findPendingReportsWithCounts = async ({
   // ✅ FIX BUG-06: إذا status=null لا نُقيّد الـ $match بأي حالة
   const matchStage = status ? { status } : {};
 
-  const reports = await Report.aggregate([
+  const reportsQuery = Report.aggregate([
     { $match: matchStage },
     { $sort:  { createdAt: -1 } },
     { $skip:  skip },
@@ -182,49 +182,20 @@ exports.findPendingReportsWithCounts = async ({
         let:  { uid: '$reportedUser' },
         pipeline: [
           { $match: { $expr: { $eq: ['$reportedUser', '$$uid'] } } },
-          { $count: 'total' },
-        ],
-        as: 'totalReportsLookup',
-      },
-    },
-    {
-      $lookup: {
-        from: 'reports',
-        let:  { uid: '$reportedUser' },
-        pipeline: [
           {
-            $match: {
-              $expr: {
-                $and: [
-                  { $eq: ['$reportedUser', '$$uid'] },
-                  { $eq: ['$status', 'pending'] },
-                ],
+            $group: {
+              _id: null,
+              total: { $sum: 1 },
+              pending: {
+                $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] },
+              },
+              actioned: {
+                $sum: { $cond: [{ $eq: ['$status', 'actioned'] }, 1, 0] },
               },
             },
           },
-          { $count: 'total' },
         ],
-        as: 'pendingReportsLookup',
-      },
-    },
-    {
-      $lookup: {
-        from: 'reports',
-        let:  { uid: '$reportedUser' },
-        pipeline: [
-          {
-            $match: {
-              $expr: {
-                $and: [
-                  { $eq: ['$reportedUser', '$$uid'] },
-                  { $eq: ['$status', 'actioned'] },
-                ],
-              },
-            },
-          },
-          { $count: 'total' },
-        ],
-        as: 'actionedReportsLookup',
+        as: 'reportStatsLookup',
       },
     },
     {
@@ -233,17 +204,17 @@ exports.findPendingReportsWithCounts = async ({
         reportedUser: { $arrayElemAt: ['$reportedUserData', 0] },
         relatedItem:  { $arrayElemAt: ['$relatedItemData',  0] },
         totalReportsAgainstUser: {
-          $ifNull: [{ $arrayElemAt: ['$totalReportsLookup.total',   0] }, 0],
+          $ifNull: [{ $arrayElemAt: ['$reportStatsLookup.total', 0] }, 0],
         },
         pendingReportsAgainstUser: {
-          $ifNull: [{ $arrayElemAt: ['$pendingReportsLookup.total', 0] }, 0],
+          $ifNull: [{ $arrayElemAt: ['$reportStatsLookup.pending', 0] }, 0],
         },
         actionedReportsAgainstUser: {
-          $ifNull: [{ $arrayElemAt: ['$actionedReportsLookup.total', 0] }, 0],
+          $ifNull: [{ $arrayElemAt: ['$reportStatsLookup.actioned', 0] }, 0],
         },
         isRepeatOffender: {
           $gte: [
-            { $ifNull: [{ $arrayElemAt: ['$actionedReportsLookup.total', 0] }, 0] },
+            { $ifNull: [{ $arrayElemAt: ['$reportStatsLookup.actioned', 0] }, 0] },
             repeatOffenderThreshold,
           ],
         },
@@ -251,17 +222,18 @@ exports.findPendingReportsWithCounts = async ({
     },
     {
       $project: {
-        totalReportsLookup:   0,
-        pendingReportsLookup: 0,
-        actionedReportsLookup: 0,
-        reporterData:         0,
-        reportedUserData:     0,
-        relatedItemData:      0,
+        reportStatsLookup: 0,
+        reporterData:      0,
+        reportedUserData:  0,
+        relatedItemData:   0,
       },
     },
-  // ✅ FIX BUG-05: حد زمني لحماية الـ DB من الـ slow queries
-  ]).option({ maxTimeMS: 10000 });
+  ]);
 
-  const total = await Report.countDocuments(matchStage);
+  // شغّل بيانات الصفحة والعدد الكلي بالتوازي؛ لا يعتمد أي منهما على الآخر.
+  const [reports, total] = await Promise.all([
+    reportsQuery.option({ maxTimeMS: 10000 }),
+    Report.countDocuments(matchStage),
+  ]);
   return { reports, total };
 };

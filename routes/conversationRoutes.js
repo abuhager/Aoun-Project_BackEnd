@@ -8,6 +8,8 @@ const router = express.Router();
 
 router.use(auth.requireAuth);
 
+router.get('/unread-count', controller.getUnreadCount);
+
 router
   .route("/")
   .get(controller.listConversations)

@@ -45,6 +45,12 @@ exports.listConversationsLogic = async (userId) => {
   ));
 };
 
+exports.getUnreadCountLogic = async (userId) => {
+  assertObjectId(userId, 'المستخدم');
+  const unreadCount = await repo.countUnreadForUser(userId);
+  return { unreadCount };
+};
+
 exports.openConversationLogic = async ({ itemId, userId, targetUserId = null, donorId, io }) => {
   assertObjectId(itemId, 'الغرض');
   assertObjectId(userId, 'المستخدم');

@@ -312,6 +312,17 @@ test('فهرس البلاغ المفتوح جزئي وقابل للترقية د
   assert.match(ensureIndexes, /replaceIfDifferent:\s*true/);
 });
 
+test('تجميع تقارير الإدارة يحسب العدادات بمرور واحد ويوازي العدد الكلي', () => {
+  const source = readSource('../repositories/adminRepository.js');
+  const section = source.slice(source.indexOf('exports.findPendingReportsWithCounts'));
+
+  assert.equal((section.match(/from:\s*'reports'/g) || []).length, 1);
+  assert.match(section, /reportStatsLookup/);
+  assert.match(section, /pending:\s*\{[\s\S]*\$cond/);
+  assert.match(section, /actioned:\s*\{[\s\S]*\$cond/);
+  assert.match(section, /Promise\.all\(\[[\s\S]*reportsQuery\.option[\s\S]*Report\.countDocuments/);
+});
+
 test('لوحة التبرعات لا تعرض اعتراضاً على بلاغ موجّه إلى الطرف الآخر', () => {
   const itemRepositorySource = readSource('../repositories/itemRepository.js');
   const controllerSource = readSource('../controllers/reportController.js');

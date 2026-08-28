@@ -13,6 +13,11 @@ exports.listConversations = catchAsync(async (req, res) => {
   });
 });
 
+exports.getUnreadCount = catchAsync(async (req, res) => {
+  const data = await conversationService.getUnreadCountLogic(currentUserId(req));
+  res.status(200).json({ status: 'success', data });
+});
+
 exports.openConversation = catchAsync(async (req, res) => {
   const data = await conversationService.openConversationLogic({
     itemId: req.body.itemId,

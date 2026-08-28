@@ -141,6 +141,33 @@ test('Controller يعيد DTO الخدمة مرة واحدة دون تحويل �
   assert.equal(responseBody.results, 1);
 });
 
+test('عداد Navbar يجلب رقماً خفيفاً دون تحميل DTOs المحادثات', async (t) => {
+  const original = repo.countUnreadForUser;
+  t.after(() => { repo.countUnreadForUser = original; });
+
+  repo.countUnreadForUser = async (userId) => {
+    assert.equal(userId, OWNER_ID);
+    return 7;
+  };
+
+  assert.deepEqual(
+    await conversationService.getUnreadCountLogic(OWNER_ID),
+    { unreadCount: 7 }
+  );
+
+  const repositorySource = fs.readFileSync(
+    path.join(__dirname, '../repositories/conversationRepository.js'),
+    'utf8'
+  );
+  const countSection = repositorySource.slice(
+    repositorySource.indexOf('exports.countUnreadForUser'),
+    repositorySource.indexOf('exports.isParticipant')
+  );
+  assert.match(countSection, /Conversation\.distinct\(/);
+  assert.match(countSection, /Message\.countDocuments\(/);
+  assert.doesNotMatch(countSection, /populateConversation|\.populate\(/);
+});
+
 test('Socket لا يعامل itemId كبديل خفي لمعرّف المحادثة', async (t) => {
   const original = repo.findConversationById;
   t.after(() => { repo.findConversationById = original; });
@@ -300,6 +327,7 @@ test('Routes تتحقق من body ومعرّف المحادثة ولا توفر 
   );
   assert.match(source, /validateBody\('openConversation'\)/);
   assert.match(source, /validateObjectId\('conversationId'\)/);
+  assert.match(source, /router\.get\('\/unread-count', controller\.getUnreadCount\)/);
   assert.doesNotMatch(source, /messages[^;]*\.post\(/s);
 });
 
