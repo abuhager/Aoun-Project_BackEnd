@@ -1,62 +1,102 @@
 # Aoun Backend
 
-The backend service for **Aoun**, a donation coordination platform built with Node.js, Express, MongoDB, and Socket.IO. It provides REST APIs and real-time events for donation items, needs and offers, bookings, handovers, conversations, notifications, profiles, reports, and administration.
+خدمة REST وSocket.IO لمنصة **عون**، وهي منصة عربية لتنظيم التبرعات العينية وطلبات الاحتياج والحجز والتسليم والمحادثات والإشراف.
 
-> Current status: the core product flows are complete. The project is undergoing cleanup, testing, and production-readiness work before a limited pilot. This repository does not ship demo credentials or a database-wiping seed script.
+> حالة المشروع: الوظائف الأساسية مكتملة، ويجري تجهيز MVP لتجربة محدودة. بيانات Demo مخصصة للاختبار والعرض ولا تمثل مستخدمين أو شراكات حقيقية.
 
-## Requirements
+## المتطلبات
 
-- Node.js 20.19 or newer
-- Local MongoDB or MongoDB Atlas
-- Cloudinary for image uploads
-- Brevo for account verification and password-reset emails
-- Redis for shared rate limiting when production runs more than one server instance
+- Node.js 20.19 أو أحدث.
+- MongoDB محلي أو MongoDB Atlas.
+- Cloudinary لرفع الصور.
+- Brevo للتحقق من البريد واستعادة كلمة المرور.
+- Redis لتوحيد Rate Limiting عند تشغيل أكثر من نسخة في الإنتاج.
 
-## Local setup
+## التشغيل المحلي
 
 ```bash
 npm ci
 npm run dev
 ```
 
-On Windows PowerShell:
+أنشئ `.env` محليًا واضبط MongoDB وأسرار المصادقة وOrigins المسموحة وCloudinary وBrevo. لا ترفع `.env` أو أي مفتاح أو كلمة مرور إلى Git.
 
-```powershell
-npm run dev
-```
-
-Create a local `.env` file before starting the service. The required keys are validated centrally in `config/env.js`; configure MongoDB, authentication secrets, allowed origins, Cloudinary, and Brevo before testing flows that depend on them.
-
-## Verification
+## التحقق
 
 ```bash
 npm run verify
 ```
 
-- `check` performs a syntax check across every current JavaScript file.
-- `test` runs contract, flow, security, and regression tests.
-- `verify` runs both checks in sequence.
-- `db:indexes` synchronizes the required MongoDB indexes using the active environment.
+- `check`: فحص الصياغة لكل ملفات JavaScript الحالية.
+- `test`: اختبارات العقود والمسارات والأمان والانحدار.
+- `verify`: يشغّل الفحص والاختبارات بالتتابع.
+- `db:indexes`: يزامن فهارس MongoDB المطلوبة.
 
-## Project structure
+## بيانات Demo شاملة
 
-```text
-app.js / server.js       Express composition and HTTP/Socket.IO startup
-config/                  Environment, MongoDB, CORS, and Cloudinary
-controllers/             HTTP request handlers
-dtos/                    Privacy-safe response contracts
-integrations/            Active third-party integrations
-jobs/                    Scheduled background jobs
-middlewares/             Authentication, validation, security, and uploads
-models/                  Mongoose schemas
-repositories/            Data access
-routes/                  REST routes
-services/                Business rules
-socket/                  Authentication, contracts, and real-time chat
-test/                    Flow and regression tests
-utils/                   Shared utilities
+الملف `scripts/seed-mock-data.js` يتحقق أولًا من كل سجل باستخدام Mongoose ومن سلامة العلاقات، ثم يمسح قاعدة Demo كاملة ويعيد إنشاء الإعدادات والفهارس والبيانات.
+
+يغطي الـSeed حسابات المستخدمين ونقاط التسليم والأغراض بكل حالاتها والطلبات والعروض والمحادثات والرسائل والإشعارات والتقييمات والبلاغات والاعتراضات وسجل الإدارة. يبقى حسابا الطالب والمتبرع الأساسيان بلا معاملات مسبقة حتى تعمل اختبارات QA04 عليهما.
+
+**هذا الأمر هدّام لكل بيانات القاعدة المحددة في `.env`، بما فيها `SystemSettings`. لا تستخدمه على قاعدة حقيقية أو على بيانات تريد الاحتفاظ بها.**
+
+ضع في `.env` لقاعدة Demo فقط:
+
+```env
+ALLOW_MOCK_RESET=true
+MOCK_RESET_DATABASE_NAME=اسم_قاعدة_Demo_حرفيا
 ```
 
-## Environment variables
+يجب أن يطابق `MOCK_RESET_DATABASE_NAME` اسم القاعدة التي اتصل بها Mongoose حرفيًا؛ يرفض السكربت المسح عند غياب المتغير أو اختلاف الاسم.
 
-Local values belong in `.env`, while hosted values belong in the deployment platform's environment settings. Never commit `.env`, API keys, secrets, or runtime credentials. `config/env.js` is the source of truth for required variables and production validation rules.
+ثم شغّل:
+
+```bash
+npm run db:seed:mock
+```
+
+يعيد السكربت إنشاء:
+
+- 12 مستخدمًا، منها حسابات Demo الأربعة الأساسية.
+- 3 نقاط تسليم تجريبية و20 غرضًا تغطي `متاح/محجوز/تم التسليم/مخفي`.
+- 5 طلبات و6 عروض تغطي الحالات المستقرة في دورة الطلب.
+- 3 محادثات و7 رسائل و12 إشعارًا مقروءًا وغير مقروء.
+- تقييمًا بعد تسليم مؤكد، و3 بلاغات، و5 سجلات إدارة.
+- إعدادات النظام والفهارس المطلوبة بعد مسح القاعدة.
+
+حسابات Demo الأساسية تبقى كما هي:
+
+| الدور | البريد |
+| --- | --- |
+| المشرف | `mock.admin@aoun.test` |
+| الطالب | `mock.student@aoun.test` |
+| المتبرع | `mock.donor@aoun.test` |
+| متبرع العرض | `mock.donor2@aoun.test` |
+
+كلمة مرور Seed الافتراضية: `AounDemo2026!`. لا تستخدمها لحسابات حقيقية، ويمكن إدارة إظهار بطاقات الدخول من متغيرات بيئة الواجهة/الخادم دون وضع البيانات داخل الكود العام.
+
+## بنية المشروع
+
+```text
+app.js / server.js       تركيب Express وتشغيل HTTP وSocket.IO
+config/                  البيئة وMongoDB وCORS وCloudinary
+controllers/             معالجة طلبات HTTP
+dtos/                    عقود الاستجابة الآمنة للخصوصية
+integrations/            خدمات الطرف الثالث
+jobs/                    المهام المجدولة
+middlewares/             المصادقة والتحقق والأمان والرفع
+models/                  مخططات Mongoose
+repositories/            الوصول إلى البيانات
+routes/                  مسارات REST
+services/                قواعد العمل
+socket/                  المصادقة والمحادثات الفورية
+test/                    اختبارات التدفق والانحدار
+utils/                   أدوات مشتركة
+```
+
+## الإنتاج
+
+- استخدم HTTPS وأسرارًا طويلة ومنفصلة لكل بيئة.
+- اضبط Redis وCORS وCookie domains حسب النطاق المنشور.
+- فعّل نسخ MongoDB الاحتياطية ومراقبة الأخطاء قبل Pilot حقيقي.
+- راجع سياسات الخصوصية والشروط قانونيًا قبل أي تبنٍ مؤسسي واسع.

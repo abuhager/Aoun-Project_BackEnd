@@ -10,14 +10,14 @@
     "test": "node --test",
     "check": "node scripts/check-syntax.js",
     "verify": "npm run check && npm test",
-    "db:indexes": "node utils/ensureIndexes.js"
+    "db:indexes": "node utils/ensureIndexes.js",
+    "db:seed:mock": "node scripts/seed-mock-data.js"
   },
   "keywords": [],
   "author": "Adham Abu Hager",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@faker-js/faker": "^10.6.0",
     "axios": "^1.16.1",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^2.9.0",
