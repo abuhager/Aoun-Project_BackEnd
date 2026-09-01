@@ -5,6 +5,7 @@ node_modules/
 .next/
 out/
 build/
+dist/
 
 # Environment Variables (Secrets)
 .env

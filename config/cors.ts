@@ -42,7 +42,7 @@ const createCorsError = (origin) => {
     configured.length
       ? `CORS: Origin غير مصرح به — ${origin}`
       : 'CORS: لا توجد Origins مسموح بها — اضبط ALLOWED_ORIGINS'
-  );
+  ) as Error & { status?: number; code?: string };
   error.status = 403;
   error.code = configured.length ? 'CORS_ORIGIN_DENIED' : 'CORS_MISCONFIGURED';
   return error;
@@ -53,9 +53,10 @@ const corsOrigin = (origin, callback) => {
     if (isOriginAllowed(origin)) return callback(null, true);
     return callback(createCorsError(origin));
   } catch (error) {
-    error.status = 500;
-    error.code = 'CORS_MISCONFIGURED';
-    return callback(error);
+    const corsError = error as Error & { status?: number; code?: string };
+    corsError.status = 500;
+    corsError.code = 'CORS_MISCONFIGURED';
+    return callback(corsError);
   }
 };
 

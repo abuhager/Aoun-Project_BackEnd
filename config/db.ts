@@ -8,7 +8,7 @@ const buildMongoOptions = () => {
     || (!isProduction && process.env.MONGO_AUTO_INDEX !== 'false');
 
   const parsedFamily = Number.parseInt(process.env.MONGO_IP_FAMILY ?? '0', 10);
-  const options = {
+  const options: import('mongoose').ConnectOptions & { family?: 4 | 6 } = {
     maxPoolSize: parsePositiveInteger(process.env.MONGO_POOL_SIZE, 10, { max: 100 }),
     minPoolSize: parsePositiveInteger(process.env.MONGO_MIN_POOL_SIZE, 0, { min: 0, max: 20 }),
     serverSelectionTimeoutMS: parsePositiveInteger(process.env.MONGO_SERVER_SEL_TIMEOUT, 5_000),

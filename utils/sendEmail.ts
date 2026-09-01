@@ -1,6 +1,21 @@
 // utils/sendEmail.js
 const SystemSettings = require('../models/SystemSettings');
 
+type EmailOptions = {
+  email: string;
+  subject: string;
+  message: string;
+  replyTo?: string;
+};
+
+type BrevoEmailBody = {
+  sender: { name: string; email: string };
+  to: Array<{ email: string }>;
+  subject: string;
+  htmlContent: string;
+  replyTo?: { email: string };
+};
+
 // ✅ جلب platformName من DB مع Cache
 const getPlatformName = async () => {
   try {
@@ -11,7 +26,7 @@ const getPlatformName = async () => {
   }
 };
 
-const sendEmail = async (options) => {
+const sendEmail = async (options: EmailOptions) => {
   if (!process.env.BREVO_API_KEY) {
     console.warn('[sendEmail] BREVO_API_KEY غير مضبوط — تخطي إرسال الإيميل');
     return;
@@ -23,7 +38,7 @@ const sendEmail = async (options) => {
   const senderEmail  = process.env.PLATFORM_EMAIL ?? 'aoun.help.center@gmail.com';
 
   try {
-    const body = {
+    const body: BrevoEmailBody = {
       sender:      { name: senderName, email: senderEmail },
       to:          [{ email: options.email }],
       subject:     options.subject,

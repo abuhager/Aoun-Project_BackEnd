@@ -79,11 +79,11 @@ test('دورة التوكن تطلب التجديد قبل الانتهاء ثم
 
 test('الأحداث العامة تمر عبر emitter موحد ولا تستدعي singleton مباشرة', () => {
   const sources = [
-    '../services/itemService.js',
-    '../services/adminService.js',
-    '../jobs/cronJobs.js',
-    '../utils/notifyUser.js',
-    '../controllers/adminController.js',
+    '../services/itemService.ts',
+    '../services/adminService.ts',
+    '../jobs/cronJobs.ts',
+    '../utils/notifyUser.ts',
+    '../controllers/adminController.ts',
   ].map((relativePath) => fs.readFileSync(path.join(__dirname, relativePath), 'utf8'));
 
   for (const source of sources) {
@@ -97,8 +97,8 @@ test('الأحداث العامة تمر عبر emitter موحد ولا تستد
 
 test('هوية Socket تحفظ في socket.data القياسي ولا تنشئ حقولاً مخصصة', () => {
   const [authSource, chatSource] = [
-    fs.readFileSync(path.join(__dirname, '../socket/auth.js'), 'utf8'),
-    fs.readFileSync(path.join(__dirname, '../socket/chatHandlers.js'), 'utf8'),
+    fs.readFileSync(path.join(__dirname, '../socket/auth.ts'), 'utf8'),
+    fs.readFileSync(path.join(__dirname, '../socket/chatHandlers.ts'), 'utf8'),
   ];
 
   assert.match(authSource, /socket\.data =/);

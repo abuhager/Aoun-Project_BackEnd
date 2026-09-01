@@ -7,6 +7,18 @@ const { escapeHtml, getClientOrigin } = require('../services/emailService');
 const { SOCKET_EVENTS } = require('../socket/contracts');
 const { emitToUser } = require('../socket/emitter');
 
+type NotificationPayload = {
+  type?: string;
+  email?: string | null;
+  title?: string;
+  body?: string;
+  message?: string;
+  actionUrl?: string | null;
+  metadata?: Record<string, unknown> | null;
+  itemId?: unknown;
+  conversationId?: unknown;
+};
+
 const getPlatformName = async () => {
   try {
     const settings = await SystemSettings.getCached();
@@ -101,7 +113,7 @@ const toAbsoluteClientUrl = (actionUrl) => {
   }
 };
 
-async function notifyUser(userId, payload = {}) {
+async function notifyUser(userId, payload: NotificationPayload = {}) {
   const hasUserFields = userId && typeof userId === 'object' && userId._id != null;
   const actualUserId = hasUserFields ? userId._id : userId;
 

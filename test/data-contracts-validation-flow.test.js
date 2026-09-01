@@ -146,7 +146,7 @@ test('خطأ ObjectId يتبع غلاف الخطأ الموحد', () => {
 
 test('المسارات تستخدم مصدر التحقق المركزي لكل إجراءات الإدارة', () => {
   const routes = fs.readFileSync(
-    path.join(__dirname, '../routes/admin.js'),
+    path.join(__dirname, '../routes/admin.ts'),
     'utf8'
   );
   assert.match(routes, /demote[\s\S]*validateBody\('promoteUser'\)/);

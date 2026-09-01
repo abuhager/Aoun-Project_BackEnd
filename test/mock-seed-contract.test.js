@@ -99,7 +99,7 @@ test("المسح الكامل يحتاج تفعيلًا واسم Database مطا
 
 test("Seed يستخدم dropDatabase ويعيد الفهارس بعد المسح", () => {
   const source = fs.readFileSync(
-    path.join(__dirname, "../scripts/seed-mock-data.js"),
+    path.join(__dirname, "../scripts/seed-mock-data.ts"),
     "utf8"
   );
 

@@ -12,7 +12,10 @@ const normalizeLimit = (value) => {
   return Math.min(MAX_LIMIT, Math.max(1, parsed));
 };
 
-exports.getNotificationsLogic = async (userId, { limit } = {}) => {
+exports.getNotificationsLogic = async (
+  userId,
+  { limit }: { limit?: string | number } = {}
+) => {
   const safeLimit = normalizeLimit(limit);
   const [notifications, unreadCount, totalCount] = await Promise.all([
     notificationRepository.findLatestByUser(userId, safeLimit),

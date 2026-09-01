@@ -248,19 +248,19 @@ test('حالة Cron تسجل النجاح والفشل والمدة من دون 
 
 test('عقد Flow 11 يغلق Cron بأمان ويزيل النسخة القديمة ويغطي نافذة التذكير', () => {
   const jobsSource = fs.readFileSync(
-    path.join(__dirname, '../jobs/cronJobs.js'),
+    path.join(__dirname, '../jobs/cronJobs.ts'),
     'utf8'
   );
   const serverSource = fs.readFileSync(
-    path.join(__dirname, '../server.js'),
+    path.join(__dirname, '../server.ts'),
     'utf8'
   );
   const appSource = fs.readFileSync(
-    path.join(__dirname, '../app.js'),
+    path.join(__dirname, '../app.ts'),
     'utf8'
   );
   const adminSource = fs.readFileSync(
-    path.join(__dirname, '../services/adminService.js'),
+    path.join(__dirname, '../services/adminService.ts'),
     'utf8'
   );
 
@@ -272,7 +272,7 @@ test('عقد Flow 11 يغلق Cron بأمان ويزيل النسخة القدي
   assert.match(appSource, /backgroundJobs:\s*getBackgroundJobsHealth\(\)/);
   assert.match(adminSource, /type:\s*'admin_ban'/);
   assert.equal(
-    fs.existsSync(path.join(__dirname, '../utils/cronJobs.js')),
+    fs.existsSync(path.join(__dirname, '../utils/cronJobs.ts')),
     false
   );
 });

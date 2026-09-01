@@ -84,7 +84,7 @@ exports.findRequestById = (requestId) =>
     .lean();
 
 exports.findExpiredActiveIds = ({ now, requester, limit = 200 }) => {
-  const filter = {
+  const filter: Record<string, unknown> = {
     status: 'active',
     expiresAt: { $lte: now },
   };

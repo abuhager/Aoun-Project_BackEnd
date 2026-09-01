@@ -6,6 +6,20 @@ const INTERNAL_ERROR_MESSAGE =
 const isHttpErrorStatus = (value) =>
   Number.isInteger(value) && value >= 400 && value <= 599;
 
+type ErrorResponseOptions = {
+  requestId?: string;
+  isProduction?: boolean;
+};
+
+type ErrorBody = {
+  status: string;
+  message: string;
+  msg: string;
+  code: string;
+  requestId?: string;
+  stack?: string;
+};
+
 /**
  * يحوّل أي Error إلى عقد HTTP ثابت ومناسب للعرض.
  * يُرجع metadata يحتاجها الـ middleware للتسجيل، وجسم الاستجابة المتوافق
@@ -16,7 +30,7 @@ const buildErrorResponse = (
   {
     requestId,
     isProduction = process.env.NODE_ENV === 'production',
-  } = {}
+  }: ErrorResponseOptions = {}
 ) => {
   const isAppError = error instanceof AppError;
   const requestedStatus = isAppError ? error.statusCode : error?.status;
@@ -31,7 +45,7 @@ const buildErrorResponse = (
       ? INTERNAL_ERROR_MESSAGE
       : originalMessage;
 
-  const body = {
+  const body: ErrorBody = {
     status: statusCode >= 500 ? 'error' : 'fail',
     message,
     msg: message,

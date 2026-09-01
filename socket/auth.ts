@@ -4,9 +4,7 @@ const { verifyAccessToken } = require('../utils/tokenUtils');
 const { resolveAccessIdentity } = require('../middlewares/auth');
 
 const createSocketAuthError = (message, code = 'SOCKET_UNAUTHORIZED') => {
-  const error = new Error(message);
-  error.data = { code };
-  return error;
+  return Object.assign(new Error(message), { data: { code } });
 };
 
 const verifySocketToken = (token) => {

@@ -10,7 +10,18 @@ const User = require('../models/User');
 const Conversation = require('../models/Conversation');
 const Message = require('../models/Message');
 
-const indexGroups = [
+type IndexDefinition = {
+  key: Record<string, unknown>;
+  name: string;
+  unique?: boolean;
+  sparse?: boolean;
+  expireAfterSeconds?: number;
+  partialFilterExpression?: Record<string, unknown>;
+  collation?: Record<string, unknown>;
+  replaceIfDifferent?: boolean;
+};
+
+const indexGroups: Array<{ model: any; indexes: IndexDefinition[] }> = [
   {
     model: Item,
     indexes: [
@@ -136,7 +147,11 @@ const indexDefinitionsEquivalent = (existing, requested) => {
     && isDeepStrictEqual(existing.collation, requested.collation);
 };
 
-const indexCreateOptions = ({ key: _key, replaceIfDifferent: _replace, ...options }) => options;
+const indexCreateOptions = ({
+  key: _key,
+  replaceIfDifferent: _replace,
+  ...options
+}: IndexDefinition) => options;
 
 const dropObsoleteDonationRequestTtlIndexes = async () => {
   const existingIndexes = await listExistingIndexes(DonationRequest.collection);

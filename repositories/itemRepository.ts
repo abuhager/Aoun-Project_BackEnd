@@ -50,7 +50,7 @@ async function attachReportIds(items, reportedUserId) {
   const itemIds = items.map(i => i._id);
 
   // نبحث بـ relatedItem فقط — نتجاهل البلاغات بدون غرض
-  const query = {
+  const query: Record<string, unknown> = {
     relatedItem: { $in: itemIds },
     status:      'pending',
   };

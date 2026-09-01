@@ -39,7 +39,7 @@ test('عقد Controller الخاص بالتعديل والحذف موجود في
 
 test('عقد العناصر يقبل حالات الغرض المعرفة في Schema فقط', () => {
   const validationSource = fs.readFileSync(
-    path.join(__dirname, '../middlewares/validateBody.js'),
+    path.join(__dirname, '../middlewares/validateBody.ts'),
     'utf8'
   );
   assert.match(
@@ -256,7 +256,7 @@ test('لا يمكن نقل أو إلغاء الحجز بعد تأكيد المس
 
 test('مسار العناصر العام لا يمنح الأدمن تجاوز مسار الحذف المدقق', () => {
   const controllerSource = fs.readFileSync(
-    path.join(__dirname, '../controllers/itemController.js'),
+    path.join(__dirname, '../controllers/itemController.ts'),
     'utf8'
   );
   assert.doesNotMatch(controllerSource, /isAdmin|super_admin/);
@@ -499,10 +499,10 @@ test('Schema والإجراءات المجدولة متوافقة مع التأ�
   assert.ok(Item.schema.path('reminderSent'));
 
   const serviceSource = fs.readFileSync(
-    path.join(__dirname, '../services/itemService.js'),
+    path.join(__dirname, '../services/itemService.ts'),
     'utf8'
   );
-  const cronSource = fs.readFileSync(path.join(__dirname, '../jobs/cronJobs.js'), 'utf8');
+  const cronSource = fs.readFileSync(path.join(__dirname, '../jobs/cronJobs.ts'), 'utf8');
   assert.doesNotMatch(serviceSource, /maxActiveBookings(?:PerUser|Level3)/);
   assert.doesNotMatch(serviceSource, /gamification\./);
   assert.match(serviceSource, /minTrustLevelForDonating/);

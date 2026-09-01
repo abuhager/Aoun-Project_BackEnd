@@ -6,13 +6,17 @@ const mongoose = require('mongoose');
 const { validateEnvironment } = require('./config/env');
 const { connectRedis, closeRedis } = require('./middlewares/rateLimiter');
 
-const runtime = {
+const runtime: {
+  app: import('express').Express | null;
+  server: import('http').Server | null;
+  io: import('socket.io').Server | null;
+} = {
   app: null,
   server: null,
   io: null,
 };
 
-let shutdownPromise = null;
+let shutdownPromise: Promise<void> | null = null;
 let processHandlersRegistered = false;
 
 const closeResources = async () => {
@@ -21,11 +25,11 @@ const closeResources = async () => {
 
   if (runtime.io) {
     const { resetIO } = require('./socket');
-    await new Promise((resolve) => runtime.io.close(resolve));
+    await new Promise<void>((resolve) => runtime.io.close(() => resolve()));
     runtime.io = null;
     resetIO();
   } else if (runtime.server?.listening) {
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       runtime.server.close((error) => (error ? reject(error) : resolve()));
     });
   }
@@ -101,7 +105,7 @@ const startServer = async () => {
   await connectRedis();
   await connectDB();
 
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     runtime.server.once('error', reject);
     runtime.server.listen(port, () => {
       runtime.server.off('error', reject);

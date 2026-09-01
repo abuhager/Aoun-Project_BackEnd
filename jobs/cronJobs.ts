@@ -253,7 +253,11 @@ async function processExpiredItem(item, settings) {
     }).catch((err) => console.warn('[Cron] فشل إشعار المتبرع:', err.message));
 
   } else {
-    const releaseUpdate = {
+    const releaseUpdate: {
+      $set: Record<string, unknown>;
+      $addToSet: Record<string, unknown>;
+      $pull?: Record<string, unknown>;
+    } = {
       $set: {
         status:   'متاح',
         bookedBy: null,

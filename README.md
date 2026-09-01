@@ -19,6 +19,8 @@ npm ci
 npm run dev
 ```
 
+التشغيل التطويري يستخدم `tsx` مباشرةً على ملفات TypeScript، ولا يحتاج بناء `dist` يدويًا.
+
 أنشئ `.env` محليًا واضبط MongoDB وأسرار المصادقة وOrigins المسموحة وCloudinary وBrevo. لا ترفع `.env` أو أي مفتاح أو كلمة مرور إلى Git.
 
 ## التحقق
@@ -27,14 +29,15 @@ npm run dev
 npm run verify
 ```
 
-- `check`: فحص الصياغة لكل ملفات JavaScript الحالية.
+- `typecheck` و`check`: فحص أنواع TypeScript من دون إنشاء ملفات.
 - `test`: اختبارات العقود والمسارات والأمان والانحدار.
-- `verify`: يشغّل الفحص والاختبارات بالتتابع.
+- `build`: يبني JavaScript القابل للتشغيل داخل `dist/`.
+- `verify`: يشغّل فحص الأنواع والاختبارات ونسخة الإنتاج بالتتابع.
 - `db:indexes`: يزامن فهارس MongoDB المطلوبة.
 
 ## بيانات Demo شاملة
 
-الملف `scripts/seed-mock-data.js` يتحقق أولًا من كل سجل باستخدام Mongoose ومن سلامة العلاقات، ثم يمسح قاعدة Demo كاملة ويعيد إنشاء الإعدادات والفهارس والبيانات.
+الملف `scripts/seed-mock-data.ts` يتحقق أولًا من كل سجل باستخدام Mongoose ومن سلامة العلاقات، ثم يمسح قاعدة Demo كاملة ويعيد إنشاء الإعدادات والفهارس والبيانات.
 
 يغطي الـSeed حسابات المستخدمين ونقاط التسليم والأغراض بكل حالاتها والطلبات والعروض والمحادثات والرسائل والإشعارات والتقييمات والبلاغات والاعتراضات وسجل الإدارة. يبقى حسابا الطالب والمتبرع الأساسيان بلا معاملات مسبقة حتى تعمل اختبارات QA04 عليهما.
 
@@ -78,7 +81,7 @@ npm run db:seed:mock
 ## بنية المشروع
 
 ```text
-app.js / server.js       تركيب Express وتشغيل HTTP وSocket.IO
+app.ts / server.ts       تركيب Express وتشغيل HTTP وSocket.IO
 config/                  البيئة وMongoDB وCORS وCloudinary
 controllers/             معالجة طلبات HTTP
 dtos/                    عقود الاستجابة الآمنة للخصوصية
@@ -95,6 +98,13 @@ utils/                   أدوات مشتركة
 ```
 
 ## الإنتاج
+
+إعدادات Render المقترحة بعد انتقال الخادم إلى TypeScript:
+
+```text
+Build Command: npm ci && npm run build
+Start Command: npm start
+```
 
 - استخدم HTTPS وأسرارًا طويلة ومنفصلة لكل بيئة.
 - اضبط Redis وCORS وCookie domains حسب النطاق المنشور.

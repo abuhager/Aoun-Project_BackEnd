@@ -173,7 +173,9 @@ const validateEnvironment = (env = process.env) => {
   }
 
   if (errors.length) {
-    const error = new Error(`[Startup] فشل التحقق من البيئة:\n- ${errors.join('\n- ')}`);
+    const error = new Error(
+      `[Startup] فشل التحقق من البيئة:\n- ${errors.join('\n- ')}`
+    ) as Error & { code?: string };
     error.code = 'INVALID_ENVIRONMENT';
     throw error;
   }

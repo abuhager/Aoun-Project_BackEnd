@@ -156,7 +156,7 @@ test('عداد Navbar يجلب رقماً خفيفاً دون تحميل DTOs ا
   );
 
   const repositorySource = fs.readFileSync(
-    path.join(__dirname, '../repositories/conversationRepository.js'),
+    path.join(__dirname, '../repositories/conversationRepository.ts'),
     'utf8'
   );
   const countSection = repositorySource.slice(
@@ -322,7 +322,7 @@ test('تعليم المحادثة كمقروءة ينظف رسائلها وإش�
 
 test('Routes تتحقق من body ومعرّف المحادثة ولا توفر POST للرسائل', () => {
   const source = fs.readFileSync(
-    path.join(__dirname, '../routes/conversationRoutes.js'),
+    path.join(__dirname, '../routes/conversationRoutes.ts'),
     'utf8'
   );
   assert.match(source, /validateBody\('openConversation'\)/);
@@ -333,8 +333,8 @@ test('Routes تتحقق من body ومعرّف المحادثة ولا توفر 
 
 test('Flow 7 يستخدم إشعار new_message الدائم وحدث notification:new الموحد', () => {
   const [chatSource, notifySource] = [
-    fs.readFileSync(path.join(__dirname, '../socket/chatHandlers.js'), 'utf8'),
-    fs.readFileSync(path.join(__dirname, '../utils/notifyUser.js'), 'utf8'),
+    fs.readFileSync(path.join(__dirname, '../socket/chatHandlers.ts'), 'utf8'),
+    fs.readFileSync(path.join(__dirname, '../utils/notifyUser.ts'), 'utf8'),
   ];
 
   assert.match(chatSource, /type:\s*'new_message'/);

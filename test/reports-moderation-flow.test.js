@@ -306,14 +306,14 @@ test('فهرس البلاغ المفتوح جزئي وقابل للترقية د
   assert.equal(index[1].unique, true);
   assert.deepEqual(index[1].partialFilterExpression, { status: 'pending' });
 
-  const ensureIndexes = readSource('../utils/ensureIndexes.js');
+  const ensureIndexes = readSource('../utils/ensureIndexes.ts');
   assert.match(ensureIndexes, /pending_report_context_unique/);
   assert.match(ensureIndexes, /partialFilterExpression:\s*\{ status: 'pending' \}/);
   assert.match(ensureIndexes, /replaceIfDifferent:\s*true/);
 });
 
 test('تجميع تقارير الإدارة يحسب العدادات بمرور واحد ويوازي العدد الكلي', () => {
-  const source = readSource('../repositories/adminRepository.js');
+  const source = readSource('../repositories/adminRepository.ts');
   const section = source.slice(source.indexOf('exports.findPendingReportsWithCounts'));
 
   assert.equal((section.match(/from:\s*'reports'/g) || []).length, 1);
@@ -324,8 +324,8 @@ test('تجميع تقارير الإدارة يحسب العدادات بمرو�
 });
 
 test('لوحة التبرعات لا تعرض اعتراضاً على بلاغ موجّه إلى الطرف الآخر', () => {
-  const itemRepositorySource = readSource('../repositories/itemRepository.js');
-  const controllerSource = readSource('../controllers/reportController.js');
+  const itemRepositorySource = readSource('../repositories/itemRepository.ts');
+  const controllerSource = readSource('../controllers/reportController.ts');
 
   assert.match(
     itemRepositorySource,

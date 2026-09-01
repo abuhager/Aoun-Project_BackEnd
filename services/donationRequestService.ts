@@ -23,6 +23,20 @@ const DEFAULT_REQUEST_EXPIRY_DAYS = 30;
 const DEFAULT_PENDING_OFFERS_LIMIT = 5;
 const DEFAULT_BOOKINGS_LIMIT = 3;
 
+type EffectiveRequestOptions = {
+  now?: Date;
+  includeFulfilledItem?: boolean;
+};
+
+type DonationRequestQuery = {
+  page?: string | number;
+  limit?: string | number;
+  mine?: string | boolean;
+  category?: string;
+  location?: string;
+  urgency?: string;
+};
+
 const getMinTrustLevel = (settings) => settings.minTrustLevelForRequests ?? 2;
 const getObjectId = (value) => value?._id ?? value;
 const idsEqual = (left, right) =>
@@ -35,7 +49,10 @@ const isPastExpiry = (request, now = new Date()) => {
   return Number.isFinite(expiresAt.getTime()) && expiresAt <= now;
 };
 
-const toEffectivePublicRequest = (request, options = {}) => {
+const toEffectivePublicRequest = (
+  request,
+  options: EffectiveRequestOptions = {}
+) => {
   const value = request?.toObject ? request.toObject() : { ...request };
   const now = options.now ?? new Date();
   if (isPastExpiry(value, now)) value.status = 'expired';
@@ -247,14 +264,20 @@ exports.createRequestLogic = async (body, userId) => {
   };
 };
 
-exports.getDonationRequestsLogic = async (query, userId = null) => {
-  const page = Math.max(1, Number.parseInt(query.page, 10) || 1);
+exports.getDonationRequestsLogic = async (
+  query: DonationRequestQuery,
+  userId = null
+) => {
+  const page = Math.max(1, Number.parseInt(String(query.page ?? ''), 10) || 1);
   const settings = await SystemSettings.getCached();
   const maxPageSize = settings.maxPageSize ?? 20;
-  const limit = Math.min(maxPageSize, Math.max(1, Number.parseInt(query.limit, 10) || 10));
+  const limit = Math.min(
+    maxPageSize,
+    Math.max(1, Number.parseInt(String(query.limit ?? ''), 10) || 10)
+  );
   const skip = (page - 1) * limit;
   const mine = String(query.mine).toLowerCase() === 'true';
-  const filter = {};
+  const filter: Record<string, unknown> = {};
 
   if (mine && !userId)
     throw new AppError('يجب تسجيل الدخول لعرض طلباتك', 401, 'NO_TOKEN');
@@ -854,7 +877,10 @@ exports.getRequestByIdLogic = async (requestId, viewerId = null, viewerRole = 'u
   };
 };
 
-exports.expireDonationRequestsLogic = async (now = new Date(), options = {}) => {
+exports.expireDonationRequestsLogic = async (
+  now = new Date(),
+  options: { requester?: unknown; limit?: number } = {}
+) => {
   const expiredIds = await donationRequestRepository.findExpiredActiveIds({
     now,
     requester: options.requester ?? null,

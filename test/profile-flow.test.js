@@ -257,7 +257,7 @@ test('ineligible leaderboard users return a normal state instead of a 404 error'
 
 test('leaderboard list and personal rank both require authentication', () => {
   const source = fs.readFileSync(
-    path.join(__dirname, '../routes/leaderboard.js'),
+    path.join(__dirname, '../routes/leaderboard.ts'),
     'utf8'
   );
   assert.match(
@@ -273,7 +273,7 @@ test('leaderboard list and personal rank both require authentication', () => {
 
 test('profile repositories use the real Item and Rating fields', () => {
   const source = fs.readFileSync(
-    path.join(__dirname, '../repositories/profileRepository.js'),
+    path.join(__dirname, '../repositories/profileRepository.ts'),
     'utf8'
   );
   assert.match(source, /bookedBy/);
@@ -289,14 +289,14 @@ test('avatar-only profile requests pass body validation; empty requests are reje
   assert.equal(response.statusCode, 200);
 
   const controllerSource = fs.readFileSync(
-    path.join(__dirname, '../controllers/authController.js'),
+    path.join(__dirname, '../controllers/authController.ts'),
     'utf8'
   );
   assert.match(controllerSource, /Object\.keys\(updates\)\.length === 0 && !req\.file/);
   assert.match(controllerSource, /NO_PROFILE_CHANGES/);
 
   const settingsServiceSource = fs.readFileSync(
-    path.join(__dirname, '../services/settingsService.js'),
+    path.join(__dirname, '../services/settingsService.ts'),
     'utf8'
   );
   assert.match(settingsServiceSource, /maxAvatarSizeMb:\s*projected\.maxAvatarSizeMb \?\? 5/);

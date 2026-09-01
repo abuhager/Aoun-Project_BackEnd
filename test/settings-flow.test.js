@@ -199,8 +199,8 @@ test('Safe Hub اختياري في التخزين ويصبح إلزامياً م
   assert.notEqual(Item.schema.path('safeHub').options.required, true);
   assert.notEqual(DonationOffer.schema.path('safeHub').options.required, true);
 
-  const itemService = readSource('../services/itemService.js');
-  const requestService = readSource('../services/donationRequestService.js');
+  const itemService = readSource('../services/itemService.ts');
+  const requestService = readSource('../services/donationRequestService.ts');
   assert.match(itemService, /settings\.requireHubForBooking && !body\.safeHub/);
   assert.match(itemService, /settings\.requireHubForBooking && !snapshot\.safeHub/);
   assert.match(requestService, /settings\.requireHubForBooking && !offer\.safeHub/);
@@ -228,8 +228,8 @@ test('عتبة الحظر تعتمد البلاغات المعتمدة وتطه�
     waitlist: { user: '507f1f77bcf86cd799439011' },
   });
 
-  const service = readSource('../services/adminService.js');
-  const repository = readSource('../repositories/adminRepository.js');
+  const service = readSource('../services/adminService.ts');
+  const repository = readSource('../repositories/adminRepository.ts');
   assert.match(service, /countActionedByReportedUser/);
   assert.match(service, /actionedCount >= threshold/);
   assert.match(service, /target\.role === 'user'/);
@@ -240,9 +240,9 @@ test('عتبة الحظر تعتمد البلاغات المعتمدة وتطه�
 test('التحديث الحي والـCron يستخدمان عقد الأحداث والحقول المتغيرة فقط', () => {
   assert.equal(SOCKET_EVENTS.SETTINGS_UPDATED, 'settings:updated');
 
-  const cron = readSource('../jobs/cronJobs.js');
-  const service = readSource('../services/settingsService.js');
-  const routes = readSource('../routes/settings.js');
+  const cron = readSource('../jobs/cronJobs.ts');
+  const service = readSource('../services/settingsService.ts');
+  const routes = readSource('../routes/settings.ts');
   assert.match(cron, /changedFields\.includes\('quotaResetDayOfMonth'\)/);
   assert.match(service, /emitToAll\(SOCKET_EVENTS\.SETTINGS_UPDATED/);
   assert.match(routes, /requireSuperAdmin[\s\S]*validateBody\('updateSettings'\)/);

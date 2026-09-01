@@ -199,7 +199,7 @@ test('التسجيل ببريد مفعّل يعيد EMAIL_ALREADY_EXISTS ولا 
 
 test('لا يوجد fallback لهوية ثابتة في Socket chat', () => {
   const source = fs.readFileSync(
-    path.join(__dirname, '../socket/chatHandlers.js'),
+    path.join(__dirname, '../socket/chatHandlers.ts'),
     'utf8'
   );
   assert.doesNotMatch(source, /6a43f5e5cee3421d5c6498dd/);

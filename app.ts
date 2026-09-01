@@ -17,7 +17,12 @@ const getBackgroundJobsHealth = () => {
   try {
     const { getCronStatus } = require('./jobs/cronJobs');
     return Object.fromEntries(
-      Object.entries(getCronStatus()).map(([name, job]) => [
+      Object.entries(getCronStatus() as Record<string, {
+        lastStatus: string;
+        scheduled: boolean;
+        lastRun: string | null;
+        lastFinishedAt?: string | null;
+      }>).map(([name, job]) => [
         name,
         {
           status: job.lastStatus,

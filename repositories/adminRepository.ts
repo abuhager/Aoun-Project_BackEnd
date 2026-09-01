@@ -4,6 +4,13 @@ const Item     = require('../models/Item');
 const Report   = require('../models/Report');
 const AdminLog = require('../models/AdminLog');
 
+type UserListOptions = {
+  page?: number;
+  limit?: number;
+  search?: string;
+  banned?: string;
+};
+
 // ── مساعد: تهريب أحرف RegExp لمنع ReDoS ─────────────────────
 const getSafeSearchRegex = (search) => {
   if (!search) return null;
@@ -13,8 +20,8 @@ const getSafeSearchRegex = (search) => {
 };
 
 // ── helper داخلي لبناء filter المستخدمين ─────────────────────
-const buildUserFilter = ({ search, banned = '' } = {}) => {
-  const filter = {};
+const buildUserFilter = ({ search, banned = '' }: UserListOptions = {}) => {
+  const filter: Record<string, unknown> = {};
   const searchRegex = getSafeSearchRegex(search);
   if (searchRegex) {
     filter.$or = [{ name: searchRegex }, { email: searchRegex }];
@@ -25,7 +32,12 @@ const buildUserFilter = ({ search, banned = '' } = {}) => {
 };
 
 // ── المستخدمون ────────────────────────────────────────────────
-exports.findAllUsers = ({ page = 1, limit = 20, search, banned = '' } = {}) => {
+exports.findAllUsers = ({
+  page = 1,
+  limit = 20,
+  search,
+  banned = '',
+}: UserListOptions = {}) => {
   const filter = buildUserFilter({ search, banned });
   return User.find(filter)
     .select(
@@ -39,7 +51,7 @@ exports.findAllUsers = ({ page = 1, limit = 20, search, banned = '' } = {}) => {
     .lean();
 };
 
-exports.countUsers = ({ search, banned = '' } = {}) => {
+exports.countUsers = ({ search, banned = '' }: UserListOptions = {}) => {
   const filter = buildUserFilter({ search, banned });
   return User.countDocuments(filter);
 };

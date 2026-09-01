@@ -718,13 +718,15 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, fileMimeType) => {
   let newAvatarPublicId = null;
   if (fileBuffer) {
     const stream   = Readable.from(fileBuffer);
-    const uploadResult = await new Promise((resolve, reject) => {
+    const uploadResult = await new Promise<import('cloudinary').UploadApiResponse>(
+      (resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         { folder: 'avatars', width: maxWidth, height: maxHeight, crop: 'fill' },
-        (err, result) => err ? reject(err) : resolve(result)
+        (err, result) => (err || !result ? reject(err) : resolve(result))
       );
       stream.pipe(uploadStream);
-    });
+      }
+    );
     updates.avatar = uploadResult.secure_url;
     updates.avatarPublicId = uploadResult.public_id;
     newAvatarPublicId = uploadResult.public_id;

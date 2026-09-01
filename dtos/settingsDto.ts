@@ -125,14 +125,16 @@ const assertSettingsInvariants = (settings) => {
     && thresholds[2] > thresholds[3])) {
     const error = new Error(
       'يجب أن تكون حدود التقييم مرتبة تنازلياً: ممتاز > جيد > محايد > سيئ'
-    );
+    ) as Error & { statusCode?: number; code?: string };
     error.statusCode = 422;
     error.code = 'INVALID_RATING_THRESHOLDS';
     throw error;
   }
 
   if (Number(settings.maxActiveDonationsLevel2Plus) < Number(settings.maxActiveDonationsPerUser)) {
-    const error = new Error('حد تبرعات Level 2 لا يمكن أن يقل عن حد Level 1');
+    const error = new Error(
+      'حد تبرعات Level 2 لا يمكن أن يقل عن حد Level 1'
+    ) as Error & { statusCode?: number; code?: string };
     error.statusCode = 422;
     error.code = 'INVALID_DONATION_LIMITS';
     throw error;

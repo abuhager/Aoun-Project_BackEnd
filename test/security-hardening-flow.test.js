@@ -175,7 +175,7 @@ test('رفع الصور يفرض نوعاً فعلياً وحدوداً آمنة
   assert.equal(rejected.error.code, 'INVALID_IMAGE_TYPE');
   assert.equal(rejected.accepted, false);
 
-  const uploadSource = read('middlewares/upload.js');
+  const uploadSource = read('middlewares/upload.ts');
   assert.match(uploadSource, /fields:\s*12/);
   assert.match(uploadSource, /fieldSize:\s*16 \* 1024/);
   assert.match(uploadSource, /parts:\s*13/);
@@ -193,8 +193,8 @@ test('مفاتيح Rate Limit لا تكشف البريد أو reset token وتع
   const tokenKey = limiterKeys.tokenKeyGenerator({ body: { token }, ip: '127.0.0.1' });
   assert.doesNotMatch(tokenKey, new RegExp(token));
 
-  const donationRoutes = read('routes/donationRequests.js');
-  const itemRoutes = read('routes/items.js');
+  const donationRoutes = read('routes/donationRequests.ts');
+  const itemRoutes = read('routes/items.ts');
   assert.doesNotMatch(donationRoutes, /express-rate-limit|strictLimiter/);
   assert.match(donationRoutes, /donationActionLimiter/);
   assert.match(donationRoutes, /uploadLimiter/);
@@ -241,8 +241,8 @@ test('رسائل production لا تسرّب أكواد أو تفاصيل أخط�
 });
 
 test('reset token لا يوجد في API path وملفات اعتماد التشغيل المحلية مستثناة من Git', () => {
-  const authRoutes = read('routes/auth.js');
-  const emailService = read('services/emailService.js');
+  const authRoutes = read('routes/auth.ts');
+  const emailService = read('services/emailService.ts');
   const gitignore = read('.gitignore');
 
   assert.match(authRoutes, /router\.post\('\/reset-password'/);

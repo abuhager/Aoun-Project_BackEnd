@@ -28,6 +28,15 @@ const { emitToAll, emitToUser } = require('../socket/emitter');
 // ── ✅ ARCH-01: ثوابت مشتركة ────────────────────────────────────────────────
 const DEFAULT_MAX_WAITLIST = 10;
 
+type ItemListQuery = {
+  page?: string | number;
+  limit?: string | number;
+  location?: string;
+  search?: string;
+  category?: string;
+  availableOnly?: string | boolean;
+};
+
 const queueNotification = (userId, payload) => {
   if (!userId) return;
   setImmediate(() => {
@@ -115,14 +124,17 @@ const assertGenericLifecycleAllowed = (item, userId) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. جلب الأغراض المتاحة
 // ─────────────────────────────────────────────────────────────────────────────
-exports.getItemsLogic = async (query = {}) => {
-  const page        = Math.max(1, parseInt(query.page,  10) || 1);
+exports.getItemsLogic = async (query: ItemListQuery = {}) => {
+  const page        = Math.max(1, parseInt(String(query.page ?? ''), 10) || 1);
   const settings    = await SystemSettings.getCached();
   const maxPageSize = settings.maxPageSize ?? 20;
-  const limit       = Math.min(maxPageSize, Math.max(1, parseInt(query.limit, 10) || 10));
+  const limit       = Math.min(
+    maxPageSize,
+    Math.max(1, parseInt(String(query.limit ?? ''), 10) || 10)
+  );
   const skip        = (page - 1) * limit;
 
-  const filter = {
+  const filter: Record<string, unknown> = {
     status: { $in: ['متاح', 'محجوز'] },
     linkedRequestId: null,
   };
@@ -656,7 +668,11 @@ exports.cancelBookingLogic = async (itemId, userId) => {
     };
   }
 
-  const releaseUpdate = {
+  const releaseUpdate: {
+    $set: Record<string, unknown>;
+    $addToSet: Record<string, unknown>;
+    $pull?: Record<string, unknown>;
+  } = {
     $set: {
       status: 'متاح',
       bookedBy: null,
@@ -878,7 +894,12 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // 9. تعديل غرض
 // ─────────────────────────────────────────────────────────────────────────────
-exports.updateItemLogic = async (itemId, userId, body = {}, file = null) => {
+exports.updateItemLogic = async (
+  itemId,
+  userId,
+  body: Record<string, any> = {},
+  file = null
+) => {
   const snapshot = await Item.findById(itemId)
     .select('donor status cloudinaryId')
     .lean();
@@ -935,7 +956,7 @@ exports.updateItemLogic = async (itemId, userId, body = {}, file = null) => {
     'condition',
     'safeHub',
   ];
-  const updates = {};
+  const updates: Record<string, any> = {};
 
   for (const field of allowedFields) {
     if (!Object.hasOwn(body, field)) continue;

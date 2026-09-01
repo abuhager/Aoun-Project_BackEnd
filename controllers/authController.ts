@@ -156,7 +156,7 @@ exports.logout = asyncHandler(async (req, res) => {
 
 // ─── 11. تعديل البروفايل ──────────────────────────────────────
 exports.updateMe = asyncHandler(async (req, res) => {
-  const updates = {};
+  const updates: { name?: string; phone?: string } = {};
 
   if (req.body?.name?.trim()) {
     updates.name = req.body.name.trim();

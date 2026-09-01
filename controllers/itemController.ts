@@ -2,7 +2,7 @@
 const itemService  = require('../services/itemService');
 const asyncHandler = require('../utils/asyncHandler');
 
-// 💡 تم حذف سطر getIO القديم بالكامل لأنه استُبدل بـ الـ Middleware الموحد في server.js
+// 💡 تم حذف سطر getIO القديم بالكامل لأنه استُبدل بـ الـ Middleware الموحد في server.ts
 
 exports.getItems = asyncHandler(async (req, res) => {
   const result = await itemService.getItemsLogic(req.query);

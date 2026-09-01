@@ -14,6 +14,13 @@ const MESSAGE_RATE_WINDOW_MS = 10_000;
 const MESSAGE_RATE_MAX = 15;
 const CLIENT_MESSAGE_ID_PATTERN = /^[A-Za-z0-9._:-]{8,100}$/;
 
+type ChatEventPayload = {
+  convId?: string;
+  text?: string;
+  correlationId?: string;
+  isTyping?: boolean;
+};
+
 const chatError = (message, code, statusCode = 400) => Object.assign(
   new Error(message),
   { code, statusCode }
@@ -106,7 +113,7 @@ function registerChatHandlers(io, socket) {
   const userId = socket.data.userId;
   const userName = socket.data.userName;
 
-  socket.on(SOCKET_EVENTS.JOIN_ROOM, async ({ convId } = {}, ack) => {
+  socket.on(SOCKET_EVENTS.JOIN_ROOM, async ({ convId }: ChatEventPayload = {}, ack) => {
     try {
       const conversation = await assertParticipant(convId, userId);
       const conversationId = conversation._id.toString();
@@ -140,7 +147,7 @@ function registerChatHandlers(io, socket) {
     }
   });
 
-  socket.on(SOCKET_EVENTS.LEAVE_ROOM, ({ convId } = {}) => {
+  socket.on(SOCKET_EVENTS.LEAVE_ROOM, ({ convId }: ChatEventPayload = {}) => {
     if (!mongoose.isObjectIdOrHexString(convId)) return;
     const room = conversationRoom(convId);
     if (!socket.rooms.has(room)) return;
@@ -153,7 +160,9 @@ function registerChatHandlers(io, socket) {
     socket.leave(room);
   });
 
-  socket.on(SOCKET_EVENTS.SEND_MESSAGE, async ({ convId, text, correlationId } = {}, ack) => {
+  socket.on(
+    SOCKET_EVENTS.SEND_MESSAGE,
+    async ({ convId, text, correlationId }: ChatEventPayload = {}, ack) => {
     try {
       if (typeof text !== 'string') {
         throw chatError('نص الرسالة مطلوب', 'INVALID_MESSAGE');
@@ -255,9 +264,10 @@ function registerChatHandlers(io, socket) {
       console.warn(`[Socket Chat][send_message] ${error.code || 'CHAT_ERROR'}: ${error.message}`);
       sendSocketError(socket, 'send_message', error, ack);
     }
-  });
+    }
+  );
 
-  socket.on(SOCKET_EVENTS.MARK_READ, async ({ convId } = {}, ack) => {
+  socket.on(SOCKET_EVENTS.MARK_READ, async ({ convId }: ChatEventPayload = {}, ack) => {
     try {
       const conversation = await assertParticipant(convId, userId);
       const conversationId = conversation._id.toString();
@@ -277,7 +287,9 @@ function registerChatHandlers(io, socket) {
     }
   });
 
-  socket.on(SOCKET_EVENTS.TYPING_STATUS, ({ convId, isTyping } = {}) => {
+  socket.on(
+    SOCKET_EVENTS.TYPING_STATUS,
+    ({ convId, isTyping }: ChatEventPayload = {}) => {
     if (!mongoose.isObjectIdOrHexString(convId) || typeof isTyping !== 'boolean') return;
     const room = conversationRoom(convId);
     if (!socket.rooms.has(room)) return;
@@ -287,7 +299,8 @@ function registerChatHandlers(io, socket) {
       userId,
       isTyping,
     });
-  });
+    }
+  );
 }
 
 module.exports = {

@@ -1,7 +1,10 @@
 // تحقق شكل الطلبات موحّد في middlewares/validateBody.js،
 // والتصنيفات والمواقع الديناميكية تتحقق منها donationRequestService.
 
-exports.toPublicRequest = (req, options = {}) => ({
+exports.toPublicRequest = (
+  req,
+  options: { includeFulfilledItem?: boolean } = {}
+) => ({
   _id:         req._id,
   title:       req.title,
   category:    req.category,

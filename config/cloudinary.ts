@@ -3,7 +3,7 @@ const cloudinary = require('cloudinary').v2;
 
 const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } = process.env;
 
-// ✅ سيتوقف server.js عند الـ REQUIRED_ENV check قبل هذا
+// ✅ سيتوقف server.ts عند الـ REQUIRED_ENV check قبل هذا
 // لكن نضيف guard إضافي للـ fail-fast في حال استُدعي الملف منفرداً
 if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
   throw new Error('[Cloudinary] متغيرات البيئة المطلوبة غير موجودة');

@@ -59,7 +59,7 @@ test('حالات العرض تغطي السحب والإلغاء والانته�
 });
 
 test('مهمة الفهارس تزيل TTL القديم وتمنع تكرار المتبرع والغرض المرتبط', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../utils/ensureIndexes.js'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '../utils/ensureIndexes.ts'), 'utf8');
   assert.match(source, /dropObsoleteDonationRequestTtlIndexes/);
   assert.match(source, /name: 'request_donor_unique'/);
   assert.match(source, /name: 'linked_request_unique'/);
@@ -432,9 +432,9 @@ test('محادثة الغرض الخاص لا تُفتح لغير المتبرع
 });
 
 test('العناصر المرتبطة مستثناة من انتهاء الحجز العام والملف العام للمستخدم', () => {
-  const cronSource = fs.readFileSync(path.join(__dirname, '../jobs/cronJobs.js'), 'utf8');
+  const cronSource = fs.readFileSync(path.join(__dirname, '../jobs/cronJobs.ts'), 'utf8');
   const profileSource = fs.readFileSync(
-    path.join(__dirname, '../repositories/profileRepository.js'),
+    path.join(__dirname, '../repositories/profileRepository.ts'),
     'utf8'
   );
 
@@ -616,10 +616,10 @@ test('قبول العرض ينشئ غرضاً محجوزاً مرة واحدة �
 
 test('العقود الذرية تفحص expiry وتدعم قبول ورفض وسحب العرض', () => {
   const [serviceSource, routesSource, cronSource, itemServiceSource] = [
-    '../services/donationRequestService.js',
-    '../routes/donationRequests.js',
-    '../jobs/cronJobs.js',
-    '../services/itemService.js',
+    '../services/donationRequestService.ts',
+    '../routes/donationRequests.ts',
+    '../jobs/cronJobs.ts',
+    '../services/itemService.ts',
   ].map((file) => fs.readFileSync(path.join(__dirname, file), 'utf8'));
 
   assert.match(serviceSource, /status: 'processing'/);

@@ -31,7 +31,10 @@ const leaderboardEligibility = () => ({
 
 // ─── قراءة ───────────────────────────────────────────────────
 
-exports.findByEmail = (email, options = {}) => {
+exports.findByEmail = (
+  email,
+  options: { selectOtp?: boolean } = {}
+) => {
   let query = User.findOne({ email });
   if (options.selectOtp) {
     query = query.select('+verificationOtp +verificationOtpExpiry +otpAttempts');

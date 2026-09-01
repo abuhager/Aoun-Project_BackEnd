@@ -241,7 +241,9 @@ const validateBody = (schemaName) => (req, res, next) => {
   const schema = schemas[schemaName];
 
   if (!schema) {
-    const err = new Error(`[validateBody] schema غير معرّف: "${schemaName}"`);
+    const err = new Error(
+      `[validateBody] schema غير معرّف: "${schemaName}"`
+    ) as Error & { status?: number };
     err.status = 500;
     return next(err);
   }
