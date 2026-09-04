@@ -21,14 +21,16 @@ const GENERAL_PHONE_REGEX = /^\+?[0-9]{7,15}$/;
  * @param {string} phone
  * @returns {boolean}
  */
-const isValidJordanPhone = (phone) => JORDAN_PHONE_REGEX.test(String(phone ?? ''));
+const isValidJordanPhone = (phone: unknown): boolean =>
+  JORDAN_PHONE_REGEX.test(String(phone ?? ''));
 
 /**
  * تحقق من رقم عام صالح
  * @param {string} phone
  * @returns {boolean}
  */
-const isValidGeneralPhone = (phone) => GENERAL_PHONE_REGEX.test(String(phone ?? ''));
+const isValidGeneralPhone = (phone: unknown): boolean =>
+  GENERAL_PHONE_REGEX.test(String(phone ?? ''));
 
 /**
  * تطبيع رقم الهاتف الأردني:
@@ -37,7 +39,7 @@ const isValidGeneralPhone = (phone) => GENERAL_PHONE_REGEX.test(String(phone ?? 
  * @param {string} phone
  * @returns {string}
  */
-const normalizeJordanPhone = (phone) => {
+const normalizeJordanPhone = (phone: unknown): string => {
   const cleaned = String(phone ?? '').replace(/[\s\-().]/g, '');
   if (cleaned.startsWith('+962')) return cleaned;
   if (cleaned.startsWith('00962')) return `+${cleaned.slice(2)}`;
@@ -46,10 +48,12 @@ const normalizeJordanPhone = (phone) => {
   return cleaned;
 };
 
-module.exports = {
+const phoneUtils = {
   JORDAN_PHONE_REGEX,
   GENERAL_PHONE_REGEX,
   isValidJordanPhone,
   isValidGeneralPhone,
   normalizeJordanPhone,
 };
+
+export = phoneUtils;

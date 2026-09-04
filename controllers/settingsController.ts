@@ -1,6 +1,6 @@
 // controllers/settingsController.js
 const settingsService = require('../services/settingsService');
-const asyncHandler    = require('../utils/asyncHandler');
+import asyncHandler = require('../utils/asyncHandler');
 
 // ✅ Admin فقط — الإعدادات الكاملة
 exports.getSettings = asyncHandler(async (req, res) => {

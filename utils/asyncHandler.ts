@@ -1,6 +1,17 @@
-// utils/asyncHandler.js
-const asyncHandler = (fn) => (req, res, next) => {
-  Promise.resolve(fn(req, res, next)).catch(next);
+import type { NextFunction, Request, RequestHandler, Response } from 'express';
+
+type AsyncRouteHandler = (
+  request: Request,
+  response: Response,
+  next: NextFunction
+) => unknown | Promise<unknown>;
+
+const asyncHandler = (handler: AsyncRouteHandler): RequestHandler => (
+  request,
+  response,
+  next
+) => {
+  void Promise.resolve(handler(request, response, next)).catch(next);
 };
 
-module.exports = asyncHandler;
+export = asyncHandler;

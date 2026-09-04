@@ -1,5 +1,5 @@
 const reportService  = require('../services/reportService');
-const asyncHandler   = require('../utils/asyncHandler');
+import asyncHandler = require('../utils/asyncHandler');
 const { toReportResponse } = require('../dtos/reportDto');
 
 exports.createReport = asyncHandler(async (req, res) => {

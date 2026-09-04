@@ -1,3 +1,5 @@
+import corsConfig = require('./cors');
+
 const REQUIRED_ENV = [
   'MONGO_URI',
   'JWT_SECRET',
@@ -10,9 +12,9 @@ const REQUIRED_ENV = [
   'CLOUDINARY_API_SECRET',
   'COOKIE_SECRET',
   'NODE_ENV',
-];
+ ] as const;
 
-const { parseAllowedOrigins } = require('./cors');
+const { parseAllowedOrigins } = corsConfig;
 
 const DURATION_UNITS_MS = Object.freeze({
   s: 1_000,
@@ -23,28 +25,38 @@ const DURATION_UNITS_MS = Object.freeze({
 
 const PLACEHOLDER_SECRET_PATTERN = /^(?:replace[-_ ]with|change[-_ ]?me|your[-_ ]|<.+>)/i;
 
-const parsePositiveInteger = (value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) => {
-  const parsed = Number.parseInt(value ?? '', 10);
+type IntegerBounds = { min?: number; max?: number };
+
+const parsePositiveInteger = (
+  value: unknown,
+  fallback: number,
+  { min = 1, max = Number.MAX_SAFE_INTEGER }: IntegerBounds = {}
+): number => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
   return Number.isInteger(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
 };
 
-const parseDurationMs = (value) => {
+const parseDurationMs = (value: unknown): number | null => {
   const match = String(value ?? '').trim().match(/^(\d+)([smhd])$/i);
   if (!match) return null;
 
   const amount = Number.parseInt(match[1], 10);
-  const duration = amount * DURATION_UNITS_MS[match[2].toLowerCase()];
+  const unit = match[2].toLowerCase() as keyof typeof DURATION_UNITS_MS;
+  const duration = amount * DURATION_UNITS_MS[unit];
   return Number.isSafeInteger(duration) && duration > 0 ? duration : null;
 };
 
-const isPlaceholderSecret = (value) => PLACEHOLDER_SECRET_PATTERN.test(
+const isPlaceholderSecret = (value: unknown): boolean => PLACEHOLDER_SECRET_PATTERN.test(
   String(value ?? '').trim()
 );
 
-const validateEnvironment = (env = process.env) => {
+const validateEnvironment = (env: NodeJS.ProcessEnv = process.env): {
+  nodeEnv: string | undefined;
+  port: number;
+} => {
   const missing = REQUIRED_ENV.filter((key) => !env[key]?.trim());
-  const errors = [];
-  let allowedOrigins = [];
+  const errors: string[] = [];
+  let allowedOrigins: string[] = [];
 
   if (missing.length) {
     errors.push(`متغيرات البيئة المفقودة: ${missing.join(', ')}`);
@@ -68,8 +80,8 @@ const validateEnvironment = (env = process.env) => {
   if (env.ALLOWED_ORIGINS) {
     try {
       allowedOrigins = parseAllowedOrigins(env.ALLOWED_ORIGINS);
-    } catch (error) {
-      errors.push(error.message);
+    } catch (error: unknown) {
+      errors.push(error instanceof Error ? error.message : 'ALLOWED_ORIGINS غير صالح');
     }
   }
 
@@ -85,8 +97,9 @@ const validateEnvironment = (env = process.env) => {
       ) {
         errors.push('CLIENT_URL يجب أن يكون ضمن ALLOWED_ORIGINS في production');
       }
-    } catch (error) {
-      errors.push(error.message.replace('[CORS]', '[CLIENT_URL]'));
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'CLIENT_URL غير صالح';
+      errors.push(message.replace('[CORS]', '[CLIENT_URL]'));
     }
   }
 
@@ -186,10 +199,12 @@ const validateEnvironment = (env = process.env) => {
   };
 };
 
-module.exports = {
+const environment = {
   REQUIRED_ENV,
   isPlaceholderSecret,
   parseDurationMs,
   parsePositiveInteger,
   validateEnvironment,
 };
+
+export = environment;

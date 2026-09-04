@@ -1,6 +1,6 @@
 // controllers/donationRequestController.js
 const drService    = require('../services/donationRequestService');
-const asyncHandler = require('../utils/asyncHandler');
+import asyncHandler = require('../utils/asyncHandler');
 
 exports.getRequests = asyncHandler(async (req, res) => {
   const result = await drService.getDonationRequestsLogic(

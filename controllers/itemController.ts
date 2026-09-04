@@ -1,6 +1,6 @@
 // controllers/itemController.js — ✅ CLEANED & FIXED FROM OLD SOCKET PATH
 const itemService  = require('../services/itemService');
-const asyncHandler = require('../utils/asyncHandler');
+import asyncHandler = require('../utils/asyncHandler');
 
 // 💡 تم حذف سطر getIO القديم بالكامل لأنه استُبدل بـ الـ Middleware الموحد في server.ts
 

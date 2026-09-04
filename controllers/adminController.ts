@@ -1,6 +1,6 @@
 // controllers/adminController.js
 const adminService = require('../services/adminService');
-const asyncHandler = require('../utils/asyncHandler');
+import asyncHandler = require('../utils/asyncHandler');
 const AppError     = require('../utils/AppError');
 const adminDto     = require('../dtos/adminDto');
 
@@ -95,7 +95,8 @@ exports.deleteItem = asyncHandler(async (req, res) => {
 
 // ─── Reports ──────────────────────────────────────────────────
 exports.listReports = asyncHandler(async (req, res) => {
-  const { page = 1, status } = req.query;
+  const { page = 1 } = req.query;
+  const status = typeof req.query.status === 'string' ? req.query.status : '';
 
   const ALLOWED_STATUSES = ['pending', 'actioned', 'dismissed', 'reviewed'];
   if (status && !ALLOWED_STATUSES.includes(status)) {

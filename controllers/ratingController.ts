@@ -1,7 +1,7 @@
 // controllers/ratingController.js
 const ratingService = require('../services/ratingService');
 const ratingDto = require('../dtos/ratingDto');
-const asyncHandler = require('../utils/asyncHandler');
+import asyncHandler = require('../utils/asyncHandler');
 
 exports.submitRating = asyncHandler(async (req, res) => {
   const rating = await ratingService.submitRating({

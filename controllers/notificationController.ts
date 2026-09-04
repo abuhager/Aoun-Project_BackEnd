@@ -1,5 +1,5 @@
 // controllers/notificationController.js
-const asyncHandler = require('../utils/asyncHandler');
+import asyncHandler = require('../utils/asyncHandler');
 const notificationService = require('../services/notificationService');
 
 exports.getNotifications = asyncHandler(async (req, res) => {

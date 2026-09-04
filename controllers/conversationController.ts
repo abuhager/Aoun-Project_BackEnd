@@ -1,5 +1,5 @@
 const conversationService = require('../services/conversationService');
-const catchAsync = require('../utils/asyncHandler');
+import catchAsync = require('../utils/asyncHandler');
 
 const currentUserId = (req) => req.user?.id || req.user?._id?.toString();
 

@@ -7,7 +7,7 @@
 // ✅ FIX [LOGIC-CTRL-01]: phone validation بـ regex قبل تمريره للـ Service
 
 const authService = require('../services/authService');
-const asyncHandler = require('../utils/asyncHandler');
+import asyncHandler = require('../utils/asyncHandler');
 
 const {
   REFRESH_COOKIE_NAME,

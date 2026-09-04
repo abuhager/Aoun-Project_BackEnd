@@ -43,3 +43,21 @@ test('مصادر Backend التشغيلية TypeScript وتُبنى إلى dist 
     readFile(path.join(projectRoot, 'server.ts'), 'utf8'),
   ]);
 });
+
+test('طبقة TypeScript الصارمة تفحص الأدوات الأساسية ضمن verify', async () => {
+  const [packageJson, strictConfig, asyncHandler, adminController] = await Promise.all([
+    readFile(path.join(projectRoot, 'package.json'), 'utf8').then(JSON.parse),
+    readFile(path.join(projectRoot, 'tsconfig.strict.json'), 'utf8').then(JSON.parse),
+    readFile(path.join(projectRoot, 'utils', 'asyncHandler.ts'), 'utf8'),
+    readFile(path.join(projectRoot, 'controllers', 'adminController.ts'), 'utf8'),
+  ]);
+
+  assert.equal(strictConfig.compilerOptions.strict, true);
+  assert.equal(strictConfig.compilerOptions.noEmit, true);
+  assert.ok(strictConfig.include.includes('config/env.ts'));
+  assert.ok(strictConfig.include.includes('utils/otp.ts'));
+  assert.match(packageJson.scripts.verify, /typecheck:strict/);
+  assert.match(asyncHandler, /RequestHandler/);
+  assert.match(asyncHandler, /export = asyncHandler/);
+  assert.match(adminController, /import asyncHandler = require/);
+});

@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "useUnknownInCatchVariables": true,
+    "noEmit": true
+  },
+  "include": [
+    "config/cors.ts",
+    "config/env.ts",
+    "utils/AppError.ts",
+    "utils/asyncHandler.ts",
+    "utils/cryptoUtils.ts",
+    "utils/errorResponse.ts",
+    "utils/escapeRegex.ts",
+    "utils/otp.ts",
+    "utils/phoneUtils.ts",
+    "utils/sessionCache.ts",
+    "types/**/*.d.ts"
+  ]
+}

@@ -2,7 +2,7 @@
 // ✅ FIX [HUB-03]: إضافة reactivateHub handler الذي كان مفقوداً
 
 const hubService   = require('../services/hubService');
-const asyncHandler = require('../utils/asyncHandler');
+import asyncHandler = require('../utils/asyncHandler');
 
 // ── Public: المراكز النشطة فقط ─────────────────────────────
 exports.getHubs = asyncHandler(async (req, res) => {

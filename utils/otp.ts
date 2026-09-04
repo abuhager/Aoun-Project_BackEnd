@@ -1,12 +1,12 @@
 // utils/otp.js
 // ✅ مركزية توليد وـ hashing الـ OTP
-const crypto = require('crypto');
+import crypto from 'node:crypto';
 
 /**
  * يولّد OTP رقمي عشوائي مكون من 6 خانات
  * يستخدم crypto.randomInt لضمان عشوائية حقيقية (لا Math.random)
  */
-const generateOtp = () => {
+const generateOtp = (): string => {
   return crypto.randomInt(100000, 999999).toString();
 };
 
@@ -14,15 +14,15 @@ const generateOtp = () => {
  * يستخدم HMAC بــ pepper غير مخزن في قاعدة البيانات.
  * هذا يمنع كسر OTP ذي الست خانات offline عند تسريب نسخة من DB وحدها.
  */
-const getOtpPepper = (env = process.env) => (
+const getOtpPepper = (env: NodeJS.ProcessEnv = process.env): string => (
   env.OTP_PEPPER || env.COOKIE_SECRET || env.JWT_SECRET || ''
 );
 
-const legacyHashOtp = (otp) => (
+const legacyHashOtp = (otp: string | number): string => (
   crypto.createHash('sha256').update(String(otp)).digest('hex')
 );
 
-const hashOtp = (otp, env = process.env) => {
+const hashOtp = (otp: string | number, env: NodeJS.ProcessEnv = process.env): string => {
   const pepper = getOtpPepper(env);
   if (!pepper) {
     throw new Error('[otp] OTP_PEPPER أو COOKIE_SECRET أو JWT_SECRET مطلوب');
@@ -34,18 +34,20 @@ const hashOtp = (otp, env = process.env) => {
     .digest('hex');
 };
 
-const safeHexEqual = (left, right) => {
-  if (!/^[a-f\d]{64}$/i.test(left ?? '') || !/^[a-f\d]{64}$/i.test(right ?? '')) {
+const safeHexEqual = (left: unknown, right: unknown): boolean => {
+  const leftHex = String(left ?? '');
+  const rightHex = String(right ?? '');
+  if (!/^[a-f\d]{64}$/i.test(leftHex) || !/^[a-f\d]{64}$/i.test(rightHex)) {
     return false;
   }
-  return crypto.timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
+  return crypto.timingSafeEqual(Buffer.from(leftHex, 'hex'), Buffer.from(rightHex, 'hex'));
 };
 
 /**
  * مقارنة OTP بشكل آمن ضد Timing Attacks
  * يقارن الـ hash المخزّن مع hash الـ input الجديد
  */
-const verifyOtp = (inputOtp, storedHash) => {
+const verifyOtp = (inputOtp: string | number, storedHash: unknown): boolean => {
   const inputHash = hashOtp(inputOtp);
   if (safeHexEqual(storedHash, inputHash)) return true;
 
@@ -53,7 +55,7 @@ const verifyOtp = (inputOtp, storedHash) => {
   return safeHexEqual(storedHash, legacyHashOtp(inputOtp));
 };
 
-module.exports = {
+const otpUtils = {
   generateOtp,
   getOtpPepper,
   hashOtp,
@@ -61,3 +63,5 @@ module.exports = {
   safeHexEqual,
   verifyOtp,
 };
+
+export = otpUtils;

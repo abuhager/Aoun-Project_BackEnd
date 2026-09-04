@@ -7,11 +7,11 @@
  * @param {number} maxLen - الحد الأقصى للطول (افتراضي 100)
  * @returns {string}
  */
-const escapeRegex = (str, maxLen = 100) => {
+const escapeRegex = (str: unknown, maxLen = 100): string => {
   if (typeof str !== 'string') return '';
   return str
     .slice(0, maxLen)
     .replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // هرّب كل أحرف RegExp الخاصة
 };
 
-module.exports = escapeRegex;
+export = escapeRegex;

@@ -1,10 +1,10 @@
-const AppError = require('./AppError');
+import AppError = require('./AppError');
 
 const INTERNAL_ERROR_MESSAGE =
   'حدث خطأ داخلي في الخادم. يرجى المحاولة لاحقاً.';
 
-const isHttpErrorStatus = (value) =>
-  Number.isInteger(value) && value >= 400 && value <= 599;
+const isHttpErrorStatus = (value: unknown): value is number =>
+  Number.isInteger(value) && Number(value) >= 400 && Number(value) <= 599;
 
 type ErrorResponseOptions = {
   requestId?: string;
@@ -20,25 +20,37 @@ type ErrorBody = {
   stack?: string;
 };
 
-/**
- * يحوّل أي Error إلى عقد HTTP ثابت ومناسب للعرض.
- * يُرجع metadata يحتاجها الـ middleware للتسجيل، وجسم الاستجابة المتوافق
- * مع الواجهات القديمة (msg) والجديدة (message).
- */
+type ErrorResponse = {
+  statusCode: number;
+  isOperational: boolean;
+  body: ErrorBody;
+};
+
+type ErrorLike = {
+  status?: unknown;
+  message?: unknown;
+  stack?: unknown;
+};
+
+const asErrorLike = (error: unknown): ErrorLike =>
+  typeof error === 'object' && error !== null ? error as ErrorLike : {};
+
+/** يحوّل أي خطأ إلى عقد HTTP ثابت وآمن للواجهة. */
 const buildErrorResponse = (
-  error,
+  error: unknown,
   {
     requestId,
     isProduction = process.env.NODE_ENV === 'production',
   }: ErrorResponseOptions = {}
-) => {
+): ErrorResponse => {
   const isAppError = error instanceof AppError;
-  const requestedStatus = isAppError ? error.statusCode : error?.status;
+  const errorLike = asErrorLike(error);
+  const requestedStatus = isAppError ? error.statusCode : errorLike.status;
   const statusCode = isHttpErrorStatus(requestedStatus) ? requestedStatus : 500;
   const isOperational = isAppError && error.isOperational === true;
   const originalMessage =
-    typeof error?.message === 'string' && error.message.trim()
-      ? error.message
+    typeof errorLike.message === 'string' && errorLike.message.trim()
+      ? errorLike.message
       : INTERNAL_ERROR_MESSAGE;
   const message =
     isProduction && (!isOperational || statusCode >= 500)
@@ -50,21 +62,19 @@ const buildErrorResponse = (
     message,
     msg: message,
     code: isAppError ? error.code : 'INTERNAL_SERVER_ERROR',
-    requestId,
+    ...(requestId ? { requestId } : {}),
   };
 
-  if (!isProduction && error?.stack) {
-    body.stack = error.stack;
+  if (!isProduction && typeof errorLike.stack === 'string') {
+    body.stack = errorLike.stack;
   }
 
-  return {
-    statusCode,
-    isOperational,
-    body,
-  };
+  return { statusCode, isOperational, body };
 };
 
-module.exports = {
+const errorResponse = {
   INTERNAL_ERROR_MESSAGE,
   buildErrorResponse,
 };
+
+export = errorResponse;
