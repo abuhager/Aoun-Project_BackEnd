@@ -11,6 +11,7 @@
     "config/cors.ts",
     "config/env.ts",
     "dtos/**/*.ts",
+    "repositories/**/*.ts",
     "utils/AppError.ts",
     "utils/asyncHandler.ts",
     "utils/cryptoUtils.ts",

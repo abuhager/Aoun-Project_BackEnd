@@ -3,6 +3,11 @@ const User     = require('../models/User');
 const Item     = require('../models/Item');
 const Report   = require('../models/Report');
 const AdminLog = require('../models/AdminLog');
+import type {
+  EntityId,
+  PaginationOptions,
+  RepositoryRecord,
+} from './repositoryTypes';
 
 type UserListOptions = {
   page?: number;
@@ -11,8 +16,24 @@ type UserListOptions = {
   banned?: string;
 };
 
+type AdminActionPayload = {
+  adminId: EntityId;
+  action: string;
+  targetId?: EntityId | null;
+  targetModel?: string | null;
+  reason?: string | null;
+  meta?: RepositoryRecord | null;
+  targetName?: string | null;
+  adminNote?: string | null;
+};
+
+type ReportListOptions = PaginationOptions & {
+  status?: string | null;
+  repeatOffenderThreshold?: number;
+};
+
 // ── مساعد: تهريب أحرف RegExp لمنع ReDoS ─────────────────────
-const getSafeSearchRegex = (search) => {
+const getSafeSearchRegex = (search?: string) => {
   if (!search) return null;
   const truncated = String(search).slice(0, 100);
   const escaped   = truncated.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -56,21 +77,21 @@ exports.countUsers = ({ search, banned = '' }: UserListOptions = {}) => {
   return User.countDocuments(filter);
 };
 
-exports.banUser = (userId, reason, bannedBy) =>
+exports.banUser = (userId: EntityId, reason: string, bannedBy: EntityId) =>
   User.findByIdAndUpdate(
     userId,
     { $set: { isBanned: true, banReason: reason, bannedBy } },
     { returnDocument: 'after' }
   );
 
-exports.unbanUser = (userId) =>
+exports.unbanUser = (userId: EntityId) =>
   User.findByIdAndUpdate(
     userId,
     { $set: { isBanned: false }, $unset: { banReason: '', bannedBy: '' } },
     { returnDocument: 'after' }
   );
 
-exports.adjustTrustScore = (userId, delta) =>
+exports.adjustTrustScore = (userId: EntityId, delta: number) =>
   User.findByIdAndUpdate(
     userId,
     { $inc: { trustScore: delta } },
@@ -78,7 +99,7 @@ exports.adjustTrustScore = (userId, delta) =>
   );
 
 // ── الأغراض ───────────────────────────────────────────────────
-exports.findAllItems = ({ page = 1, limit = 20 } = {}) =>
+exports.findAllItems = ({ page = 1, limit = 20 }: PaginationOptions = {}) =>
   Item.find()
     .select('title category status imageUrl donor createdAt')
     .populate('donor', 'name email')
@@ -90,7 +111,12 @@ exports.findAllItems = ({ page = 1, limit = 20 } = {}) =>
 exports.countItems = () => Item.countDocuments();
 
 // ── البلاغات ──────────────────────────────────────────────────
-exports.resolvePendingReport = (reportId, adminId, status, adminNote) =>
+exports.resolvePendingReport = (
+  reportId: EntityId,
+  adminId: EntityId,
+  status: string,
+  adminNote: string | null
+) =>
   Report.findOneAndUpdate(
     { _id: reportId, status: 'pending' },
     {
@@ -111,13 +137,13 @@ exports.resolvePendingReport = (reportId, adminId, status, adminNote) =>
 exports.logAdminAction = ({
   adminId, action, targetId, targetModel,
   reason, meta, targetName, adminNote,
-}) =>
+}: AdminActionPayload) =>
   AdminLog.create({
     adminId, action, targetId, targetModel,
     reason, meta, targetName, adminNote,
   });
 
-exports.findAdminLogs = ({ page = 1, limit = 20 } = {}) =>
+exports.findAdminLogs = ({ page = 1, limit = 20 }: PaginationOptions = {}) =>
   AdminLog.find()
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
@@ -144,7 +170,7 @@ exports.findPendingReportsWithCounts = async ({
   limit  = 10,
   status = null, // ✅ FIX BUG-06: null = كل الحالات بدون فلتر
   repeatOffenderThreshold = 5,
-} = {}) => {
+}: ReportListOptions = {}) => {
   const skip = (page - 1) * limit;
 
   // ✅ FIX BUG-06: إذا status=null لا نُقيّد الـ $match بأي حالة

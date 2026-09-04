@@ -4,6 +4,7 @@
 const SafeHub = require('../models/SafeHub');
 // ✅ ARCH-01: مصدر واحد للحقيقة — حذف الـ const المكررة واستيراد من dto
 const { ALLOWED_UPDATE_FIELDS } = require('../dtos/hubDto');
+import type { EntityId, RepositoryPayload } from './repositoryTypes';
 
 // Admin — كل المراكز بكل الحالات
 exports.findAll = () =>
@@ -17,14 +18,14 @@ exports.findAllActive = () =>
     .select('-createdBy')
     .lean();
 
-exports.findById = (id) =>
+exports.findById = (id: EntityId) =>
   SafeHub.findById(id).lean();
 
-exports.create = (data) =>
+exports.create = (data: RepositoryPayload) =>
   SafeHub.create(data);
 
-exports.updateById = (id, rawBody) => {
-  const safeUpdate = {};
+exports.updateById = (id: EntityId, rawBody: RepositoryPayload) => {
+  const safeUpdate: RepositoryPayload = {};
   for (const field of ALLOWED_UPDATE_FIELDS) {          // ✅ من dto مباشرةً
     if (rawBody[field] !== undefined) safeUpdate[field] = rawBody[field];
   }
@@ -38,8 +39,8 @@ exports.updateById = (id, rawBody) => {
   });
 };
 
-exports.deactivateById = (id) =>
+exports.deactivateById = (id: EntityId) =>
   SafeHub.findByIdAndUpdate(id, { $set: { isActive: false } }, { returnDocument: 'after' });
 
-exports.reactivateById = (id) =>
+exports.reactivateById = (id: EntityId) =>
   SafeHub.findByIdAndUpdate(id, { $set: { isActive: true } }, { returnDocument: 'after' });

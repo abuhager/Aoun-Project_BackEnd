@@ -1,11 +1,19 @@
 const DonationOffer = require('../models/DonationOffer');
+import type {
+  EntityId,
+  RepositoryPayload,
+  RepositorySession,
+} from './repositoryTypes';
 
 // العرض المعلّق ما زال قابلاً للاختيار، لذلك يمنع تعطيل مركزه حتى يُعالج.
-exports.countPendingByHub = (hubId) =>
+exports.countPendingByHub = (hubId: EntityId) =>
   DonationOffer.countDocuments({ safeHub: hubId, status: 'pending' });
 
 // إنشاء عرض جديد
-exports.createOffer = async (payload, session = null) => {
+exports.createOffer = async (
+  payload: RepositoryPayload,
+  session: RepositorySession = null
+) => {
   if (!session) return DonationOffer.create(payload);
   const [offer] = await DonationOffer.create([payload], { session });
   return offer;
@@ -13,18 +21,18 @@ exports.createOffer = async (payload, session = null) => {
 
 // هل قدّم هذا المتبرع عرضاً مسبقاً؟
 // التعديل: استخدام !! للتأكد من إرجاع true/false صريحة توافقاً مع الـ Service
-exports.existsByRequestAndDonor = async (requestId, donorId) => {
+exports.existsByRequestAndDonor = async (requestId: EntityId, donorId: EntityId) => {
   const result = await DonationOffer.exists({ request: requestId, donor: donorId });
   return !!result;
 };
 
-exports.findViewerOffer = (requestId, donorId) =>
+exports.findViewerOffer = (requestId: EntityId, donorId: EntityId) =>
   DonationOffer.findOne({ request: requestId, donor: donorId })
     .select('_id status createdAt')
     .lean();
 
 // جلب كل العروض على طلب معين (لصاحب الطلب فقط)
-exports.findOffersByRequest = (requestId) =>
+exports.findOffersByRequest = (requestId: EntityId) =>
   DonationOffer.find({ request: requestId })
     .populate('donor',   'name avatar trustLevel trustScore')
     .populate('safeHub', 'name city address')
@@ -32,14 +40,18 @@ exports.findOffersByRequest = (requestId) =>
     .lean();
 
 // جلب عرض واحد بـ ID مع populate كامل
-exports.findOfferById = (offerId) =>
+exports.findOfferById = (offerId: EntityId) =>
   DonationOffer.findById(offerId)
     .populate('donor',   'name avatar trustLevel trustScore')
     .populate('safeHub', 'name city address')
     .lean();
 
 // تحديث حالة عروض متعددة دفعةً واحدة (داخل session)
-exports.rejectAllPendingExcept = (requestId, acceptedOfferId, session) =>
+exports.rejectAllPendingExcept = (
+  requestId: EntityId,
+  acceptedOfferId: EntityId,
+  session: RepositorySession
+) =>
   DonationOffer.updateMany(
     { request: requestId, _id: { $ne: acceptedOfferId }, status: 'pending' },
     { $set: { status: 'rejected' } },
@@ -47,7 +59,7 @@ exports.rejectAllPendingExcept = (requestId, acceptedOfferId, session) =>
   );
 
 // قبول عرض واحد (داخل session)
-exports.acceptOffer = (offerId, session) =>
+exports.acceptOffer = (offerId: EntityId, session: RepositorySession) =>
   DonationOffer.findByIdAndUpdate(
     offerId,
     { $set: { status: 'accepted' } },
@@ -59,7 +71,7 @@ exports.acceptOffer = (offerId, session) =>
  * 🔥 التعديل الحرج المطلوب: حساب العروض المعلقة للمتبرع لضمان عمل الـ Service بنجاح
  * أضفتها بالاسم الأصلي والـ Alias البديل عشان تنتهي مشكلة الـ TypeError نهائياً
  */
-exports.countPendingOffersByDonor = async (donorId) => {
+exports.countPendingOffersByDonor = async (donorId: EntityId) => {
   return DonationOffer.countDocuments({ donor: donorId, status: 'pending' });
 };
 

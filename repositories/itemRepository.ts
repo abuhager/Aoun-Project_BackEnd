@@ -2,12 +2,17 @@
 
 const Item   = require('../models/Item');
 const Report = require('../models/Report');
+import type {
+  DeletableDocument,
+  EntityId,
+  RepositoryRecord,
+} from './repositoryTypes';
 
 // ✅ ARCH-02: projection واحدة مُعرَّفة هنا فقط
 const ITEM_DETAILS_PROJECTION = '-__v';
 
 // ─── جلب غرض للقراءة العامة (تحديث ARCH-02) ───────────────────
-exports.findItemDetails = (itemId) =>
+exports.findItemDetails = (itemId: EntityId) =>
   Item.findById(itemId)
     .populate('donor',      'name avatar phone trustScore isVerifiedStudent trustLevel')
     .populate('safeHub',    'name address city workingHours coordinates') // تم إضافة coordinates
@@ -15,39 +20,42 @@ exports.findItemDetails = (itemId) =>
     .select(ITEM_DETAILS_PROJECTION);
 
 // ─── دوال إضافية من [ARCH-02] ───────────────────────────────
-exports.findByIdLean = (itemId) =>
+exports.findByIdLean = (itemId: EntityId) =>
   Item.findById(itemId).lean();
 
-exports.countActiveByDonor = (donorId) =>
+exports.countActiveByDonor = (donorId: EntityId) =>
   Item.countDocuments({ donor: donorId, status: { $in: ['متاح', 'محجوز'] } });
 
-exports.countActiveByHub = (hubId) =>
+exports.countActiveByHub = (hubId: EntityId) =>
   Item.countDocuments({
     safeHub: hubId,
     status: { $in: ['متاح', 'محجوز'] },
   });
 
-exports.countActiveBookingsByUser = (userId) =>
+exports.countActiveBookingsByUser = (userId: EntityId) =>
   Item.countDocuments({ bookedBy: userId, status: 'محجوز' });
 
 // ─── جلب غرض للعمليات (حجز/إلغاء/تسليم) ─────────────────────
-exports.findItemForAction = (itemId) =>
+exports.findItemForAction = (itemId: EntityId) =>
   Item.findById(itemId)
     .populate('safeHub', 'name address city workingHours');
 
 // ─── جلب غرض للتعديل ─────────────────────────────────────────
-exports.findItemForUpdate = (itemId, userId) =>
+exports.findItemForUpdate = (itemId: EntityId, userId: EntityId) =>
   Item.findOne({ _id: itemId, donor: userId })
     .populate('safeHub', 'name address city workingHours');
 
 // ─── حذف غرض ─────────────────────────────────────────────────
-exports.deleteItemById = (item) => item.deleteOne();
+exports.deleteItemById = (item: DeletableDocument) => item.deleteOne();
 
 // ─── helper: يربط reportId بكل item ──────────────────────────
-async function attachReportIds(items, reportedUserId) {
+async function attachReportIds(
+  items: RepositoryRecord[],
+  reportedUserId: EntityId
+) {
   if (!items.length) return items;
 
-  const itemIds = items.map(i => i._id);
+  const itemIds = items.map((item) => item._id);
 
   // نبحث بـ relatedItem فقط — نتجاهل البلاغات بدون غرض
   const query: Record<string, unknown> = {
@@ -62,38 +70,38 @@ async function attachReportIds(items, reportedUserId) {
     .lean();
 
   // map: itemId → reportId (نأخذ أحدث بلاغ إن وُجد أكثر من واحد)
-  const reportMap = {};
-  reports.forEach(r => {
-    const key = r.relatedItem.toString();
+  const reportMap: Record<string, string> = {};
+  reports.forEach((report: RepositoryRecord) => {
+    const key = String(report.relatedItem);
     // نحتفظ بأول بلاغ فقط (مرتّب بـ MongoDB default = insert order)
-    if (!reportMap[key]) reportMap[key] = r._id.toString();
+    if (!reportMap[key]) reportMap[key] = String(report._id);
   });
 
-  return items.map(item => ({
+  return items.map((item) => ({
     ...item,
-    reportId: reportMap[item._id.toString()] ?? null,
+    reportId: reportMap[String(item._id)] ?? null,
   }));
 }
 
 // ─── تبرعاتي كمتبرع ──────────────────────────────────────────
-exports.findDonationsByUser = async (userId) => {
+exports.findDonationsByUser = async (userId: EntityId) => {
   const items = await Item.find({ donor: userId })
     .populate('bookedBy', 'name avatar phone email trustScore isVerifiedStudent')
     .populate('safeHub',  'name city')
     .sort({ createdAt: -1 })
-    .lean();
+    .lean() as RepositoryRecord[];
 
   // لا نعرض زر الاعتراض إلا إذا كان صاحب لوحة التحكم هو المُبلَّغ عنه.
   return attachReportIds(items, userId);
 };
 
 // ─── طلبات الاستلام ───────────────────────────────────────────
-exports.findReceivedByUser = async (userId) => {
+exports.findReceivedByUser = async (userId: EntityId) => {
   const items = await Item.find({ bookedBy: userId })
     .populate('donor',   'name avatar phone trustScore isVerifiedStudent')
     .populate('safeHub', 'name address city workingHours')
     .sort({ createdAt: -1 })
-    .lean();
+    .lean() as RepositoryRecord[];
 
   // userId كـ filter — البلاغ على المستلم تحديداً
   return attachReportIds(items, userId);

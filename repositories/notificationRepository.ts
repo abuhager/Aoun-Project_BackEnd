@@ -1,29 +1,30 @@
 // repositories/notificationRepository.js
 const Notification = require('../models/Notification');
+import type { EntityId } from './repositoryTypes';
 
-exports.findLatestByUser = (userId, limit = 20) =>
+exports.findLatestByUser = (userId: EntityId, limit = 20) =>
   Notification.find({ user: userId })
     .select('_id type title body itemId conversationId actionUrl metadata isRead createdAt')
     .sort({ createdAt: -1 })
     .limit(limit)
     .lean();
 
-exports.countByUser = (userId) =>
+exports.countByUser = (userId: EntityId) =>
   Notification.countDocuments({ user: userId });
 
-exports.countUnreadByUser = (userId) =>
+exports.countUnreadByUser = (userId: EntityId) =>
   Notification.countDocuments({
     user: userId,
     isRead: false,
   });
 
-exports.markAllReadByUser = (userId) =>
+exports.markAllReadByUser = (userId: EntityId) =>
   Notification.updateMany(
     { user: userId, isRead: false },
     { $set: { isRead: true } }
   );
 
-exports.markOneReadByUser = (notificationId, userId) =>
+exports.markOneReadByUser = (notificationId: EntityId, userId: EntityId) =>
   Notification.findOneAndUpdate(
     { _id: notificationId, user: userId },
     { $set: { isRead: true } },
