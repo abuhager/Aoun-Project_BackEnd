@@ -1,16 +1,28 @@
 // backend/dtos/itemDto.js
 // تحقق شكل الطلبات موحّد في middlewares/validateBody.js،
 // والتحقق الديناميكي من التصنيفات والمراكز يتم في itemService.
+import { asRecord, toPlainRecord } from './dtoTypes';
 
+const getReferenceId = (value: unknown) => {
+  if (!value) return null;
+  const source = asRecord(value);
+  return source?._id ?? value;
+};
 
-const getReferenceId = (value) => value?._id ?? value ?? null;
-
-const isSameId = (left, right) => (
+const isSameId = (left: unknown, right: unknown) => (
   left != null && right != null && left.toString() === right.toString()
 );
 
 // لا نكشف قائمة الانتظار أو هوية الحاجز للعموم؛ نعيد فقط الحالة اللازمة للواجهة.
-exports.toPublicItem = (item, requesterId = null) => ({
+exports.toPublicItem = (rawItem: unknown, requesterId: unknown = null) => {
+  const item = toPlainRecord(rawItem);
+  if (!item) return null;
+  const waitlist = Array.isArray(item.waitlist) ? item.waitlist : [];
+  const cancelledBy = Array.isArray(item.cancelledBy) ? item.cancelledBy : [];
+  const safeHub = asRecord(item.safeHub);
+  const donor = asRecord(item.donor);
+
+  return ({
   _id:           item._id,
   title:         item.title,
   description:   item.description,
@@ -21,14 +33,17 @@ exports.toPublicItem = (item, requesterId = null) => ({
   status:        item.status,
   waitlistCount: Number.isInteger(item.waitlistCount)
     ? item.waitlistCount
-    : (item.waitlist?.length ?? 0),
+    : waitlist.length,
   isInWaitlist: requesterId
-    ? (item.waitlist ?? []).some(
-        (entry) => isSameId(getReferenceId(entry.user), requesterId)
+    ? waitlist.some(
+        (rawEntry: unknown) => {
+          const entry = asRecord(rawEntry);
+          return isSameId(getReferenceId(entry?.user), requesterId);
+        }
       )
     : false,
   bookingPreviouslyCancelled: requesterId
-    ? (item.cancelledBy ?? []).some((id) => isSameId(getReferenceId(id), requesterId))
+    ? cancelledBy.some((id: unknown) => isSameId(getReferenceId(id), requesterId))
     : false,
   bookedAt:            item.bookedAt ?? null,
   recipientConfirmed:  Boolean(item.recipientConfirmed),
@@ -39,64 +54,78 @@ exports.toPublicItem = (item, requesterId = null) => ({
   expiryHours:         item.expiryHours,
   isRated:             Boolean(item.isRated),
   linkedRequestId:     item.linkedRequestId ?? null,
-  safeHub: item.safeHub
+  safeHub: safeHub
     ? {
-        _id:          getReferenceId(item.safeHub),
-        name:         item.safeHub.name,
-        address:      item.safeHub.address,
-        city:         item.safeHub.city,
-        workingHours: item.safeHub.workingHours,
+        _id:          getReferenceId(safeHub),
+        name:         safeHub.name,
+        address:      safeHub.address,
+        city:         safeHub.city,
+        workingHours: safeHub.workingHours,
       }
     : null,
   createdAt: item.createdAt,
   updatedAt: item.updatedAt,
-  donor: item.donor
+  donor: donor
     ? {
-        _id:               getReferenceId(item.donor),
-        name:              item.donor.name,
-        trustScore:        item.donor.trustScore,
-        avatar:            item.donor.avatar,
-        isVerifiedStudent: item.donor.isVerifiedStudent,
+        _id:               getReferenceId(donor),
+        name:              donor.name,
+        trustScore:        donor.trustScore,
+        avatar:            donor.avatar,
+        isVerifiedStudent: donor.isVerifiedStudent,
       }
     : null,
   bookedBy: null,
-});
+  });
+};
 
 
 // للمتبرع — يرى بيانات الحاجز (email + phone)
-exports.toDonorItem = (item, requesterId = null) => ({
+exports.toDonorItem = (rawItem: unknown, requesterId: unknown = null) => {
+  const item = toPlainRecord(rawItem);
+  if (!item) return null;
+  const bookedBy = asRecord(item.bookedBy);
+
+  return ({
   ...exports.toPublicItem(item, requesterId),
   reportCount: item.reportCount ?? 0,
   reportId: item.reportId ?? null,
-  bookedBy: item.bookedBy
+  bookedBy: bookedBy
     ? {
-        _id:   getReferenceId(item.bookedBy),
-        name:  item.bookedBy.name,
-        phone: item.bookedBy.phone,
-        email: item.bookedBy.email,
+        _id:   getReferenceId(bookedBy),
+        name:  bookedBy.name,
+        phone: bookedBy.phone,
+        email: bookedBy.email,
       }
     : null,
-});
+  });
+};
 
 
 // للمستلم — يرى بيانات المتبرع (phone)
-exports.toReceiverItem = (item, requesterId = null) => ({
+exports.toReceiverItem = (rawItem: unknown, requesterId: unknown = null) => {
+  const item = toPlainRecord(rawItem);
+  if (!item) return null;
+  const bookedBy = asRecord(item.bookedBy);
+  const donor = asRecord(item.donor);
+
+  return ({
   ...exports.toPublicItem(item, requesterId),
   reportId: item.reportId ?? null,
-  bookedBy: item.bookedBy
+  bookedBy: bookedBy
     ? {
-        _id:   getReferenceId(item.bookedBy),
-        name:  item.bookedBy.name,
-        avatar:item.bookedBy.avatar,
+        _id:   getReferenceId(bookedBy),
+        name:  bookedBy.name,
+        avatar:bookedBy.avatar,
       }
     : null,
-  donor: item.donor
+  donor: donor
     ? {
-        _id:               getReferenceId(item.donor),
-        name:              item.donor.name,
-        phone:             item.donor.phone,
-        trustScore:        item.donor.trustScore,
-        isVerifiedStudent: item.donor.isVerifiedStudent,
+        _id:               getReferenceId(donor),
+        name:              donor.name,
+        phone:             donor.phone,
+        trustScore:        donor.trustScore,
+        isVerifiedStudent: donor.isVerifiedStudent,
       }
     : null,
-});
+  });
+};

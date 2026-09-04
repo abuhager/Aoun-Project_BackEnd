@@ -1,10 +1,19 @@
 // تحقق شكل الطلبات موحّد في middlewares/validateBody.js،
 // والتصنيفات والمواقع الديناميكية تتحقق منها donationRequestService.
+import { asRecord, toPlainRecord } from './dtoTypes';
 
 exports.toPublicRequest = (
-  req,
+  rawRequest: unknown,
   options: { includeFulfilledItem?: boolean } = {}
-) => ({
+) => {
+  const req = toPlainRecord(rawRequest);
+  if (!req) return null;
+  const requester = asRecord(req.requester);
+  const fulfilledByItem = asRecord(req.fulfilledByItem);
+  const safeHub = asRecord(fulfilledByItem?.safeHub);
+  const donor = asRecord(fulfilledByItem?.donor);
+
+  return ({
   _id:         req._id,
   title:       req.title,
   category:    req.category,
@@ -16,28 +25,29 @@ exports.toPublicRequest = (
   expiresAt:   req.expiresAt   ?? null,
   createdAt:   req.createdAt,
   updatedAt:   req.updatedAt,
-  requester: req.requester?.name ? {
-    _id:        req.requester._id,
-    name:       req.requester.name,
-    avatar:     req.requester.avatar     ?? null,
-    trustScore: req.requester.trustScore ?? null,
-    trustLevel: req.requester.trustLevel ?? null,
+  requester: requester?.name ? {
+    _id:        requester._id,
+    name:       requester.name,
+    avatar:     requester.avatar     ?? null,
+    trustScore: requester.trustScore ?? null,
+    trustLevel: requester.trustLevel ?? null,
   } : null,
   // تفاصيل العرض الفائز خاصة بصاحب الطلب والمتبرع المقبول والإدارة فقط.
-  fulfilledByItem: options.includeFulfilledItem && req.fulfilledByItem ? {
-    _id:                req.fulfilledByItem._id,
-    status:             req.fulfilledByItem.status,
-    condition:          req.fulfilledByItem.condition,
-    recipientConfirmed: req.fulfilledByItem.recipientConfirmed ?? false,
-    donorConfirmed:     req.fulfilledByItem.donorConfirmed     ?? false,
-    safeHub: req.fulfilledByItem.safeHub ? {
-      name:    req.fulfilledByItem.safeHub.name,
-      city:    req.fulfilledByItem.safeHub.city,
-      address: req.fulfilledByItem.safeHub.address,
+  fulfilledByItem: options.includeFulfilledItem && fulfilledByItem ? {
+    _id:                fulfilledByItem._id,
+    status:             fulfilledByItem.status,
+    condition:          fulfilledByItem.condition,
+    recipientConfirmed: fulfilledByItem.recipientConfirmed ?? false,
+    donorConfirmed:     fulfilledByItem.donorConfirmed     ?? false,
+    safeHub: safeHub ? {
+      name:    safeHub.name,
+      city:    safeHub.city,
+      address: safeHub.address,
     } : null,
-    donor: req.fulfilledByItem.donor ? {
-      _id:  req.fulfilledByItem.donor._id,
-      name: req.fulfilledByItem.donor.name,
+    donor: donor ? {
+      _id:  donor._id,
+      name: donor.name,
     } : null,
   } : null,
-});
+  });
+};

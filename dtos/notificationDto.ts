@@ -1,13 +1,9 @@
-const asId = (value) => {
-  if (!value) return null;
-  return (value._id ?? value).toString();
-};
+import { toId, toPlainRecord } from './dtoTypes';
 
-const toNotificationDto = (notification) => {
-  const source = notification?.toObject
-    ? notification.toObject()
-    : notification;
+const asId = toId;
 
+const toNotificationDto = (notification: unknown) => {
+  const source = toPlainRecord(notification);
   if (!source) return null;
 
   return {

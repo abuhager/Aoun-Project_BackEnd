@@ -10,6 +10,7 @@
   "include": [
     "config/cors.ts",
     "config/env.ts",
+    "dtos/**/*.ts",
     "utils/AppError.ts",
     "utils/asyncHandler.ts",
     "utils/cryptoUtils.ts",

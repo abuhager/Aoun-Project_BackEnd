@@ -1,6 +1,13 @@
 // تحقق شكل الطلبات موحّد في middlewares/validateBody.js.
+import { asRecord, toPlainRecord } from './dtoTypes';
 
-exports.toPublicOffer = (offer) => ({
+exports.toPublicOffer = (rawOffer: unknown) => {
+  const offer = toPlainRecord(rawOffer);
+  if (!offer) return null;
+  const donor = asRecord(offer.donor);
+  const safeHub = asRecord(offer.safeHub);
+
+  return ({
   _id:         offer._id,
   request:     offer.request,
   condition:   offer.condition,
@@ -8,17 +15,18 @@ exports.toPublicOffer = (offer) => ({
   imageUrl:    offer.imageUrl     ?? null,
   status:      offer.status,
   createdAt:   offer.createdAt,
-  donor: offer.donor ? {
-    _id:        offer.donor._id,
-    name:       offer.donor.name,
-    avatar:     offer.donor.avatar     ?? null,
-    trustLevel: offer.donor.trustLevel ?? null,
-    trustScore: offer.donor.trustScore ?? null,
+  donor: donor ? {
+    _id:        donor._id,
+    name:       donor.name,
+    avatar:     donor.avatar     ?? null,
+    trustLevel: donor.trustLevel ?? null,
+    trustScore: donor.trustScore ?? null,
   } : null,
-  safeHub: offer.safeHub ? {
-    _id:     offer.safeHub._id,
-    name:    offer.safeHub.name,
-    city:    offer.safeHub.city,
-    address: offer.safeHub.address,
+  safeHub: safeHub ? {
+    _id:     safeHub._id,
+    name:    safeHub.name,
+    city:    safeHub.city,
+    address: safeHub.address,
   } : null,
-});
+  });
+};

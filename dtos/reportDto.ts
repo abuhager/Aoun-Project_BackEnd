@@ -5,16 +5,16 @@ const DEFAULT_REPORT_REASONS = Object.freeze([
   'غرض مختلف عن الوصف',
   'أخرى',
 ]);
-
-const toId = (value) => {
-  if (!value) return null;
-  return String(value._id ?? value);
-};
+import { toId, toPlainRecord } from './dtoTypes';
 
 exports.DEFAULT_REPORT_REASONS = DEFAULT_REPORT_REASONS;
 
 // ✅ BUG-01: إضافة resolvedBy و appealDeadline لـ toReportResponse
-exports.toReportResponse = (report) => ({
+exports.toReportResponse = (rawReport: unknown) => {
+  const report = toPlainRecord(rawReport);
+  if (!report) return null;
+
+  return ({
   _id:            toId(report._id),
   reporter:       toId(report.reporter),
   reportedUser:   toId(report.reportedUser),
@@ -30,4 +30,5 @@ exports.toReportResponse = (report) => ({
   resolvedAt:     report.resolvedAt    ?? null,
   createdAt:      report.createdAt,
   updatedAt:      report.updatedAt,
-});
+  });
+};

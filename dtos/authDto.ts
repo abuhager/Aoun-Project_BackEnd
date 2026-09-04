@@ -1,21 +1,17 @@
 const { buildGamificationProfile } = require('../utils/gamification');
+import { toId, toIsoDate, toPlainRecord } from './dtoTypes';
 
-const toId = (value) => {
-  if (!value) return null;
-  return String(value._id ?? value);
-};
-
-const toDate = (value) => {
-  if (!value) return null;
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-};
+const toDate = toIsoDate;
 
 /**
  * العقد الوحيد لهوية المستخدم التي يمكن إرسالها للواجهة.
  * حقول كلمات المرور وOTP والجلسات لا يمكن أن تدخل هذا الكائن حتى لو تغيّر الاستعلام.
  */
-exports.toAuthUser = (user) => ({
+exports.toAuthUser = (rawUser: unknown) => {
+  const user = toPlainRecord(rawUser);
+  if (!user) return null;
+
+  return ({
   _id:               toId(user),
   name:              user.name,
   email:             user.email,
@@ -37,9 +33,14 @@ exports.toAuthUser = (user) => ({
     user.trustScore,
     user.totalDonations
   ),
-});
+  });
+};
 
-exports.toProfileActivityItem = (item) => ({
+exports.toProfileActivityItem = (rawItem: unknown) => {
+  const item = toPlainRecord(rawItem);
+  if (!item) return null;
+
+  return ({
   _id:       toId(item),
   title:     item.title,
   category:  item.category,
@@ -47,6 +48,7 @@ exports.toProfileActivityItem = (item) => ({
   imageUrl:  item.imageUrl ?? '',
   // Express يحول Date إلى ISO في JSON؛ إبقاؤه Date داخلياً يحافظ على عقد الخدمة.
   createdAt: item.deliveredAt ?? item.createdAt,
-});
+  });
+};
 
 exports._private = { toDate, toId };

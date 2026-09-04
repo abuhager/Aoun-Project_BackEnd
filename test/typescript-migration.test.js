@@ -44,20 +44,26 @@ test('مصادر Backend التشغيلية TypeScript وتُبنى إلى dist 
   ]);
 });
 
-test('طبقة TypeScript الصارمة تفحص الأدوات الأساسية ضمن verify', async () => {
-  const [packageJson, strictConfig, asyncHandler, adminController] = await Promise.all([
+test('طبقة TypeScript الصارمة تفحص الأدوات الأساسية وعقود DTO ضمن verify', async () => {
+  const [packageJson, strictConfig, asyncHandler, adminController, dtoTypes, itemDto] = await Promise.all([
     readFile(path.join(projectRoot, 'package.json'), 'utf8').then(JSON.parse),
     readFile(path.join(projectRoot, 'tsconfig.strict.json'), 'utf8').then(JSON.parse),
     readFile(path.join(projectRoot, 'utils', 'asyncHandler.ts'), 'utf8'),
     readFile(path.join(projectRoot, 'controllers', 'adminController.ts'), 'utf8'),
+    readFile(path.join(projectRoot, 'dtos', 'dtoTypes.ts'), 'utf8'),
+    readFile(path.join(projectRoot, 'dtos', 'itemDto.ts'), 'utf8'),
   ]);
 
   assert.equal(strictConfig.compilerOptions.strict, true);
   assert.equal(strictConfig.compilerOptions.noEmit, true);
   assert.ok(strictConfig.include.includes('config/env.ts'));
+  assert.ok(strictConfig.include.includes('dtos/**/*.ts'));
   assert.ok(strictConfig.include.includes('utils/otp.ts'));
   assert.match(packageJson.scripts.verify, /typecheck:strict/);
   assert.match(asyncHandler, /RequestHandler/);
   assert.match(asyncHandler, /export = asyncHandler/);
   assert.match(adminController, /import asyncHandler = require/);
+  assert.match(dtoTypes, /UnknownRecord/);
+  assert.match(dtoTypes, /toPlainRecord = \(value: unknown\)/);
+  assert.match(itemDto, /rawItem: unknown/);
 });

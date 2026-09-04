@@ -1,31 +1,24 @@
-const toPlainObject = (value) => (
-  value?.toObject ? value.toObject() : value
-);
+import { asRecord, toId, toIsoDate, toPlainRecord } from './dtoTypes';
 
-const toId = (value) => {
-  if (!value) return null;
-  return String(value._id ?? value);
-};
+const toPlainObject = toPlainRecord;
+const toDate = toIsoDate;
 
-const toDate = (value) => {
-  if (!value) return null;
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-};
-
-const toPersonReference = (value) => {
+const toPersonReference = (value: unknown) => {
   if (!value) return null;
   if (typeof value !== 'object') return toId(value);
 
+  const person = asRecord(value);
+  if (!person) return null;
+
   return {
-    _id:   toId(value),
-    name:  value.name  ?? null,
-    email: value.email ?? null,
-    title: value.title ?? null,
+    _id:   toId(person),
+    name:  person.name  ?? null,
+    email: person.email ?? null,
+    title: person.title ?? null,
   };
 };
 
-exports.toAdminUser = (rawUser) => {
+exports.toAdminUser = (rawUser: unknown) => {
   const user = toPlainObject(rawUser);
   if (!user) return null;
 
@@ -51,9 +44,11 @@ exports.toAdminUser = (rawUser) => {
   };
 };
 
-exports.toAdminItem = (rawItem) => {
+exports.toAdminItem = (rawItem: unknown) => {
   const item = toPlainObject(rawItem);
   if (!item) return null;
+
+  const donor = asRecord(item.donor);
 
   return {
     _id:       toId(item),
@@ -62,15 +57,15 @@ exports.toAdminItem = (rawItem) => {
     status:    item.status,
     imageUrl:  item.imageUrl ?? null,
     createdAt: toDate(item.createdAt),
-    donor: item.donor ? {
-      _id:   toId(item.donor),
-      name:  item.donor.name  ?? null,
-      email: item.donor.email ?? null,
+    donor: donor ? {
+      _id:   toId(donor),
+      name:  donor.name  ?? null,
+      email: donor.email ?? null,
     } : null,
   };
 };
 
-exports.toAdminAuditLog = (rawLog) => {
+exports.toAdminAuditLog = (rawLog: unknown) => {
   const log = toPlainObject(rawLog);
   if (!log) return null;
 

@@ -1,4 +1,5 @@
 const Joi = require('joi');
+import { toPlainRecord } from './dtoTypes';
 
 const EMAIL_DOMAIN = /^@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+$/;
 
@@ -112,7 +113,18 @@ const updateSettings = Joi.object({
   .min(1)
   .unknown(false);
 
-const assertSettingsInvariants = (settings) => {
+const assertSettingsInvariants = (rawSettings: unknown) => {
+  const settings = toPlainRecord(rawSettings);
+  if (!settings) {
+    const error = new TypeError('Settings must be an object') as TypeError & {
+      statusCode?: number;
+      code?: string;
+    };
+    error.statusCode = 422;
+    error.code = 'INVALID_SETTINGS';
+    throw error;
+  }
+
   const thresholds = [
     Number(settings.ratingThresholdExcellent),
     Number(settings.ratingThresholdGood),

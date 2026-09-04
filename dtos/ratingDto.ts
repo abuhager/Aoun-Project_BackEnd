@@ -1,25 +1,18 @@
-const toPlainObject = (value) => (
-  value?.toObject ? value.toObject() : value
-);
+import { asRecord, toId, toIsoDate, toPlainRecord } from './dtoTypes';
 
-const toId = (value) => {
-  if (!value) return null;
-  return String(value._id ?? value);
+const toPlainObject = toPlainRecord;
+const toDate = toIsoDate;
+
+const toParticipant = (value: unknown) => {
+  const participant = asRecord(value);
+  return participant ? {
+    _id:    toId(participant),
+    name:   participant.name   ?? null,
+    avatar: participant.avatar ?? null,
+  } : null;
 };
 
-const toDate = (value) => {
-  if (!value) return null;
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-};
-
-const toParticipant = (value) => value ? {
-  _id:    toId(value),
-  name:   value.name   ?? null,
-  avatar: value.avatar ?? null,
-} : null;
-
-exports.toRatingResponse = (rawRating) => {
+exports.toRatingResponse = (rawRating: unknown) => {
   const rating = toPlainObject(rawRating);
   if (!rating) return null;
 
@@ -32,25 +25,27 @@ exports.toRatingResponse = (rawRating) => {
   };
 };
 
-exports.toUserRatingResponse = (rawRating) => {
+exports.toUserRatingResponse = (rawRating: unknown) => {
   const rating = toPlainObject(rawRating);
   if (!rating) return null;
+
+  const item = asRecord(rating.item);
 
   return {
     _id:       toId(rating),
     score:     rating.score,
     comment:   rating.comment ?? '',
     createdAt: toDate(rating.createdAt),
-    item: rating.item ? {
-      _id:   toId(rating.item),
-      title: rating.item.title ?? null,
+    item: item ? {
+      _id:   toId(item),
+      title: item.title ?? null,
     } : null,
     rater: toParticipant(rating.rater),
   };
 };
 
 /** لا نعيد سجل Item الخام؛ فقط الحقول اللازمة لنافذة التقييم. */
-exports.toPendingRatingResponse = (rawItem) => {
+exports.toPendingRatingResponse = (rawItem: unknown) => {
   const item = toPlainObject(rawItem);
   if (!item) return { pendingRating: null };
 
