@@ -1,7 +1,8 @@
 const conversationService = require('../services/conversationService');
+import type { Request } from 'express';
 import catchAsync = require('../utils/asyncHandler');
 
-const currentUserId = (req) => req.user?.id || req.user?._id?.toString();
+const currentUserId = (req: Request) => req.user?.id || req.user?._id?.toString();
 
 exports.listConversations = catchAsync(async (req, res) => {
   const conversations = await conversationService.listConversationsLogic(currentUserId(req));

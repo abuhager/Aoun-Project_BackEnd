@@ -13,16 +13,30 @@ const sessionCache     = require('../utils/sessionCache');
 const { SOCKET_EVENTS } = require('../socket/contracts');
 const { disconnectUserSockets, emitToUser } = require('../socket/emitter');
 const adminDto = require('../dtos/adminDto');
+import type { EntityId, ServicePayload, ServiceRecord } from './serviceTypes';
+import { getErrorMessage } from './serviceTypes';
 
-const notifyBestEffort = async (user, payload, context) => {
+type AdminRole = 'admin' | 'super_admin';
+type ReportResolutionStatus = 'actioned' | 'reviewed' | 'dismissed';
+type WaitlistEntry = { user: EntityId };
+
+const notifyBestEffort = async (
+  user: EntityId | ServiceRecord,
+  payload: ServicePayload,
+  context: string
+) => {
   try {
     await notifyUser(user, payload);
-  } catch (error) {
-    console.warn(`[Admin Notification][${context}] ${error.message}`);
+  } catch (error: unknown) {
+    console.warn(`[Admin Notification][${context}] ${getErrorMessage(error)}`);
   }
 };
 
-const assertCanManageUser = async (targetId, actorId, actorRole) => {
+const assertCanManageUser = async (
+  targetId: EntityId,
+  actorId: EntityId,
+  actorRole: AdminRole
+) => {
   const target = await userRepository.findByIdForAdmin(targetId);
   if (!target) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
   if (String(targetId) === String(actorId)) {
@@ -41,7 +55,7 @@ const assertCanManageUser = async (targetId, actorId, actorRole) => {
   return target;
 };
 
-const applyBanConsequences = async (userId) => {
+const applyBanConsequences = async (userId: EntityId) => {
   await Promise.all([
     Item.updateMany(
       { donor: userId, status: { $in: ['متاح', 'محجوز'] } },
@@ -82,8 +96,11 @@ const applyBanConsequences = async (userId) => {
       code: 'ACCOUNT_BANNED',
       msg: 'تم حظر حسابك من قبل الإدارة 🚫',
     });
-  } catch (error) {
-    console.warn('[Socket Ban Cleanup] تعذر إنهاء اتصالات المستخدم:', error.message);
+  } catch (error: unknown) {
+    console.warn(
+      '[Socket Ban Cleanup] تعذر إنهاء اتصالات المستخدم:',
+      getErrorMessage(error)
+    );
   }
 };
 
@@ -108,7 +125,13 @@ exports.listUsers = async ({ page = 1, search = '', banned = '' }) => {
   };
 };
 
-exports.banUser = async (userId, adminId, adminRole, reason, adminNote) => {
+exports.banUser = async (
+  userId: EntityId,
+  adminId: EntityId,
+  adminRole: AdminRole,
+  reason: string | null,
+  adminNote: string | null
+) => {
   await assertCanManageUser(userId, adminId, adminRole);
   const user = await adminRepo.banUser(userId, reason, adminId);
   if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
@@ -134,7 +157,12 @@ exports.banUser = async (userId, adminId, adminRole, reason, adminNote) => {
   return user;
 };
 
-exports.unbanUser = async (userId, adminId, adminRole, adminNote = null) => {
+exports.unbanUser = async (
+  userId: EntityId,
+  adminId: EntityId,
+  adminRole: AdminRole,
+  adminNote: string | null = null
+) => {
   await assertCanManageUser(userId, adminId, adminRole);
   const user = await adminRepo.unbanUser(userId);
   if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
@@ -167,7 +195,11 @@ exports.listItems = async ({ page = 1 }) => {
   };
 };
 
-exports.deleteItem = async (itemId, adminId, adminNote) => {
+exports.deleteItem = async (
+  itemId: EntityId,
+  adminId: EntityId,
+  adminNote: string | null
+) => {
   const item = await Item.findById(itemId).populate('donor', 'name email');
   if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
 
@@ -180,15 +212,18 @@ exports.deleteItem = async (itemId, adminId, adminNote) => {
   if (item.cloudinaryId) {
     try {
       await deleteFromCloudinary(item.cloudinaryId);
-    } catch (err) {
-      console.warn('[Admin Items] تعذر حذف صورة الغرض من Cloudinary:', err.message);
+    } catch (error: unknown) {
+      console.warn(
+        '[Admin Items] تعذر حذف صورة الغرض من Cloudinary:',
+        getErrorMessage(error)
+      );
     }
   }
 
   const affectedUserIds = [
     item.donor?._id ?? item.donor,
     item.bookedBy,
-    ...(item.waitlist ?? []).map((entry) => entry.user),
+    ...(item.waitlist ?? []).map((entry: WaitlistEntry) => entry.user),
   ].filter(Boolean);
   const uniqueAffectedUserIds = [
     ...new Map(affectedUserIds.map((id) => [id.toString(), id])).values(),
@@ -240,15 +275,20 @@ exports.listReports = async ({ page = 1, status = null } = {}) => {
 };
 
 exports.resolveReport = async (
-  reportId,
-  adminId,
-  adminRole,
-  status,
-  adminNote = null
+  reportId: EntityId,
+  adminId: EntityId,
+  adminRole: AdminRole,
+  status: string,
+  adminNote: string | null = null
 ) => {
-  const allowedStatuses = ['actioned', 'reviewed', 'dismissed'];
-  if (!allowedStatuses.includes(status))
+  const allowedStatuses: readonly ReportResolutionStatus[] = [
+    'actioned',
+    'reviewed',
+    'dismissed',
+  ];
+  if (!allowedStatuses.includes(status as ReportResolutionStatus))
     throw new AppError('حالة غير صالحة للبلاغ', 400, 'INVALID_REPORT_STATUS');
+  const resolutionStatus = status as ReportResolutionStatus;
 
   const existingReport = await reportRepository.findByIdPopulated(reportId);
   if (!existingReport) {
@@ -261,7 +301,7 @@ exports.resolveReport = async (
   const report = await adminRepo.resolvePendingReport(
     reportId,
     adminId,
-    status,
+    resolutionStatus,
     adminNote
   );
   if (!report) {
@@ -278,7 +318,7 @@ exports.resolveReport = async (
     actioned:  'تم الإجراء',
     reviewed:  'تمّت المراجعة',
     dismissed: 'تم الرفض',
-  }[status];
+  }[resolutionStatus];
 
   await adminRepo.logAdminAction({
     adminId,
@@ -300,7 +340,7 @@ exports.resolveReport = async (
     actioned:  'تمت مراجعة بلاغك واتخاذ إجراء مناسب.',
     reviewed:  'تمت مراجعة بلاغك وإغلاقه بعد التحقق.',
     dismissed: 'تمت مراجعة بلاغك ولم يتم اعتماد إجراء عليه.',
-  }[status];
+  }[resolutionStatus];
 
   if (fullReport?.reporter?._id) {
     await notifyBestEffort(fullReport.reporter, {
@@ -309,18 +349,18 @@ exports.resolveReport = async (
       body:      reporterMessage,
       itemId:    fullReport?.relatedItem?._id ?? null,
       actionUrl: '/dashboard',
-      metadata:  { reportId: String(reportId), status },
+      metadata:  { reportId: String(reportId), status: resolutionStatus },
     }, 'report-resolution');
   }
 
-  if (status === 'actioned' && report.reportedUser) {
+  if (resolutionStatus === 'actioned' && report.reportedUser) {
     await notifyBestEffort(fullReport?.reportedUser ?? report.reportedUser, {
       type:   'admin_warning',
       title:  'تحذير من الإدارة',
       body:   '⚠️ اتخذت الإدارة إجراءً بسبب بلاغ مقدم ضدك.',
       itemId: fullReport?.relatedItem?._id ?? null,
       actionUrl: '/dashboard',
-      metadata: { reportId: String(reportId), status },
+      metadata: { reportId: String(reportId), status: resolutionStatus },
     }, 'report-warning');
 
     const settings = await SystemSettings.getCached();
@@ -370,7 +410,13 @@ exports.listAuditLogs = async ({ page = 1 }) => {
 };
 
 // ─── Promote / Demote ─────────────────────────────────────────
-exports.promoteToLevel2 = async (targetId, adminId, adminRole, reason = null, adminNote = null) => {
+exports.promoteToLevel2 = async (
+  targetId: EntityId,
+  adminId: EntityId,
+  adminRole: AdminRole,
+  reason: string | null = null,
+  adminNote: string | null = null
+) => {
   const user = await assertCanManageUser(targetId, adminId, adminRole);
   if (user.isBanned) throw new AppError('لا يمكن ترقية مستخدم محظور', 403, 'USER_BANNED');
   if (user.trustLevel !== 1) throw new AppError(
@@ -393,7 +439,13 @@ exports.promoteToLevel2 = async (targetId, adminId, adminRole, reason = null, ad
   return updated;
 };
 
-exports.demoteToLevel1 = async (targetId, adminId, adminRole, reason = null, adminNote = null) => {
+exports.demoteToLevel1 = async (
+  targetId: EntityId,
+  adminId: EntityId,
+  adminRole: AdminRole,
+  reason: string | null = null,
+  adminNote: string | null = null
+) => {
   const user = await assertCanManageUser(targetId, adminId, adminRole);
   if (user.trustLevel === 1) throw new AppError('المستخدم في المستوى 1 بالفعل', 400, 'ALREADY_LEVEL1');
 

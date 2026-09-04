@@ -7,6 +7,8 @@ const {
   EDITABLE_SETTING_FIELDS,
   assertSettingsInvariants,
 } = require('../dtos/settingsDto');
+import type { EntityId, ServicePayload, ServiceRecord } from './serviceTypes';
+import { getErrorMessage } from './serviceTypes';
 
 const PUBLIC_SETTING_FIELDS = Object.freeze([
   'categories',
@@ -20,9 +22,12 @@ const PUBLIC_SETTING_FIELDS = Object.freeze([
   'updatedAt',
 ]);
 
-const editableFieldSet = new Set(EDITABLE_SETTING_FIELDS);
+const editableFieldSet = new Set<string>(EDITABLE_SETTING_FIELDS);
 
-const normalizeList = (values, { lowercase = false } = {}) => {
+const normalizeList = (
+  values: unknown,
+  { lowercase = false }: { lowercase?: boolean } = {}
+) => {
   if (!Array.isArray(values)) return values;
   const normalized = values
     .map((value) => String(value).trim())
@@ -31,7 +36,7 @@ const normalizeList = (values, { lowercase = false } = {}) => {
   return [...new Map(normalized.map((value) => [value.toLocaleLowerCase('en'), value])).values()];
 };
 
-const normalizeSettingValue = (key, value) => {
+const normalizeSettingValue = (key: string, value: unknown) => {
   if (['categories', 'locations', 'reportReasons'].includes(key)) return normalizeList(value);
   if (key === 'universityEmailDomains') return normalizeList(value, { lowercase: true });
   if (typeof value === 'string') {
@@ -41,34 +46,40 @@ const normalizeSettingValue = (key, value) => {
   return value;
 };
 
-const valuesEqual = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+const valuesEqual = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 
-const toPublicSettings = (settings) => {
+const toPublicSettings = (settings: ServiceRecord | null | undefined) => {
   const source = settings ?? {};
   const projected = Object.fromEntries(
     PUBLIC_SETTING_FIELDS.map((field) => [field, source[field]])
   );
 
   return {
-    categories: projected.categories ?? [],
-    locations: projected.locations ?? [],
-    reportReasons: projected.reportReasons ?? [],
-    platformName: projected.platformName ?? 'عون',
-    contactEmail: projected.contactEmail ?? 'aoun.help.center@gmail.com',
-    maxAvatarSizeMb: projected.maxAvatarSizeMb ?? 5,
+    categories: Array.isArray(projected.categories) ? projected.categories : [],
+    locations: Array.isArray(projected.locations) ? projected.locations : [],
+    reportReasons: Array.isArray(projected.reportReasons) ? projected.reportReasons : [],
+    platformName: typeof projected.platformName === 'string' ? projected.platformName : 'عون',
+    contactEmail: typeof projected.contactEmail === 'string'
+      ? projected.contactEmail
+      : 'aoun.help.center@gmail.com',
+    maxAvatarSizeMb: typeof projected.maxAvatarSizeMb === 'number'
+      ? projected.maxAvatarSizeMb
+      : 5,
     requireHubForBooking: Boolean(projected.requireHubForBooking),
     maintenanceMode: Boolean(projected.maintenanceMode),
     updatedAt: projected.updatedAt
-      ? new Date(projected.updatedAt).toISOString()
+      ? new Date(String(projected.updatedAt)).toISOString()
       : null,
   };
 };
 
 exports.getSettings = () => SystemSettings.getCached();
 
-exports.getPublicSettings = async () => toPublicSettings(await SystemSettings.getCached());
+exports.getPublicSettings = async () => (
+  toPublicSettings(await SystemSettings.getCached() as ServiceRecord)
+);
 
-exports.updateSettings = async (updates, actorId) => {
+exports.updateSettings = async (updates: ServicePayload, actorId: EntityId) => {
   const unknownFields = Object.keys(updates).filter((key) => !editableFieldSet.has(key));
   if (unknownFields.length > 0) {
     throw new AppError(
@@ -95,7 +106,7 @@ exports.updateSettings = async (updates, actorId) => {
   if (changedFields.length === 0) {
     return {
       settings: current,
-      publicSettings: toPublicSettings(current),
+      publicSettings: toPublicSettings(current as ServiceRecord),
       changedFields,
     };
   }
@@ -118,7 +129,7 @@ exports.updateSettings = async (updates, actorId) => {
   }
 
   SystemSettings.invalidateCache(changedFields);
-  const publicSettings = toPublicSettings(updated);
+  const publicSettings = toPublicSettings(updated as ServiceRecord);
 
   emitToAll(SOCKET_EVENTS.SETTINGS_UPDATED, publicSettings);
 
@@ -137,8 +148,8 @@ exports.updateSettings = async (updates, actorId) => {
         ),
       },
     });
-  } catch (error) {
-    console.error('[Settings Audit] تعذر تسجيل تعديل الإعدادات:', error.message);
+  } catch (error: unknown) {
+    console.error('[Settings Audit] تعذر تسجيل تعديل الإعدادات:', getErrorMessage(error));
   }
 
   return { settings: updated, publicSettings, changedFields };

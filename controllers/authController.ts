@@ -7,6 +7,7 @@
 // ✅ FIX [LOGIC-CTRL-01]: phone validation بـ regex قبل تمريره للـ Service
 
 const authService = require('../services/authService');
+import type { Request, Response } from 'express';
 import asyncHandler = require('../utils/asyncHandler');
 
 const {
@@ -23,12 +24,12 @@ const { isValidJordanPhone } = require('../utils/phoneUtils');
 
 // ✅ [PERF-CTRL-01] + [DUP-CTRL-01] دالة مشتركة لتحليل رقم الصفحة بأمان
 // تمنع: page سالب، page=0، page=NaN، page عالٍ جداً
-const parsePage = (raw) => {
-  const p = parseInt(raw, 10);
+const parsePage = (raw: unknown) => {
+  const p = parseInt(String(raw ?? ''), 10);
   return (!p || p < 1) ? 1 : Math.min(p, 500);
 };
 
-const clearSessionCookies = (res) => {
+const clearSessionCookies = (res: Response) => {
   res.clearCookie(REFRESH_COOKIE_NAME, CLEAR_REFRESH_COOKIE_OPTIONS);
   if (REFRESH_COOKIE_NAME !== LEGACY_REFRESH_COOKIE_NAME) {
     res.clearCookie(
@@ -39,7 +40,7 @@ const clearSessionCookies = (res) => {
   res.clearCookie('session_active', CLEAR_SESSION_ACTIVE_OPTIONS);
 };
 
-const setSessionCookies = (res, refreshToken) => {
+const setSessionCookies = (res: Response, refreshToken: string) => {
   res.cookie(REFRESH_COOKIE_NAME, refreshToken, REFRESH_COOKIE_OPTIONS);
   if (REFRESH_COOKIE_NAME !== LEGACY_REFRESH_COOKIE_NAME) {
     res.clearCookie(
@@ -50,7 +51,7 @@ const setSessionCookies = (res, refreshToken) => {
   res.cookie('session_active', '1', SESSION_ACTIVE_OPTIONS);
 };
 
-const readRefreshCookie = (req) => (
+const readRefreshCookie = (req: Request): string | null => (
   req.cookies?.[REFRESH_COOKIE_NAME]
   ?? req.cookies?.[LEGACY_REFRESH_COOKIE_NAME]
   ?? null
@@ -94,13 +95,13 @@ exports.login = asyncHandler(async (req, res) => {
 exports.getUserProfile = asyncHandler(async (req, res) => {
   // ✅ [PERF-CTRL-01] parsePage تمنع skip سالب أو عالٍ جداً
   const page   = parsePage(req.query.page);
-  const result = await authService.getMeLogic(req.user.id, page);
+  const result = await authService.getMeLogic(req.user!.id, page);
   return res.status(result.statusCode).json(result.body);
 });
 
 // ─── 5. GET /me ───────────────────────────────────────────────
 exports.getMe = asyncHandler(async (req, res) => {
-  const result = await authService.getCurrentUserLogic(req.user.id);
+  const result = await authService.getCurrentUserLogic(req.user!.id);
   return res.status(result.statusCode).json(result.body);
 });
 
@@ -149,7 +150,7 @@ exports.refreshToken = asyncHandler(async (req, res) => {
 
 // ─── 10. تسجيل الخروج ─────────────────────────────────────────
 exports.logout = asyncHandler(async (req, res) => {
-  const result = await authService.logoutLogic(req.user.id);
+  const result = await authService.logoutLogic(req.user!.id);
   clearSessionCookies(res);
   return res.status(result.statusCode).json(result.body);
 });
@@ -183,7 +184,7 @@ exports.updateMe = asyncHandler(async (req, res) => {
   }
 
   const result = await authService.updateMeLogic(
-    req.user.id,
+    req.user!.id,
     updates,
     req.file?.buffer,
     req.file?.mimetype
@@ -194,7 +195,7 @@ exports.updateMe = asyncHandler(async (req, res) => {
 
 // ─── 12. تغيير كلمة المرور ────────────────────────────────────
 exports.updatePassword = asyncHandler(async (req, res) => {
-  const result = await authService.updatePasswordLogic(req.user.id, {
+  const result = await authService.updatePasswordLogic(req.user!.id, {
     currentPassword: req.body.currentPassword,
     newPassword:     req.body.newPassword,
   });

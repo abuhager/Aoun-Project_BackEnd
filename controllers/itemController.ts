@@ -10,7 +10,7 @@ exports.getItems = asyncHandler(async (req, res) => {
 });
 
 exports.getMyItems = asyncHandler(async (req, res) => {
-  const result = await itemService.getMyItemsLogic(req.user.id);
+  const result = await itemService.getMyItemsLogic(req.user!.id);
   res.json(result);
 });
 
@@ -25,19 +25,19 @@ exports.getItemById = asyncHandler(async (req, res) => {
 });
 
 exports.createItem = asyncHandler(async (req, res) => {
-  const result = await itemService.createItemLogic(req.body, req.user.id, req.file);
+  const result = await itemService.createItemLogic(req.body, req.user!.id, req.file);
   res.status(201).json({ success: true, ...result });
 });
 
 exports.bookItem = asyncHandler(async (req, res) => {
-  const result = await itemService.bookItemLogic(req.params.id, req.user.id);
+  const result = await itemService.bookItemLogic(req.params.id, req.user!.id);
   res.status(200).json({ success: true, ...result });
 });
 
 exports.cancelBooking = asyncHandler(async (req, res) => {
   const result = await itemService.cancelBookingLogic(
     req.params.id,
-    req.user.id.toString()
+    req.user!.id.toString()
   );
   res.json(result);
 });
@@ -47,7 +47,7 @@ exports.cancelBooking = asyncHandler(async (req, res) => {
 exports.leaveWaitlist = asyncHandler(async (req, res) => {
   const result = await itemService.leaveWaitlistLogic(
     req.params.id,
-    req.user.id.toString()
+    req.user!.id.toString()
   );
   res.json(result);
 });
@@ -78,7 +78,7 @@ exports.completeDelivery = asyncHandler(async (req, res) => {
 exports.updateItem = asyncHandler(async (req, res) => {
   const result = await itemService.updateItemLogic(
     req.params.id,
-    req.user.id,
+    req.user!.id,
     req.body,
     req.file
   );
@@ -88,7 +88,7 @@ exports.updateItem = asyncHandler(async (req, res) => {
 exports.deleteItem = asyncHandler(async (req, res) => {
   const result = await itemService.deleteItemLogic(
     req.params.id,
-    req.user.id
+    req.user!.id
   );
   res.json(result);
 });

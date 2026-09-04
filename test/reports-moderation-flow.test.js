@@ -333,10 +333,10 @@ test('لوحة التبرعات لا تعرض اعتراضاً على بلاغ �
   );
   assert.match(
     controllerSource,
-    /reportService\.createReport\(req\.user\.id, req\.body\)/
+    /reportService\.createReport\(req\.user!?\.id, req\.body\)/
   );
   assert.match(
     controllerSource,
-    /reportService\.submitAppeal\([\s\S]*req\.params\.id,[\s\S]*req\.user\.id/
+    /reportService\.submitAppeal\([\s\S]*req\.params\.id,[\s\S]*req\.user!?\.id/
   );
 });

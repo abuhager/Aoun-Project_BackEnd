@@ -9,11 +9,13 @@ const {
   isValidJordanPhone,
   normalizeJordanPhone,
 } = require('../utils/phoneUtils');
+import type { EntityId } from './serviceTypes';
+import { hasErrorCode } from './serviceTypes';
 
-const serviceError = (message, status, code) =>
+const serviceError = (message: string, status: number, code: string) =>
   new AppError(message, status, code);
 
-exports.verifyPhoneWithFirebase = async (userId, idToken) => {
+exports.verifyPhoneWithFirebase = async (userId: EntityId, idToken: string) => {
   if (!isPhoneVerificationEnabled()) {
     throw serviceError(
       'التحقق من الهاتف متوقف مؤقتاً',
@@ -59,8 +61,8 @@ exports.verifyPhoneWithFirebase = async (userId, idToken) => {
       },
       { returnDocument: 'after', runValidators: true }
     ).select('phone phoneVerified trustLevel');
-  } catch (error) {
-    if (error?.code === 11000) {
+  } catch (error: unknown) {
+    if (hasErrorCode(error, 11000)) {
       throw serviceError(
         'هذا الرقم مسجّل لدى حساب آخر بالفعل ❌',
         409,

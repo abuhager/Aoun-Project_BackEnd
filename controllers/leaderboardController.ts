@@ -8,6 +8,6 @@ exports.getLeaderboard = asyncHandler(async (_req, res) => {
 });
 
 exports.getUserRank = asyncHandler(async (req, res) => {
-  const rank = await leaderboardService.getUserRank(req.user.id);
+  const rank = await leaderboardService.getUserRank(req.user!.id);
   return res.json(rank);
 });

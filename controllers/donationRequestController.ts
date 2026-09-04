@@ -11,17 +11,17 @@ exports.getRequests = asyncHandler(async (req, res) => {
 });
 
 exports.getMyRequests = asyncHandler(async (req, res) => {
-  const result = await drService.getMyRequestsLogic(req.user.id);
+  const result = await drService.getMyRequestsLogic(req.user!.id);
   res.json(result);
 });
 
 exports.createRequest = asyncHandler(async (req, res) => {
-  const result = await drService.createRequestLogic(req.body, req.user.id);
+  const result = await drService.createRequestLogic(req.body, req.user!.id);
   res.status(201).json(result);
 });
 
 exports.cancelRequest = asyncHandler(async (req, res) => {
-  const result = await drService.cancelRequestLogic(req.params.id, req.user.id);
+  const result = await drService.cancelRequestLogic(req.params.id, req.user!.id);
   res.json(result);
 });
 
@@ -39,7 +39,7 @@ exports.getRequestById = asyncHandler(async (req, res) => {
 exports.submitOffer = asyncHandler(async (req, res) => {
   const result = await drService.submitOfferLogic(
     req.params.id,
-    req.user.id,
+    req.user!.id,
     req.body,
     req.file ?? null
   );
@@ -48,7 +48,7 @@ exports.submitOffer = asyncHandler(async (req, res) => {
 
 // صاحب الطلب يشوف العروض
 exports.getOffers = asyncHandler(async (req, res) => {
-  const result = await drService.getOffersLogic(req.params.id, req.user.id);
+  const result = await drService.getOffersLogic(req.params.id, req.user!.id);
   res.json(result);
 });
 
@@ -57,7 +57,7 @@ exports.acceptOffer = asyncHandler(async (req, res) => {
   const result = await drService.acceptOfferLogic(
     req.params.id,
     req.params.offerId,
-    req.user.id
+    req.user!.id
   );
   res.json(result);
 });
@@ -66,7 +66,7 @@ exports.rejectOffer = asyncHandler(async (req, res) => {
   const result = await drService.rejectOfferLogic(
     req.params.id,
     req.params.offerId,
-    req.user.id
+    req.user!.id
   );
   res.json(result);
 });
@@ -75,7 +75,7 @@ exports.withdrawOffer = asyncHandler(async (req, res) => {
   const result = await drService.withdrawOfferLogic(
     req.params.id,
     req.params.offerId,
-    req.user.id
+    req.user!.id
   );
   res.json(result);
 });

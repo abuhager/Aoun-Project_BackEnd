@@ -6,7 +6,7 @@ import asyncHandler = require('../utils/asyncHandler');
 exports.submitRating = asyncHandler(async (req, res) => {
   const rating = await ratingService.submitRating({
     itemId: req.body.itemId,
-    raterId: req.user.id,
+    raterId: req.user!.id,
     score: req.body.score,
     comment: req.body.comment,
   });
@@ -26,7 +26,7 @@ exports.getUserRatings = asyncHandler(async (req, res) => {
 });
 
 exports.getPendingRating = asyncHandler(async (req, res) => {
-  const userId = req.user.id || req.user._id; 
+  const userId = req.user!.id || req.user!._id;
   const { pendingRating } = await ratingService.getPendingRating(userId);
 
   return res.status(200).json(

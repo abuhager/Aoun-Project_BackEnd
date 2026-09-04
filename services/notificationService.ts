@@ -2,18 +2,19 @@
 const notificationRepository = require('../repositories/notificationRepository');
 const AppError = require('../utils/AppError');
 const { toNotificationDto } = require('../dtos/notificationDto');
+import type { EntityId } from './serviceTypes';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 
-const normalizeLimit = (value) => {
-  const parsed = Number.parseInt(value, 10);
+const normalizeLimit = (value: unknown) => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(parsed)) return DEFAULT_LIMIT;
   return Math.min(MAX_LIMIT, Math.max(1, parsed));
 };
 
 exports.getNotificationsLogic = async (
-  userId,
+  userId: EntityId,
   { limit }: { limit?: string | number } = {}
 ) => {
   const safeLimit = normalizeLimit(limit);
@@ -32,7 +33,7 @@ exports.getNotificationsLogic = async (
   };
 };
 
-exports.markAllReadLogic = async (userId) => {
+exports.markAllReadLogic = async (userId: EntityId) => {
   const result = await notificationRepository.markAllReadByUser(userId);
 
   return {
@@ -41,7 +42,7 @@ exports.markAllReadLogic = async (userId) => {
   };
 };
 
-exports.markOneReadLogic = async (notificationId, userId) => {
+exports.markOneReadLogic = async (notificationId: EntityId, userId: EntityId) => {
   const notification = await notificationRepository.markOneReadByUser(
     notificationId,
     userId

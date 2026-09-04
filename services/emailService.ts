@@ -3,9 +3,16 @@ const axios = require('axios');
 const SystemSettings = require('../models/SystemSettings');
 const { getAllowedOrigins } = require('../config/cors');
 
+type SendEmailInput = {
+  to: string;
+  subject: string;
+  htmlContent: string;
+  platformName: string;
+};
+
 const BREVO_URL = 'https://api.brevo.com/v3/smtp/email';
 
-const escapeHtml = (value) => String(value ?? '')
+const escapeHtml = (value: unknown) => String(value ?? '')
   .replaceAll('&', '&amp;')
   .replaceAll('<', '&lt;')
   .replaceAll('>', '&gt;')
@@ -28,7 +35,7 @@ const getClientOrigin = () => {
   return parsed.origin;
 };
 
-const send = async ({ to, subject, htmlContent, platformName }) => {
+const send = async ({ to, subject, htmlContent, platformName }: SendEmailInput) => {
   if (!process.env.BREVO_API_KEY) {
     throw new Error('[emailService] BREVO_API_KEY غير مضبوط');
   }
@@ -55,8 +62,8 @@ const send = async ({ to, subject, htmlContent, platformName }) => {
 };
 
 exports.sendVerificationEmail = async (
-  to,
-  otp,
+  to: string,
+  otp: string | number,
   name = '',
   isStudent = false,
   expiryMinutes = 10
@@ -89,8 +96,8 @@ exports.sendVerificationEmail = async (
 };
 
 exports.sendPasswordResetEmail = async (
-  to,
-  resetToken,
+  to: string,
+  resetToken: string,
   name = '',
   expiryMinutes = 15
 ) => {

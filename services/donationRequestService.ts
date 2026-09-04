@@ -17,6 +17,9 @@ const notifyUser = require('../utils/notifyUser');
 const {
   isPhoneVerificationEnabled,
 } = require('../middlewares/phoneVerificationFeature');
+import type { ClientSession } from 'mongoose';
+import type { EntityId, UploadedFile } from './serviceTypes';
+import { getErrorDetails, getErrorMessage, hasErrorCode } from './serviceTypes';
 
 const DEFAULT_REQUEST_LIMIT = 1;
 const DEFAULT_REQUEST_EXPIRY_DAYS = 30;
@@ -37,20 +40,83 @@ type DonationRequestQuery = {
   urgency?: string;
 };
 
-const getMinTrustLevel = (settings) => settings.minTrustLevelForRequests ?? 2;
-const getObjectId = (value) => value?._id ?? value;
-const idsEqual = (left, right) =>
-  Boolean(left && right && getObjectId(left).toString() === getObjectId(right).toString());
-const isAdminRole = (role) => ['admin', 'super_admin'].includes(role);
+type RequestSettings = {
+  minTrustLevelForRequests?: number;
+  maxActiveRequestsPerMonth?: number;
+  categories?: string[];
+  locations?: string[];
+  requestExpiryDays?: number;
+  maxPageSize?: number;
+  minTrustLevelForDonating?: number;
+  requireHubForBooking?: boolean;
+  maxPendingOffersPerDonor?: number;
+  maxBookingsPerUser?: number;
+  maxActiveDonationsLevel2Plus?: number;
+  maxActiveDonationsPerUser?: number;
+};
 
-const isPastExpiry = (request, now = new Date()) => {
+type EntityReference = EntityId | { _id?: EntityId | null };
+type RequestLike = {
+  _id: EntityId;
+  title: string;
+  status?: string;
+  expiresAt?: string | Date | null;
+  requester?: EntityReference | null;
+  toObject?: () => RequestLike;
+  [key: string]: unknown;
+};
+type OfferLike = {
+  _id: EntityId;
+  donor?: EntityReference | null;
+  safeHub?: EntityReference | null;
+  cloudinaryId?: string | null;
+  status?: string;
+  createdAt?: string | Date;
+  [key: string]: unknown;
+};
+type RequestCreateInput = {
+  title: string;
+  description?: string;
+  category: string;
+  location: string;
+  urgency?: 'low' | 'medium' | 'high';
+};
+type OfferInput = {
+  safeHub?: EntityId;
+  condition: string;
+  description?: string;
+};
+type BackgroundTask = () => void | Promise<unknown>;
+
+const asRequestSettings = (settings: unknown): RequestSettings => (
+  typeof settings === 'object' && settings !== null ? settings : {}
+);
+
+const getMinTrustLevel = (settings: RequestSettings) => settings.minTrustLevelForRequests ?? 2;
+const getObjectId = (value: EntityReference | null | undefined): EntityId | undefined => {
+  if (typeof value === 'object' && value !== null && '_id' in value) {
+    return value._id ?? undefined;
+  }
+  return value as EntityId | undefined;
+};
+const idsEqual = (
+  left: EntityReference | null | undefined,
+  right: EntityReference | null | undefined
+) => {
+  const leftId = getObjectId(left);
+  const rightId = getObjectId(right);
+  return Boolean(leftId && rightId && leftId.toString() === rightId.toString());
+};
+const isAdminRole = (role: string) => ['admin', 'super_admin'].includes(role);
+
+const isPastExpiry = (request: Pick<RequestLike, 'status' | 'expiresAt'>, now = new Date()) => {
   if (request?.status !== 'active' || !request.expiresAt) return false;
   const expiresAt = new Date(request.expiresAt);
   return Number.isFinite(expiresAt.getTime()) && expiresAt <= now;
 };
 
 const toEffectivePublicRequest = (
-  request,
+  request: RequestLike,
   options: EffectiveRequestOptions = {}
 ) => {
   const value = request?.toObject ? request.toObject() : { ...request };
@@ -61,16 +127,19 @@ const toEffectivePublicRequest = (
   });
 };
 
-const queueBackground = (label, task) => {
+const queueBackground = (label: string, task: BackgroundTask) => {
   setImmediate(() => {
     Promise.resolve()
       .then(task)
-      .catch((error) => console.warn(`[${label}] فشلت المهمة الخلفية:`, error.message));
+      .catch((error: unknown) => console.warn(
+        `[${label}] فشلت المهمة الخلفية:`,
+        getErrorMessage(error)
+      ));
   });
 };
 
-const uniqueById = (offers) => {
-  const seen = new Set();
+const uniqueById = (offers: OfferLike[]) => {
+  const seen = new Set<string>();
   return offers.filter((offer) => {
     const id = getObjectId(offer.donor)?.toString();
     if (!id || seen.has(id)) return false;
@@ -79,7 +148,7 @@ const uniqueById = (offers) => {
   });
 };
 
-const cleanupOfferImages = async (offers, label) => {
+const cleanupOfferImages = async (offers: OfferLike[], label: string) => {
   const images = offers.filter((offer) => offer?._id && offer.cloudinaryId);
   if (!images.length) return;
 
@@ -97,21 +166,26 @@ const cleanupOfferImages = async (offers, label) => {
   }
 };
 
-const endSession = async (session) => {
+const endSession = async (session: ClientSession) => {
   try {
     await session.endSession();
-  } catch (error) {
-    console.warn('[DonationRequest] تعذر إنهاء MongoDB session:', error.message);
+  } catch (error: unknown) {
+    console.warn('[DonationRequest] تعذر إنهاء MongoDB session:', getErrorMessage(error));
   }
 };
 
-const isTransactionConflict = (error) =>
-  [11000, 112, 251].includes(error?.code)
-  || error?.hasErrorLabel?.('TransientTransactionError')
-  || error?.hasErrorLabel?.('UnknownTransactionCommitResult');
+const isTransactionConflict = (error: unknown) => {
+  const details = getErrorDetails(error);
+  const hasErrorLabel = typeof details.hasErrorLabel === 'function'
+    ? details.hasErrorLabel as (label: string) => boolean
+    : null;
+  return [11000, 112, 251].includes(Number(details.code))
+    || Boolean(hasErrorLabel?.('TransientTransactionError'))
+    || Boolean(hasErrorLabel?.('UnknownTransactionCommitResult'));
+};
 
-const normalizeOfferDuplicate = (error) => {
-  if (error?.code !== 11000) return error;
+const normalizeOfferDuplicate = (error: unknown) => {
+  if (!hasErrorCode(error, 11000)) return error;
   return new AppError(
     'لقد قدّمت عرضاً لهذا الطلب مسبقاً ⏳',
     409,
@@ -119,7 +193,11 @@ const normalizeOfferDuplicate = (error) => {
   );
 };
 
-const notifyRejectedOffers = async (offers, request, reason) => {
+const notifyRejectedOffers = async (
+  offers: OfferLike[],
+  request: RequestLike,
+  reason: 'expired' | 'another_offer'
+) => {
   const body = reason === 'expired'
     ? `انتهت مدة طلب "${request.title}" قبل اختيار عرض.`
     : `تم اختيار عرض آخر لطلب "${request.title}" — شكراً لمبادرتك 🙏`;
@@ -138,7 +216,7 @@ const notifyRejectedOffers = async (offers, request, reason) => {
   ));
 };
 
-const expireSingleRequest = async (requestId, now = new Date()) => {
+const expireSingleRequest = async (requestId: EntityId, now = new Date()) => {
   const session = await mongoose.startSession();
   let request = null;
   let expiredOffers = [];
@@ -200,7 +278,7 @@ const expireSingleRequest = async (requestId, now = new Date()) => {
   return request;
 };
 
-exports.createRequestLogic = async (body, userId) => {
+exports.createRequestLogic = async (body: RequestCreateInput, userId: EntityId) => {
   const [user, settings] = await Promise.all([
     User.findById(userId).select('trustLevel isVerified').lean(),
     SystemSettings.getCached(),
@@ -211,7 +289,8 @@ exports.createRequestLogic = async (body, userId) => {
   if (!user.isVerified)
     throw new AppError('يجب تفعيل حسابك أولاً ✅', 403, 'ACCOUNT_NOT_VERIFIED');
 
-  const minLevel = getMinTrustLevel(settings);
+  const requestSettings = asRequestSettings(settings);
+  const minLevel = getMinTrustLevel(requestSettings);
   if ((user.trustLevel ?? 1) < minLevel) {
     throw new AppError(
       `يجب أن يكون مستوى حسابك Level ${minLevel} على الأقل لنشر طلب تبرع 🌟`,
@@ -221,7 +300,7 @@ exports.createRequestLogic = async (body, userId) => {
   }
 
   const currentMonth = new Date().toISOString().slice(0, 7);
-  const maxRequests = settings.maxActiveRequestsPerMonth ?? DEFAULT_REQUEST_LIMIT;
+  const maxRequests = requestSettings.maxActiveRequestsPerMonth ?? DEFAULT_REQUEST_LIMIT;
   const usedThisMonth = await donationRequestRepository.countAllMonthlyRequests({
     userId,
     month: currentMonth,
@@ -235,15 +314,15 @@ exports.createRequestLogic = async (body, userId) => {
     );
   }
 
-  if (!settings.categories?.includes(body.category))
+  if (!requestSettings.categories?.includes(body.category))
     throw new AppError(`التصنيف "${body.category}" غير مدعوم`, 400, 'INVALID_CATEGORY');
 
-  if (settings.locations?.length && !settings.locations.includes(body.location))
+  if (requestSettings.locations?.length && !requestSettings.locations.includes(body.location))
     throw new AppError(`المنطقة "${body.location}" غير مدعومة`, 400, 'INVALID_LOCATION');
 
   const expiresAt = new Date();
   expiresAt.setDate(
-    expiresAt.getDate() + (settings.requestExpiryDays ?? DEFAULT_REQUEST_EXPIRY_DAYS)
+    expiresAt.getDate() + (requestSettings.requestExpiryDays ?? DEFAULT_REQUEST_EXPIRY_DAYS)
   );
 
   const request = await donationRequestRepository.createRequest({
@@ -266,7 +345,7 @@ exports.createRequestLogic = async (body, userId) => {
 
 exports.getDonationRequestsLogic = async (
   query: DonationRequestQuery,
-  userId = null
+  userId: EntityId | null = null
 ) => {
   const page = Math.max(1, Number.parseInt(String(query.page ?? ''), 10) || 1);
   const settings = await SystemSettings.getCached();
@@ -314,7 +393,7 @@ exports.getDonationRequestsLogic = async (
   ]);
 
   return {
-    requests: requests.map((request) => toEffectivePublicRequest(request, {
+    requests: requests.map((request: RequestLike) => toEffectivePublicRequest(request, {
       includeFulfilledItem: mine,
     })),
     total,
@@ -323,7 +402,7 @@ exports.getDonationRequestsLogic = async (
   };
 };
 
-exports.cancelRequestLogic = async (requestId, userId) => {
+exports.cancelRequestLogic = async (requestId: EntityId, userId: EntityId) => {
   const session = await mongoose.startSession();
   let request;
   let cancelledOffers = [];
@@ -390,7 +469,7 @@ exports.cancelRequestLogic = async (requestId, userId) => {
   return { msg: 'تم إلغاء الطلب ✅' };
 };
 
-exports.getMyRequestsLogic = async (userId) => {
+exports.getMyRequestsLogic = async (userId: EntityId) => {
   const currentMonth = new Date().toISOString().slice(0, 7);
   const [requests, settings, usedThisMonth] = await Promise.all([
     donationRequestRepository.findUserRequests(userId),
@@ -400,7 +479,7 @@ exports.getMyRequestsLogic = async (userId) => {
   const max = settings.maxActiveRequestsPerMonth ?? DEFAULT_REQUEST_LIMIT;
 
   return {
-    requests: requests.map((request) => toEffectivePublicRequest(request, {
+    requests: requests.map((request: RequestLike) => toEffectivePublicRequest(request, {
       includeFulfilledItem: true,
     })),
     quota: {
@@ -411,7 +490,12 @@ exports.getMyRequestsLogic = async (userId) => {
   };
 };
 
-exports.submitOfferLogic = async (requestId, donorId, body, file) => {
+exports.submitOfferLogic = async (
+  requestId: EntityId,
+  donorId: EntityId,
+  body: OfferInput,
+  file?: UploadedFile
+) => {
   const [request, donor, settings] = await Promise.all([
     donationRequestRepository.findActiveRequestById(requestId),
     User.findById(donorId).select('isVerified trustLevel phoneVerified name').lean(),
@@ -528,8 +612,11 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
     if (uploaded?.public_id) {
       try {
         await deleteFromCloudinary(uploaded.public_id);
-      } catch (cleanupError) {
-        console.warn('[submitDonationOffer] تعذر تنظيف الصورة بعد فشل الحفظ:', cleanupError.message);
+      } catch (cleanupError: unknown) {
+        console.warn(
+          '[submitDonationOffer] تعذر تنظيف الصورة بعد فشل الحفظ:',
+          getErrorMessage(cleanupError)
+        );
       }
     }
     throw normalizeOfferDuplicate(error);
@@ -538,7 +625,7 @@ exports.submitOfferLogic = async (requestId, donorId, body, file) => {
   }
 };
 
-exports.getOffersLogic = async (requestId, userId) => {
+exports.getOffersLogic = async (requestId: EntityId, userId: EntityId) => {
   const request = await DonationRequest.findById(requestId)
     .select('requester status expiresAt')
     .lean();
@@ -551,16 +638,20 @@ exports.getOffersLogic = async (requestId, userId) => {
   if (isPastExpiry(request)) await expireSingleRequest(requestId);
 
   const offers = await donationOfferRepository.findOffersByRequest(requestId);
-  offers.sort((left, right) => {
+  offers.sort((left: OfferLike, right: OfferLike) => {
     const statusOrder = Number(right.status === 'pending') - Number(left.status === 'pending');
     if (statusOrder) return statusOrder;
-    return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+    return new Date(right.createdAt ?? 0).getTime() - new Date(left.createdAt ?? 0).getTime();
   });
 
   return { offers: offers.map(toPublicOffer) };
 };
 
-exports.acceptOfferLogic = async (requestId, offerId, userId) => {
+exports.acceptOfferLogic = async (
+  requestId: EntityId,
+  offerId: EntityId,
+  userId: EntityId
+) => {
   const settings = await SystemSettings.getCached();
   const session = await mongoose.startSession();
   let request;
@@ -629,7 +720,7 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
       }).select('_id donor cloudinaryId').session(session).lean(),
     ]);
 
-    if (!requesterUser || (requesterUser.trustLevel ?? 0) < getMinTrustLevel(settings))
+    if (!requesterUser || (requesterUser.trustLevel ?? 0) < getMinTrustLevel(asRequestSettings(settings)))
       throw new AppError('صاحب الطلب لم يعد مؤهلاً لإتمامه', 403, 'REQUESTER_NOT_ELIGIBLE');
     if (!donor)
       throw new AppError('المتبرع لم يعد مؤهلاً لإتمام العرض', 409, 'OFFER_DONOR_UNAVAILABLE');
@@ -741,7 +832,11 @@ exports.acceptOfferLogic = async (requestId, offerId, userId) => {
   };
 };
 
-exports.rejectOfferLogic = async (requestId, offerId, userId) => {
+exports.rejectOfferLogic = async (
+  requestId: EntityId,
+  offerId: EntityId,
+  userId: EntityId
+) => {
   const session = await mongoose.startSession();
   let request;
   let offer;
@@ -794,7 +889,11 @@ exports.rejectOfferLogic = async (requestId, offerId, userId) => {
   return { msg: 'تم رفض العرض' };
 };
 
-exports.withdrawOfferLogic = async (requestId, offerId, donorId) => {
+exports.withdrawOfferLogic = async (
+  requestId: EntityId,
+  offerId: EntityId,
+  donorId: EntityId
+) => {
   const session = await mongoose.startSession();
   let request;
   let offer;
@@ -846,7 +945,11 @@ exports.withdrawOfferLogic = async (requestId, offerId, donorId) => {
   return { msg: 'تم سحب العرض بنجاح' };
 };
 
-exports.getRequestByIdLogic = async (requestId, viewerId = null, viewerRole = 'user') => {
+exports.getRequestByIdLogic = async (
+  requestId: EntityId,
+  viewerId: EntityId | null = null,
+  viewerRole = 'user'
+) => {
   let request = await donationRequestRepository.findRequestByIdWithItem(requestId);
   if (!request)
     throw new AppError('الطلب غير موجود', 404, 'REQUEST_NOT_FOUND');

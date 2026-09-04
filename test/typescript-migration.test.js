@@ -44,7 +44,7 @@ test('مصادر Backend التشغيلية TypeScript وتُبنى إلى dist 
   ]);
 });
 
-test('طبقة TypeScript الصارمة تفحص الأدوات وعقود DTO والمستودعات ضمن verify', async () => {
+test('طبقة TypeScript الصارمة تفحص Controllers وDTOs وRepositories وServices ضمن verify', async () => {
   const [
     packageJson,
     strictConfig,
@@ -54,6 +54,8 @@ test('طبقة TypeScript الصارمة تفحص الأدوات وعقود DTO 
     itemDto,
     repositoryTypes,
     conversationRepository,
+    serviceTypes,
+    donationRequestService,
   ] = await Promise.all([
     readFile(path.join(projectRoot, 'package.json'), 'utf8').then(JSON.parse),
     readFile(path.join(projectRoot, 'tsconfig.strict.json'), 'utf8').then(JSON.parse),
@@ -63,13 +65,17 @@ test('طبقة TypeScript الصارمة تفحص الأدوات وعقود DTO 
     readFile(path.join(projectRoot, 'dtos', 'itemDto.ts'), 'utf8'),
     readFile(path.join(projectRoot, 'repositories', 'repositoryTypes.ts'), 'utf8'),
     readFile(path.join(projectRoot, 'repositories', 'conversationRepository.ts'), 'utf8'),
+    readFile(path.join(projectRoot, 'services', 'serviceTypes.ts'), 'utf8'),
+    readFile(path.join(projectRoot, 'services', 'donationRequestService.ts'), 'utf8'),
   ]);
 
   assert.equal(strictConfig.compilerOptions.strict, true);
   assert.equal(strictConfig.compilerOptions.noEmit, true);
   assert.ok(strictConfig.include.includes('config/env.ts'));
+  assert.ok(strictConfig.include.includes('controllers/**/*.ts'));
   assert.ok(strictConfig.include.includes('dtos/**/*.ts'));
   assert.ok(strictConfig.include.includes('repositories/**/*.ts'));
+  assert.ok(strictConfig.include.includes('services/**/*.ts'));
   assert.ok(strictConfig.include.includes('utils/otp.ts'));
   assert.match(packageJson.scripts.verify, /typecheck:strict/);
   assert.match(asyncHandler, /RequestHandler/);
@@ -82,4 +88,8 @@ test('طبقة TypeScript الصارمة تفحص الأدوات وعقود DTO 
   assert.match(repositoryTypes, /RepositoryRecord = Record<string, unknown>/);
   assert.match(conversationRepository, /ConversationPair/);
   assert.match(conversationRepository, /error: unknown/);
+  assert.match(serviceTypes, /UploadedFile/);
+  assert.match(serviceTypes, /getErrorMessage = \(error: unknown/);
+  assert.match(donationRequestService, /body: RequestCreateInput/);
+  assert.match(donationRequestService, /file\?: UploadedFile/);
 });

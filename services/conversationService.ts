@@ -9,35 +9,71 @@ const {
   conversationRoom,
   userRoom,
 } = require('../socket/contracts');
+import type {
+  EntityId,
+  RealtimeServer,
+  ServiceRecord,
+} from './serviceTypes';
+import { hasErrorCode } from './serviceTypes';
 
-const asId = (value) => (value?._id || value)?.toString();
+type ConversationRecord = ServiceRecord & {
+  _id: EntityId;
+  participants?: unknown[];
+};
 
-const assertObjectId = (value, fieldName) => {
+type OpenConversationInput = {
+  itemId: EntityId;
+  userId: EntityId;
+  targetUserId?: EntityId | null;
+  donorId?: EntityId | null;
+  io?: RealtimeServer | null;
+};
+
+type ConversationActionInput = {
+  conversationId: EntityId;
+  userId: EntityId;
+  io?: RealtimeServer | null;
+};
+
+type GetMessagesInput = ConversationActionInput & { page?: unknown };
+
+const asId = (value: unknown): string | undefined => {
+  if (value == null) return undefined;
+  const candidate = typeof value === 'object' && '_id' in value
+    ? value._id
+    : value;
+  return candidate == null ? undefined : String(candidate);
+};
+
+const assertObjectId = (value: unknown, fieldName: string) => {
   if (!mongoose.isObjectIdOrHexString(value)) {
     throw new AppError(`معرّف ${fieldName} غير صالح`, 400, 'INVALID_ID');
   }
 };
 
-const participantIds = (conversation) => (
+const participantIds = (conversation: ConversationRecord | null | undefined) => (
   (conversation?.participants || [])
     .map(asId)
-    .filter(Boolean)
+    .filter((participantId): participantId is string => Boolean(participantId))
 );
 
-const assertParticipant = (conversation, userId) => {
+const assertParticipant = (
+  conversation: ConversationRecord | null,
+  userId: EntityId
+) => {
   if (!repo.isParticipant(conversation, userId)) {
     throw new AppError('غير مصرح لك بالوصول إلى هذه المحادثة', 403, 'CHAT_FORBIDDEN');
   }
 };
 
-exports.listConversationsLogic = async (userId) => {
+exports.listConversationsLogic = async (userId: EntityId) => {
   assertObjectId(userId, 'المستخدم');
 
   const conversations = await repo.findUserConversations(userId);
-  const ids = conversations.map((conversation) => conversation._id);
+  const ids = conversations.map((conversation: ConversationRecord) => conversation._id);
   const unreadMap = await repo.countUnreadForUserBatch(ids, userId);
 
-  return conversations.map((conversation) => (
+  return conversations.map((conversation: ConversationRecord) => (
     dto.toConversationListItem(
       conversation,
       unreadMap[conversation._id.toString()] || 0
@@ -45,13 +81,19 @@ exports.listConversationsLogic = async (userId) => {
   ));
 };
 
-exports.getUnreadCountLogic = async (userId) => {
+exports.getUnreadCountLogic = async (userId: EntityId) => {
   assertObjectId(userId, 'المستخدم');
   const unreadCount = await repo.countUnreadForUser(userId);
   return { unreadCount };
 };
 
-exports.openConversationLogic = async ({ itemId, userId, targetUserId = null, donorId, io }) => {
+exports.openConversationLogic = async ({
+  itemId,
+  userId,
+  targetUserId = null,
+  donorId,
+  io,
+}: OpenConversationInput) => {
   assertObjectId(itemId, 'الغرض');
   assertObjectId(userId, 'المستخدم');
 
@@ -103,8 +145,8 @@ exports.openConversationLogic = async ({ itemId, userId, targetUserId = null, do
         requester: requesterId,
       });
       isNew = true;
-    } catch (error) {
-      if (error?.code !== 11000) throw error;
+    } catch (error: unknown) {
+      if (!hasErrorCode(error, 11000)) throw error;
       conversation = await repo.findConversationByPair({
         itemId,
         owner: ownerId,
@@ -116,7 +158,7 @@ exports.openConversationLogic = async ({ itemId, userId, targetUserId = null, do
   if (!conversation) {
     throw new AppError('تعذر فتح المحادثة', 500, 'CHAT_OPEN_FAILED');
   }
-  assertParticipant(conversation, currentUserId);
+  assertParticipant(conversation as ConversationRecord, currentUserId);
 
   const response = {
     conversation: dto.toConversationListItem(conversation, 0),
@@ -124,7 +166,7 @@ exports.openConversationLogic = async ({ itemId, userId, targetUserId = null, do
   };
 
   if (io && isNew) {
-    participantIds(conversation).forEach((participantId) => {
+    participantIds(conversation as ConversationRecord).forEach((participantId) => {
       io.to(userRoom(participantId)).emit(
         SOCKET_EVENTS.NEW_CONVERSATION,
         response.conversation
@@ -135,7 +177,11 @@ exports.openConversationLogic = async ({ itemId, userId, targetUserId = null, do
   return response;
 };
 
-exports.getMessagesLogic = async ({ conversationId, userId, page = 1 }) => {
+exports.getMessagesLogic = async ({
+  conversationId,
+  userId,
+  page = 1,
+}: GetMessagesInput) => {
   assertObjectId(conversationId, 'المحادثة');
   assertObjectId(userId, 'المستخدم');
 
@@ -148,7 +194,7 @@ exports.getMessagesLogic = async ({ conversationId, userId, page = 1 }) => {
   if (!conversation) {
     throw new AppError('المحادثة غير موجودة', 404, 'CHAT_NOT_FOUND');
   }
-  assertParticipant(conversation, userId);
+  assertParticipant(conversation as ConversationRecord, userId);
 
   const result = await repo.findMessagesPage(conversationId, {
     page: parsedPage,
@@ -164,7 +210,11 @@ exports.getMessagesLogic = async ({ conversationId, userId, page = 1 }) => {
   };
 };
 
-exports.markConversationReadLogic = async ({ conversationId, userId, io }) => {
+exports.markConversationReadLogic = async ({
+  conversationId,
+  userId,
+  io,
+}: ConversationActionInput) => {
   assertObjectId(conversationId, 'المحادثة');
   assertObjectId(userId, 'المستخدم');
 
@@ -172,7 +222,7 @@ exports.markConversationReadLogic = async ({ conversationId, userId, io }) => {
   if (!conversation) {
     throw new AppError('المحادثة غير موجودة', 404, 'CHAT_NOT_FOUND');
   }
-  assertParticipant(conversation, userId);
+  assertParticipant(conversation as ConversationRecord, userId);
 
   const [markedCount, markedNotificationCount] = await Promise.all([
     repo.markMessagesRead(conversationId, userId),
@@ -189,7 +239,7 @@ exports.markConversationReadLogic = async ({ conversationId, userId, io }) => {
     if (markedNotificationCount > 0) {
       io.to(userRoom(userId)).emit(SOCKET_EVENTS.NOTIFICATION_REFRESH);
     }
-    participantIds(conversation).forEach((participantId) => {
+    participantIds(conversation as ConversationRecord).forEach((participantId) => {
       io.to(userRoom(participantId)).emit(
         SOCKET_EVENTS.CONVERSATION_UPDATED,
         { conversationId }

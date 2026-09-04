@@ -5,7 +5,7 @@ const AppError     = require('../utils/AppError');
 const adminDto     = require('../dtos/adminDto');
 
 // ─── مساعد: تنظيف النصوص ──────────────────────────────────────
-const cleanString = (str) => (typeof str === 'string' ? str.trim() : '');
+const cleanString = (str: unknown) => (typeof str === 'string' ? str.trim() : '');
 
 // ─── Users ────────────────────────────────────────────────────
 exports.promoteUser = asyncHandler(async (req, res) => {
@@ -14,8 +14,8 @@ exports.promoteUser = asyncHandler(async (req, res) => {
 
   const user = await adminService.promoteToLevel2(
     req.params.id,
-    req.user.id,
-    req.user.role,
+    req.user!.id,
+    req.user!.role,
     reason,
     adminNote
   );
@@ -31,8 +31,8 @@ exports.demoteUser = asyncHandler(async (req, res) => {
 
   const user = await adminService.demoteToLevel1(
     req.params.id,
-    req.user.id,
-    req.user.role,
+    req.user!.id,
+    req.user!.role,
     reason,
     adminNote
   );
@@ -55,8 +55,8 @@ exports.banUser = asyncHandler(async (req, res) => {
 
   const user = await adminService.banUser(
     targetUserId,
-    req.user.id,
-    req.user.role,
+    req.user!.id,
+    req.user!.role,
     reason,
     adminNote
   );
@@ -71,8 +71,8 @@ exports.unbanUser = asyncHandler(async (req, res) => {
   const adminNote = cleanString(req.body?.adminNote);
   const user = await adminService.unbanUser(
     req.params.id,
-    req.user.id,
-    req.user.role,
+    req.user!.id,
+    req.user!.role,
     adminNote
   );
   res.json({
@@ -89,7 +89,7 @@ exports.listItems = asyncHandler(async (req, res) => {
 
 exports.deleteItem = asyncHandler(async (req, res) => {
   const adminNote = cleanString(req.body.adminNote);
-  await adminService.deleteItem(req.params.id, req.user.id, adminNote);
+  await adminService.deleteItem(req.params.id, req.user!.id, adminNote);
   res.json({ msg: 'تم حذف الغرض ✅' });
 });
 
@@ -118,8 +118,8 @@ exports.resolveReport = asyncHandler(async (req, res) => {
 
   const report = await adminService.resolveReport(
     req.params.id,
-    req.user.id,
-    req.user.role,
+    req.user!.id,
+    req.user!.role,
     status,
     adminNote
   );

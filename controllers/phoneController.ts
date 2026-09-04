@@ -17,10 +17,21 @@
 // 5. أرسل idToken لـ POST /api/phone/verify-token
 
 const { verifyPhoneWithFirebase } = require('../services/phoneService');
+import type { Request, Response } from 'express';
+
+type ControllerError = {
+  status?: unknown;
+  code?: unknown;
+  message?: unknown;
+};
+
+const normalizeControllerError = (error: unknown): ControllerError => (
+  typeof error === 'object' && error !== null ? error : {}
+);
 
 // ─── POST /api/phone/verify-token ────────────────────────────
 // Body: { idToken: string }  ← صادر من Firebase Client SDK
-exports.verifyToken = async (req, res) => {
+exports.verifyToken = async (req: Request, res: Response) => {
   try {
     const { idToken } = req.body;
 
@@ -33,14 +44,14 @@ exports.verifyToken = async (req, res) => {
 
     // ✅ الشرط الصحيح: phoneVerified وليس trustLevel
     // مستخدم Level 2 قد يغيّر رقمه → يحتاج إعادة تحقق
-    if (req.user.phoneVerified) {
+    if (req.user!.phoneVerified) {
       return res.status(400).json({
         msg:  'رقمك محقق بالفعل ✅',
         code: 'ALREADY_VERIFIED',
       });
     }
 
-    const { phone } = await verifyPhoneWithFirebase(req.user.id, idToken);
+    const { phone } = await verifyPhoneWithFirebase(req.user!.id, idToken);
 
     return res.status(200).json({
       msg:             'تم التحقق بنجاح 🎉 يمكنك الآن حجز العناصر',
@@ -48,26 +59,33 @@ exports.verifyToken = async (req, res) => {
       requiresRefresh: true,
     });
 
-  } catch (err) {
-    const status = Number.isInteger(err.status) ? err.status : 500;
-    const isFeatureDisabled = err.code === 'PHONE_VERIFICATION_DISABLED';
+  } catch (error: unknown) {
+    const err = normalizeControllerError(error);
+    const status = typeof err.status === 'number' && Number.isInteger(err.status)
+      ? err.status
+      : 500;
+    const errorCode = typeof err.code === 'string' ? err.code : null;
+    const errorMessage = typeof err.message === 'string'
+      ? err.message
+      : 'تعذر التحقق من الهاتف حالياً';
+    const isFeatureDisabled = errorCode === 'PHONE_VERIFICATION_DISABLED';
     const isSafeError = status < 500 || isFeatureDisabled;
     return res.status(status).json({
-      msg:  isSafeError ? err.message : 'تعذر التحقق من الهاتف حالياً',
-      code: isSafeError ? (err.code ?? 'PHONE_VERIFICATION_FAILED') : 'SERVER_ERROR',
+      msg:  isSafeError ? errorMessage : 'تعذر التحقق من الهاتف حالياً',
+      code: isSafeError ? (errorCode ?? 'PHONE_VERIFICATION_FAILED') : 'SERVER_ERROR',
     });
   }
 };
 
 // ─── Deprecated: send-otp و verify-otp (كانا لـ Twilio) ──────
-exports.sendOtp = (_req, res) =>
+exports.sendOtp = (_req: Request, res: Response) =>
   res.status(410).json({
     msg:  'هذا الـ endpoint محذوف — الرجاء استخدام Firebase Phone Auth في الـ Frontend ثم أرسل idToken لـ /api/phone/verify-token',
     code: 'ENDPOINT_REMOVED',
     docs: 'https://firebase.google.com/docs/auth/web/phone-auth',
   });
 
-exports.verifyOtp = (_req, res) =>
+exports.verifyOtp = (_req: Request, res: Response) =>
   res.status(410).json({
     msg:  'هذا الـ endpoint محذوف — الرجاء استخدام Firebase Phone Auth في الـ Frontend ثم أرسل idToken لـ /api/phone/verify-token',
     code: 'ENDPOINT_REMOVED',

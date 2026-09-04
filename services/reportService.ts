@@ -4,10 +4,25 @@ const userRepository   = require('../repositories/userRepository');
 const AppError         = require('../utils/AppError');
 const SystemSettings   = require('../models/SystemSettings');
 const { DEFAULT_REPORT_REASONS } = require('../dtos/reportDto');
+import type { EntityId } from './serviceTypes';
+import { hasErrorCode } from './serviceTypes';
 
-const sameId = (left, right) => String(left ?? '') === String(right ?? '');
+type ReportContext = {
+  itemId?: EntityId | null;
+  reporterId: EntityId;
+  reportedUserId: EntityId;
+};
 
-const assertValidItemContext = async ({ itemId, reporterId, reportedUserId }) => {
+type CreateReportInput = {
+  reportedUserId: EntityId;
+  itemId?: EntityId | null;
+  reason: string;
+  details?: string;
+};
+
+const sameId = (left: unknown, right: unknown) => String(left ?? '') === String(right ?? '');
+
+const assertValidItemContext = async ({ itemId, reporterId, reportedUserId }: ReportContext) => {
   if (!itemId) return;
 
   const item = await reportRepository.findContextItem(itemId);
@@ -38,7 +53,10 @@ const assertValidItemContext = async ({ itemId, reporterId, reportedUserId }) =>
 };
 
 // ─── إنشاء بلاغ ───────────────────────────────────────────────
-exports.createReport = async (reporterId, { reportedUserId, itemId, reason, details }) => {
+exports.createReport = async (
+  reporterId: EntityId,
+  { reportedUserId, itemId, reason, details }: CreateReportInput
+) => {
   if (sameId(reporterId, reportedUserId))
     throw new AppError('لا يمكنك الإبلاغ عن نفسك', 400, 'SELF_REPORT');
 
@@ -91,8 +109,8 @@ exports.createReport = async (reporterId, { reportedUserId, itemId, reason, deta
       status:          'pending',
       appealDeadline,
     });
-  } catch (error) {
-    if (error?.code === 11000) {
+  } catch (error: unknown) {
+    if (hasErrorCode(error, 11000)) {
       throw new AppError(
         'لديك بلاغ مفتوح مسبقاً على هذا المستخدم',
         409,
@@ -104,7 +122,11 @@ exports.createReport = async (reporterId, { reportedUserId, itemId, reason, deta
 };
 
 // ─── استئناف / طعن ────────────────────────────────────────────
-exports.submitAppeal = async (reportId, userId, { appealText }) => {
+exports.submitAppeal = async (
+  reportId: EntityId,
+  userId: EntityId,
+  { appealText }: { appealText: string }
+) => {
   const report = await reportRepository.findById(reportId);
   if (!report)
     throw new AppError('البلاغ غير موجود', 404, 'REPORT_NOT_FOUND');

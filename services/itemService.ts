@@ -24,6 +24,8 @@ const { toPublicItem, toDonorItem, toReceiverItem } = require('../dtos/itemDto')
 const { buildGamificationProfile } = require('../utils/gamification');
 const { SOCKET_EVENTS }      = require('../socket/contracts');
 const { emitToAll, emitToUser } = require('../socket/emitter');
+import type { EntityId, ServicePayload, UploadedFile } from './serviceTypes';
+import { getErrorMessage } from './serviceTypes';
 
 // ── ✅ ARCH-01: ثوابت مشتركة ────────────────────────────────────────────────
 const DEFAULT_MAX_WAITLIST = 10;
@@ -37,11 +39,45 @@ type ItemListQuery = {
   availableOnly?: string | boolean;
 };
 
-const queueNotification = (userId, payload) => {
+type EntityReference = EntityId | { _id?: EntityId | null };
+type WaitlistEntry = {
+  user: EntityReference;
+  joinedAt?: Date | string;
+};
+type ItemLifecycle = {
+  linkedRequestId?: EntityReference | null;
+  donor?: EntityReference | null;
+  bookedBy?: EntityReference | null;
+  waitlist?: WaitlistEntry[];
+  cancelledBy?: EntityId[];
+};
+type NotificationPayload = ServicePayload & { type: string };
+type ItemInput = {
+  title: string;
+  description?: string;
+  category: string;
+  location: string;
+  condition: string;
+  safeHub?: EntityId | null;
+};
+type ItemUpdateInput = ServicePayload & Partial<ItemInput>;
+type DeliveryConfirmation = 'recipient_confirm' | 'donor_confirm';
+
+const resolveEntityId = (value: EntityReference): EntityId | undefined => {
+  if (typeof value === 'object' && value !== null && '_id' in value) {
+    return value._id ?? undefined;
+  }
+  return value as EntityId;
+};
+
+const queueNotification = (
+  userId: EntityId | null | undefined,
+  payload: NotificationPayload
+) => {
   if (!userId) return;
   setImmediate(() => {
-    notifyUser(userId, payload).catch((err) => {
-      console.warn(`[Items] تعذر إرسال إشعار ${payload.type}:`, err.message);
+    notifyUser(userId, payload).catch((error: unknown) => {
+      console.warn(`[Items] تعذر إرسال إشعار ${payload.type}:`, getErrorMessage(error));
     });
   });
 };
@@ -56,18 +92,21 @@ const resetDeliveryState = () => ({
 });
 
 const findNextEligibleWaitlistCandidate = async (
-  waitlist,
-  itemId,
-  maxBookings,
-  excludedUserIds = []
+  waitlist: WaitlistEntry[] | null | undefined,
+  itemId: EntityId,
+  maxBookings: number,
+  excludedUserIds: EntityReference[] = []
 ) => {
-  const skippedUserIds = [];
+  const skippedUserIds: EntityId[] = [];
   const excluded = new Set(
-    excludedUserIds.filter(Boolean).map((id) => id.toString())
+    excludedUserIds
+      .map(resolveEntityId)
+      .filter((id): id is EntityId => Boolean(id))
+      .map((id) => id.toString())
   );
 
   for (const entry of waitlist ?? []) {
-    const candidateId = entry.user?._id ?? entry.user;
+    const candidateId = resolveEntityId(entry.user);
     if (!candidateId || excluded.has(candidateId.toString())) {
       if (candidateId) skippedUserIds.push(candidateId);
       continue;
@@ -102,9 +141,12 @@ const findNextEligibleWaitlistCandidate = async (
   return { candidate: null, skippedUserIds };
 };
 
-const isAdminRole = (role) => ['admin', 'super_admin'].includes(role);
+const isAdminRole = (role: string) => ['admin', 'super_admin'].includes(role);
 
-const assertGenericLifecycleAllowed = (item, userId) => {
+const assertGenericLifecycleAllowed = (
+  item: ItemLifecycle | null | undefined,
+  userId: EntityId | null | undefined
+) => {
   if (!item?.linkedRequestId) return;
 
   const isParticipant = [item.donor, item.bookedBy].some(
@@ -158,7 +200,7 @@ exports.getItemsLogic = async (query: ItemListQuery = {}) => {
   ]);
 
   return {
-    items: items.map((item) => toPublicItem(item)),
+    items: items.map((item: unknown) => toPublicItem(item)),
     total,
     page,
     pages: Math.max(1, Math.ceil(total / limit)),
@@ -168,7 +210,7 @@ exports.getItemsLogic = async (query: ItemListQuery = {}) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. جلب أغراضي
 // ─────────────────────────────────────────────────────────────────────────────
-exports.getMyItemsLogic = async (userId) => {
+exports.getMyItemsLogic = async (userId: EntityId) => {
   const [user, myDonations, myRequests] = await Promise.all([
     User.findById(userId)
       .select(
@@ -189,15 +231,19 @@ exports.getMyItemsLogic = async (userId) => {
 
   return {
     user: safeUser,
-    myDonations: myDonations.map((item) => toDonorItem(item, userId)),
-    myRequests: myRequests.map((item) => toReceiverItem(item, userId)),
+    myDonations: myDonations.map((item: unknown) => toDonorItem(item, userId)),
+    myRequests: myRequests.map((item: unknown) => toReceiverItem(item, userId)),
   };
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. جلب غرض بالـ ID
 // ─────────────────────────────────────────────────────────────────────────────
-exports.getItemByIdLogic = async (itemId, requesterId, requesterRole = 'user') => {
+exports.getItemByIdLogic = async (
+  itemId: EntityId,
+  requesterId: EntityId | null,
+  requesterRole = 'user'
+) => {
   const item = await itemRepository.findItemDetails(itemId);
   if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
 
@@ -237,7 +283,11 @@ exports.getItemByIdLogic = async (itemId, requesterId, requesterRole = 'user') =
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. إضافة غرض جديد
 // ─────────────────────────────────────────────────────────────────────────────
-exports.createItemLogic = async (body, userId, file) => {
+exports.createItemLogic = async (
+  body: ItemInput,
+  userId: EntityId,
+  file: UploadedFile
+) => {
   validateImageFile(file, { required: true });
 
   const [user, settings, activeCount, safeHub] = await Promise.all([
@@ -297,8 +347,11 @@ exports.createItemLogic = async (body, userId, file) => {
   } catch (err) {
     try {
       await deleteFromCloudinary(uploadResult.public_id);
-    } catch (cleanupErr) {
-      console.warn('[Cloudinary] تعذر حذف صورة غرض فشل إنشاؤه:', cleanupErr.message);
+    } catch (cleanupError: unknown) {
+      console.warn(
+        '[Cloudinary] تعذر حذف صورة غرض فشل إنشاؤه:',
+        getErrorMessage(cleanupError)
+      );
     }
     throw err;
   }
@@ -317,7 +370,9 @@ exports.createItemLogic = async (body, userId, file) => {
         requester: { $ne: userId },
       }).select('requester').lean();
 
-      const uniqueUsers = [...new Set(requests.map((request) => request.requester.toString()))];
+      const uniqueUsers = [...new Set(requests.map(
+        (request: { requester: EntityId }) => request.requester.toString()
+      ))];
       await Promise.allSettled(
         uniqueUsers.map((uid) =>
           notifyUser(uid, {
@@ -338,7 +393,7 @@ exports.createItemLogic = async (body, userId, file) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // 5. حجز غرض
 // ─────────────────────────────────────────────────────────────────────────────
-exports.bookItemLogic = async (itemId, userId) => {
+exports.bookItemLogic = async (itemId: EntityId, userId: EntityId) => {
   const [user, settings, snapshot] = await Promise.all([
     User.findById(userId).select('isVerified trustLevel role').lean(),
     SystemSettings.getCached(),
@@ -386,7 +441,7 @@ exports.bookItemLogic = async (itemId, userId) => {
     throw new AppError('أنت حاجز هذا الغرض بالفعل', 409, 'ALREADY_BOOKED');
 
   const wasCancelled = snapshot.cancelledBy?.some(
-    (id) => id.toString() === userId.toString()
+    (id: EntityId) => id.toString() === userId.toString()
   );
   if (wasCancelled)
     throw new AppError(
@@ -471,7 +526,7 @@ exports.bookItemLogic = async (itemId, userId) => {
       );
 
     const alreadyIn = waitlist.some(
-      (entry) => entry.user.toString() === userId.toString()
+      (entry: WaitlistEntry) => entry.user.toString() === userId.toString()
     );
     if (alreadyIn)
       throw new AppError(
@@ -519,7 +574,7 @@ exports.bookItemLogic = async (itemId, userId) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // 6. مغادرة قائمة الانتظار
 // ─────────────────────────────────────────────────────────────────────────────
-exports.leaveWaitlistLogic = async (itemId, userId) => {
+exports.leaveWaitlistLogic = async (itemId: EntityId, userId: EntityId) => {
   const userObjectId = new mongoose.Types.ObjectId(userId);
   const updated = await Item.findOneAndUpdate(
     {
@@ -555,7 +610,7 @@ exports.leaveWaitlistLogic = async (itemId, userId) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // 7. إلغاء الحجز ونقل الدور إن أمكن
 // ─────────────────────────────────────────────────────────────────────────────
-exports.cancelBookingLogic = async (itemId, userId) => {
+exports.cancelBookingLogic = async (itemId: EntityId, userId: EntityId) => {
   const snapshot = await Item.findById(itemId)
     .select('status donor bookedBy waitlist cancelledBy title recipientConfirmed linkedRequestId')
     .lean();
@@ -565,7 +620,9 @@ exports.cancelBookingLogic = async (itemId, userId) => {
 
   const isBooker = snapshot.bookedBy?.toString() === userId;
   const isDonor  = snapshot.donor?.toString()    === userId;
-  const inWait   = snapshot.waitlist?.some((w) => w.user.toString() === userId);
+  const inWait   = snapshot.waitlist?.some(
+    (entry: WaitlistEntry) => entry.user.toString() === userId.toString()
+  );
 
   if (!isBooker && !isDonor && !inWait)
     throw new AppError('ليس لديك صلاحية إلغاء هذا الحجز', 403, 'FORBIDDEN');
@@ -739,7 +796,11 @@ exports.cancelBookingLogic = async (itemId, userId) => {
 // 8. تأكيد التسليم المزدوج
 // ✅ FIX [SESSION-01]: session.endSession() في finally بدل التكرار
 // ─────────────────────────────────────────────────────────────────────────────
-exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
+exports.completeDeliveryLogic = async (
+  itemId: EntityId,
+  userId: EntityId,
+  confirmationType: DeliveryConfirmation
+) => {
   if (!userId) throw new AppError('المستخدم غير معرّف', 401, 'UNAUTHORIZED');
 
   const userObjectId = typeof userId === 'string'
@@ -895,10 +956,10 @@ exports.completeDeliveryLogic = async (itemId, userId, confirmationType) => {
 // 9. تعديل غرض
 // ─────────────────────────────────────────────────────────────────────────────
 exports.updateItemLogic = async (
-  itemId,
-  userId,
-  body: Record<string, any> = {},
-  file = null
+  itemId: EntityId,
+  userId: EntityId,
+  body: ItemUpdateInput = {},
+  file: UploadedFile | null = null
 ) => {
   const snapshot = await Item.findById(itemId)
     .select('donor status cloudinaryId')
@@ -956,7 +1017,7 @@ exports.updateItemLogic = async (
     'condition',
     'safeHub',
   ];
-  const updates: Record<string, any> = {};
+  const updates: ServicePayload = {};
 
   for (const field of allowedFields) {
     if (!Object.hasOwn(body, field)) continue;
@@ -1005,8 +1066,11 @@ exports.updateItemLogic = async (
     if (uploadedImage?.public_id) {
       try {
         await deleteFromCloudinary(uploadedImage.public_id);
-      } catch (cleanupErr) {
-        console.warn('[Cloudinary] تعذر حذف الصورة الجديدة بعد فشل التعديل:', cleanupErr.message);
+      } catch (cleanupError: unknown) {
+        console.warn(
+          '[Cloudinary] تعذر حذف الصورة الجديدة بعد فشل التعديل:',
+          getErrorMessage(cleanupError)
+        );
       }
     }
     throw err;
@@ -1016,8 +1080,11 @@ exports.updateItemLogic = async (
     if (uploadedImage?.public_id) {
       try {
         await deleteFromCloudinary(uploadedImage.public_id);
-      } catch (cleanupErr) {
-        console.warn('[Cloudinary] تعذر حذف الصورة الجديدة بعد تعارض التعديل:', cleanupErr.message);
+      } catch (cleanupError: unknown) {
+        console.warn(
+          '[Cloudinary] تعذر حذف الصورة الجديدة بعد تعارض التعديل:',
+          getErrorMessage(cleanupError)
+        );
       }
     }
 
@@ -1035,8 +1102,11 @@ exports.updateItemLogic = async (
   ) {
     try {
       await deleteFromCloudinary(snapshot.cloudinaryId);
-    } catch (cleanupErr) {
-      console.warn('[Cloudinary] تعذر حذف الصورة القديمة بعد التعديل:', cleanupErr.message);
+    } catch (cleanupError: unknown) {
+      console.warn(
+        '[Cloudinary] تعذر حذف الصورة القديمة بعد التعديل:',
+        getErrorMessage(cleanupError)
+      );
     }
   }
 
@@ -1053,7 +1123,7 @@ exports.updateItemLogic = async (
 // ─────────────────────────────────────────────────────────────────────────────
 // 10. حذف غرض
 // ─────────────────────────────────────────────────────────────────────────────
-exports.deleteItemLogic = async (itemId, userId) => {
+exports.deleteItemLogic = async (itemId: EntityId, userId: EntityId) => {
   const snapshot = await Item.findById(itemId)
     .select('donor bookedBy waitlist status cloudinaryId title recipientConfirmed linkedRequestId')
     .lean();
@@ -1099,15 +1169,18 @@ exports.deleteItemLogic = async (itemId, userId) => {
   if (snapshot.cloudinaryId) {
     try {
       await deleteFromCloudinary(snapshot.cloudinaryId);
-    } catch (cleanupErr) {
-      console.warn('[Cloudinary] تعذر حذف صورة الغرض المحذوف:', cleanupErr.message);
+    } catch (cleanupError: unknown) {
+      console.warn(
+        '[Cloudinary] تعذر حذف صورة الغرض المحذوف:',
+        getErrorMessage(cleanupError)
+      );
     }
   }
 
   // إغلاق شاشة الغرض فوراً لدى الحاجز وقائمة الانتظار إن كانوا متصلين.
   const affectedUserIds = [...new Set([
     snapshot.bookedBy?.toString(),
-    ...(snapshot.waitlist ?? []).map((entry) => entry.user.toString()),
+    ...(snapshot.waitlist ?? []).map((entry: WaitlistEntry) => entry.user.toString()),
   ].filter(Boolean))];
 
   for (const affectedUserId of affectedUserIds) {

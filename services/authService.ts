@@ -48,10 +48,47 @@ const { toAuthUser, toProfileActivityItem } = require('../dtos/authDto');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/tokenUtils');
 const { generateOtp, hashOtp, verifyOtp } = require('../utils/otp');
 const { hashToken } = require('../utils/cryptoUtils');
+import type { EntityId, ServicePayload } from './serviceTypes';
+import { getErrorMessage } from './serviceTypes';
+
+type AuthSettings = {
+  studentDefaultTrustLevel?: number;
+  studentQuota?: number;
+  defaultUserQuota?: number;
+};
+
+type MutableAuthUser = {
+  email: string;
+  isVerifiedStudent?: boolean;
+  trustLevel?: number;
+  quota?: number;
+};
+
+type EmailInput = { email: string };
+type RegistrationInput = EmailInput & {
+  name: string;
+  password: string;
+  phone?: string;
+};
+type VerificationInput = EmailInput & { otp: string };
+type LoginInput = EmailInput & { password: string };
+type PasswordUpdateInput = {
+  currentPassword: string;
+  newPassword: string;
+};
+type ProfileUpdates = ServicePayload & {
+  name?: string;
+  phone?: string;
+  phoneVerified?: boolean;
+  trustLevel?: number;
+  quota?: number;
+  avatar?: string;
+  avatarPublicId?: string;
+};
 
 
 // ✅ [HC-NEW-01] نطاق [10,14] — أقل من 10 خطر أمني، أكثر من 14 بطء مفرط
-const _rawBcrypt    = parseInt(process.env.BCRYPT_ROUNDS, 10);
+const _rawBcrypt    = parseInt(process.env.BCRYPT_ROUNDS ?? '12', 10);
 const BCRYPT_ROUNDS = (_rawBcrypt >= 10 && _rawBcrypt <= 14) ? _rawBcrypt : 12;
 const DUMMY_PASSWORD_HASH = '$2b$12$v4FB8JgizGmjsYINGhMyE.mqVv9exDY221nU/jT4bkBYEXagU1AgW';
 const _rawRefreshGrace = Number.parseInt(
@@ -62,11 +99,16 @@ const REFRESH_REUSE_GRACE_MS = Number.isInteger(_rawRefreshGrace)
   ? Math.min(Math.max(_rawRefreshGrace, 1000), 10_000)
   : 5000;
 
-const constantTimeHashEqual = (left, right) => {
-  if (!/^[a-f\d]{64}$/i.test(left ?? '') || !/^[a-f\d]{64}$/i.test(right ?? '')) {
+const constantTimeHashEqual = (
+  left: string | null | undefined,
+  right: string | null | undefined
+) => {
+  const leftHash = left ?? '';
+  const rightHash = right ?? '';
+  if (!/^[a-f\d]{64}$/i.test(leftHash) || !/^[a-f\d]{64}$/i.test(rightHash)) {
     return false;
   }
-  return crypto.timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
+  return crypto.timingSafeEqual(Buffer.from(leftHash, 'hex'), Buffer.from(rightHash, 'hex'));
 };
 
 
@@ -76,15 +118,18 @@ const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 // ─── مساعدات خاصة ────────────────────────────────────────────────
 
 
-const isUniversityEmail = async (email) => {
+const isUniversityEmail = async (email: string) => {
   const settings = await SystemSettings.getCached();
   const domains  = settings?.universityEmailDomains ?? [];
   const lower    = email.toLowerCase().trim();
-  return domains.some((d) => lower.endsWith(d.toLowerCase().trim()));
+  return domains.some((domain: string) => lower.endsWith(domain.toLowerCase().trim()));
 };
 
 
-const _upgradeStudentTrust = async (user, settings) => {
+const _upgradeStudentTrust = async (
+  user: MutableAuthUser,
+  settings?: AuthSettings | null
+) => {
   const cfg = settings ?? await SystemSettings.getCached();
 
   if (!(await isUniversityEmail(user.email))) return;
@@ -104,7 +149,7 @@ const _upgradeStudentTrust = async (user, settings) => {
 };
 
 
-const _getProfilePageParams = async (page) => {
+const _getProfilePageParams = async (page: number) => {
   const settings = await SystemSettings.getCached();
   const pageSize = settings?.profilePageSize ?? 10;
   return { pageSize, skip: (page - 1) * pageSize, settings };
@@ -112,7 +157,14 @@ const _getProfilePageParams = async (page) => {
 
 // ✅ [DUP-NEW-01] دالة مشتركة لإصدار OTP — تُزيل التكرار من 3 أماكن
 // fire-and-forget للبريد: لا ننتظر الإرسال حتى لا نُعطّل الاستجابة
-const _issueVerificationOtp = async (userId, email, name, isStudent, otpExpiryMinutes, extraFields = {}) => {
+const _issueVerificationOtp = async (
+  userId: EntityId,
+  email: string,
+  name: string,
+  isStudent: boolean,
+  otpExpiryMinutes: number,
+  extraFields: ServicePayload = {}
+) => {
   const rawOtp    = generateOtp();
   const otpHash   = hashOtp(rawOtp);
   const otpExpiry = new Date(Date.now() + otpExpiryMinutes * 60 * 1000);
@@ -127,12 +179,15 @@ const _issueVerificationOtp = async (userId, email, name, isStudent, otpExpiryMi
 
 
   emailService.sendVerificationEmail(email, rawOtp, name, isStudent, otpExpiryMinutes)
-    .catch((err) => console.error('[Mail Error] _issueVerificationOtp:', err.message));
+    .catch((error: unknown) => console.error(
+      '[Mail Error] _issueVerificationOtp:',
+      getErrorMessage(error)
+    ));
 };
 
 
 // ─── getCurrentUserLogic ──────────────────────────────────────────
-exports.getCurrentUserLogic = async (userId) => {
+exports.getCurrentUserLogic = async (userId: EntityId) => {
   const user = await userRepository.findById(userId);
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود', code: 'USER_NOT_FOUND' } };
   return { statusCode: 200, body: toAuthUser(user) };
@@ -140,7 +195,7 @@ exports.getCurrentUserLogic = async (userId) => {
 
 
 // ─── resendOtpLogic ───────────────────────────────────────────────
-exports.resendOtpLogic = async ({ email }) => {
+exports.resendOtpLogic = async ({ email }: EmailInput) => {
   if (!email) return { statusCode: 400, body: { msg: 'البريد الإلكتروني مطلوب' } };
 
 
@@ -175,7 +230,7 @@ exports.resendOtpLogic = async ({ email }) => {
 
 
 // ─── registerLogic ────────────────────────────────────────────────
-exports.registerLogic = async ({ name, email, password, phone }) => {
+exports.registerLogic = async ({ name, email, password, phone }: RegistrationInput) => {
   const settings          = await SystemSettings.getCached();
   const otpExpiryMinutes  = settings?.otpExpiryMinutes          ?? 10;
   const defaultQuota      = settings?.defaultUserQuota          ?? 2;
@@ -251,7 +306,7 @@ exports.registerLogic = async ({ name, email, password, phone }) => {
 
 
 // ─── verifyEmailLogic ─────────────────────────────────────────────
-exports.verifyEmailLogic = async ({ email, otp }) => {
+exports.verifyEmailLogic = async ({ email, otp }: VerificationInput) => {
   const settings    = await SystemSettings.getCached();
   const maxAttempts = settings?.maxOtpAttempts ?? 5;
 
@@ -335,7 +390,7 @@ exports.verifyEmailLogic = async ({ email, otp }) => {
 
 
 // ─── loginLogic ───────────────────────────────────────────────────
-exports.loginLogic = async ({ email, password }) => {
+exports.loginLogic = async ({ email, password }: LoginInput) => {
   const user = await userRepository.findByEmailWithPassword(email);
 
   const isMatch = await bcrypt.compare(
@@ -451,7 +506,10 @@ exports.loginLogic = async ({ email, password }) => {
 
 
 // ─── refreshLogic ─────────────────────────────────────────────────
-exports.refreshLogic = async (rawRefreshToken, clientIp = 'unknown') => {
+exports.refreshLogic = async (
+  rawRefreshToken: string | null | undefined,
+  clientIp = 'unknown'
+) => {
   if (!rawRefreshToken) {
     return { statusCode: 401, clearCookie: true, body: { msg: 'لا يوجد Refresh Token 🔒', code: 'NO_REFRESH_TOKEN' } };
   }
@@ -460,15 +518,16 @@ exports.refreshLogic = async (rawRefreshToken, clientIp = 'unknown') => {
   let decoded;
   try {
     decoded = verifyRefreshToken(rawRefreshToken);
-  } catch (err) {
+  } catch (error: unknown) {
+    const errorName = error instanceof Error ? error.name : '';
     return {
       statusCode: 401,
       clearCookie: true,
       body: {
-        msg:  err.name === 'TokenExpiredError'
+        msg:  errorName === 'TokenExpiredError'
           ? 'انتهت صلاحية الجلسة، أعد تسجيل الدخول ⏰'
           : 'Refresh Token غير صالح ⚠️',
-        code: err.name === 'TokenExpiredError' ? 'REFRESH_TOKEN_EXPIRED' : 'INVALID_REFRESH_TOKEN',
+        code: errorName === 'TokenExpiredError' ? 'REFRESH_TOKEN_EXPIRED' : 'INVALID_REFRESH_TOKEN',
       },
     };
   }
@@ -603,7 +662,7 @@ exports.refreshLogic = async (rawRefreshToken, clientIp = 'unknown') => {
 
 
 // ─── logoutLogic ──────────────────────────────────────────────────
-exports.logoutLogic = async (userId) => {
+exports.logoutLogic = async (userId: EntityId) => {
   await userRepository.invalidateUserSession(userId);
   sessionCache.invalidate(userId);
   return { statusCode: 200, body: { msg: 'تم تسجيل الخروج بنجاح 👋' } };
@@ -611,7 +670,7 @@ exports.logoutLogic = async (userId) => {
 
 
 // ─── forgotPasswordLogic ──────────────────────────────────────────
-exports.forgotPasswordLogic = async ({ email }) => {
+exports.forgotPasswordLogic = async ({ email }: EmailInput) => {
   const GENERIC = { statusCode: 200, body: { msg: 'إذا كان الإيميل مسجَّلاً، ستصلك رسالة لإعادة تعيين كلمة المرور 📧' } };
   const user    = await userRepository.findByEmail(email);
   if (!user || !user.isVerified || user.isBanned || user.isFrozen) return GENERIC;
@@ -629,7 +688,10 @@ exports.forgotPasswordLogic = async ({ email }) => {
 
 
   emailService.sendPasswordResetEmail(email, rawToken, user.name, expiryMinutes)
-    .catch((err) => console.error('[Mail Error] forgotPassword:', err.message));
+    .catch((error: unknown) => console.error(
+      '[Mail Error] forgotPassword:',
+      getErrorMessage(error)
+    ));
 
 
   return GENERIC;
@@ -637,7 +699,7 @@ exports.forgotPasswordLogic = async ({ email }) => {
 
 
 // ─── resetPasswordLogic ───────────────────────────────────────────
-exports.resetPasswordLogic = async (token, newPassword) => {
+exports.resetPasswordLogic = async (token: string, newPassword: string) => {
   if (!/^[a-f\d]{64}$/i.test(token ?? '') || !newPassword) {
     return { statusCode: 400, body: { msg: 'التوكن وكلمة المرور الجديدة مطلوبان' } };
   }
@@ -658,7 +720,12 @@ exports.resetPasswordLogic = async (token, newPassword) => {
 
 
 // ─── updateMeLogic ────────────────────────────────────────────────
-exports.updateMeLogic = async (userId, updates, fileBuffer, fileMimeType) => {
+exports.updateMeLogic = async (
+  userId: EntityId,
+  updates: ProfileUpdates,
+  fileBuffer?: Buffer,
+  fileMimeType?: string
+) => {
   const [settings, currentUser] = await Promise.all([
     SystemSettings.getCached(),
     userRepository.findProfileUpdateState(userId),
@@ -678,7 +745,7 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, fileMimeType) => {
 
 
   if (fileBuffer) {
-    if (!ALLOWED_IMAGE_TYPES.includes(fileMimeType)) {
+    if (!fileMimeType || !ALLOWED_IMAGE_TYPES.includes(fileMimeType)) {
       return { statusCode: 400, body: { msg: 'نوع الملف غير مدعوم — يُسمح بـ JPEG وPNG وWebP فقط' } };
     }
     if (fileBuffer.length > maxImageSize) {
@@ -722,7 +789,10 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, fileMimeType) => {
       (resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         { folder: 'avatars', width: maxWidth, height: maxHeight, crop: 'fill' },
-        (err, result) => (err || !result ? reject(err) : resolve(result))
+        (
+          error: import('cloudinary').UploadApiErrorResponse | undefined,
+          result: import('cloudinary').UploadApiResponse | undefined
+        ) => (error || !result ? reject(error) : resolve(result))
       );
       stream.pipe(uploadStream);
       }
@@ -757,7 +827,10 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, fileMimeType) => {
   ) {
     setImmediate(() => {
       cloudinary.uploader.destroy(currentUser.avatarPublicId)
-        .catch((error) => console.warn('[Avatar Cleanup]', error.message));
+        .catch((error: unknown) => console.warn(
+          '[Avatar Cleanup]',
+          getErrorMessage(error)
+        ));
     });
   }
 
@@ -768,7 +841,10 @@ exports.updateMeLogic = async (userId, updates, fileBuffer, fileMimeType) => {
 
 
 // ─── updatePasswordLogic ──────────────────────────────────────────
-exports.updatePasswordLogic = async (userId, { currentPassword, newPassword }) => {
+exports.updatePasswordLogic = async (
+  userId: EntityId,
+  { currentPassword, newPassword }: PasswordUpdateInput
+) => {
   const user = await userRepository.findByIdWithPassword(userId);
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
 
@@ -793,7 +869,7 @@ exports.updatePasswordLogic = async (userId, { currentPassword, newPassword }) =
 
 
 // ─── getMeLogic ───────────────────────────────────────────────────
-exports.getMeLogic = async (userId, page) => {
+exports.getMeLogic = async (userId: EntityId, page: number) => {
   const { pageSize, skip } = await _getProfilePageParams(page);
 
 
@@ -834,7 +910,7 @@ exports.getMeLogic = async (userId, page) => {
 
 
 // ─── getPublicProfileLogic ────────────────────────────────────────
-exports.getPublicProfileLogic = async (targetId, page) => {
+exports.getPublicProfileLogic = async (targetId: EntityId, page: number) => {
   const { pageSize, skip } = await _getProfilePageParams(page);
 
   const user = await userRepository.findPublicProfile(targetId);

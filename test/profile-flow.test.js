@@ -299,5 +299,8 @@ test('avatar-only profile requests pass body validation; empty requests are reje
     path.join(__dirname, '../services/settingsService.ts'),
     'utf8'
   );
-  assert.match(settingsServiceSource, /maxAvatarSizeMb:\s*projected\.maxAvatarSizeMb \?\? 5/);
+  assert.match(
+    settingsServiceSource,
+    /maxAvatarSizeMb:\s*typeof projected\.maxAvatarSizeMb === 'number'[\s\S]*:\s*5/
+  );
 });

@@ -3,9 +3,24 @@ const ratingRepository = require('../repositories/ratingRepository');
 const SystemSettings   = require('../models/SystemSettings');
 const notifyUser       = require('../utils/notifyUser');
 const AppError         = require('../utils/AppError');
+import type { EntityId } from './serviceTypes';
+
+type RatingSettings = {
+  ratingThresholdExcellent?: number;
+  ratingThresholdGood?: number;
+  ratingThresholdNeutral?: number;
+  ratingThresholdBad?: number;
+};
+
+type SubmitRatingInput = {
+  itemId: EntityId;
+  raterId: EntityId;
+  score: number;
+  comment?: string;
+};
 
 // حساب trustDelta بناءً على إعدادات النظام الديناميكية
-const calcTrustDelta = (score, s) => {
+const calcTrustDelta = (score: number, s: RatingSettings | null | undefined) => {
   if (score >= (s?.ratingThresholdExcellent ?? 9)) return  2;
   if (score >= (s?.ratingThresholdGood      ?? 7)) return  1;
   if (score >= (s?.ratingThresholdNeutral   ?? 5)) return  0;
@@ -13,7 +28,7 @@ const calcTrustDelta = (score, s) => {
   return -2;
 };
 
-exports.submitRating = async ({ itemId, raterId, score, comment }) => {
+exports.submitRating = async ({ itemId, raterId, score, comment }: SubmitRatingInput) => {
   const [item, settings] = await Promise.all([
     ratingRepository.findItemById(itemId),
     SystemSettings.getCached(),
@@ -70,11 +85,11 @@ exports.submitRating = async ({ itemId, raterId, score, comment }) => {
   return rating;
 };
 
-exports.getUserRatings = async (userId) => {
+exports.getUserRatings = async (userId: EntityId) => {
   return ratingRepository.findRatingsForUser(userId);
 };
 
-exports.getPendingRating = async (userId) => {
+exports.getPendingRating = async (userId: EntityId) => {
   // 1. جلب كافة الأغراض المسلمة التي يكون المستخدم طرفاً فيها (متبرع أو مستلم)
   const [asDonor, asReceiver] = await Promise.all([
     ratingRepository.findDeliveredItemsAsDonor(userId),

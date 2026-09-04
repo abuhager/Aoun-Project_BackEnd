@@ -4,15 +4,27 @@ const itemRepository          = require('../repositories/itemRepository');
 const donationOfferRepository = require('../repositories/donationOfferRepository');
 const adminRepository         = require('../repositories/adminRepository');
 const hubDto                  = require('../dtos/hubDto');
+import type { EntityId, ServicePayload } from './serviceTypes';
 
-const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
+type HubActionTarget = {
+  _id: EntityId;
+  name: string;
+};
+
+const isValidId = (id: EntityId) => mongoose.Types.ObjectId.isValid(id);
 
 const invalidIdResponse = () => ({
   statusCode: 400,
   body: { msg: 'معرّف المركز غير صحيح', code: 'INVALID_HUB_ID' },
 });
 
-const logHubAction = (adminId, hub, operation, reason, changedFields = []) =>
+const logHubAction = (
+  adminId: EntityId,
+  hub: HubActionTarget,
+  operation: string,
+  reason: string,
+  changedFields: string[] = []
+) =>
   adminRepository.logAdminAction({
     adminId,
     action: 'HUB_MANAGE',
@@ -39,7 +51,7 @@ exports.getAllHubsAdmin = async () => {
   return { statusCode: 200, body: hubs.map(hubDto.toAdminHub) };
 };
 
-exports.createHub = async (body, adminId) => {
+exports.createHub = async (body: ServicePayload, adminId: EntityId) => {
   const hub = await hubRepository.create({ ...body, createdBy: adminId });
 
   await logHubAction(
@@ -53,7 +65,11 @@ exports.createHub = async (body, adminId) => {
   return { statusCode: 201, body: hubDto.toAdminHub(hub) };
 };
 
-exports.updateHub = async (hubId, rawBody, adminId) => {
+exports.updateHub = async (
+  hubId: EntityId,
+  rawBody: ServicePayload,
+  adminId: EntityId
+) => {
   if (!isValidId(hubId)) return invalidIdResponse();
 
   const hub = await hubRepository.updateById(hubId, rawBody);
@@ -83,7 +99,7 @@ exports.updateHub = async (hubId, rawBody, adminId) => {
   return { statusCode: 200, body: hubDto.toAdminHub(hub) };
 };
 
-exports.deactivateHub = async (hubId, adminId) => {
+exports.deactivateHub = async (hubId: EntityId, adminId: EntityId) => {
   if (!isValidId(hubId)) return invalidIdResponse();
 
   const existingHub = await hubRepository.findById(hubId);
@@ -108,7 +124,7 @@ exports.deactivateHub = async (hubId, adminId) => {
   ]);
 
   if (activeItems > 0 || pendingOffers > 0) {
-    const blockers = [];
+    const blockers: string[] = [];
     if (activeItems > 0) blockers.push(`${activeItems} غرض نشط`);
     if (pendingOffers > 0) blockers.push(`${pendingOffers} عرض تبرع معلّق`);
 
@@ -138,7 +154,7 @@ exports.deactivateHub = async (hubId, adminId) => {
   };
 };
 
-exports.reactivateHub = async (hubId, adminId) => {
+exports.reactivateHub = async (hubId: EntityId, adminId: EntityId) => {
   if (!isValidId(hubId)) return invalidIdResponse();
 
   const existingHub = await hubRepository.findById(hubId);

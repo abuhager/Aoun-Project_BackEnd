@@ -20,6 +20,6 @@ exports.getPublicSettings = asyncHandler(async (req, res) => {
 
 // ✅ Admin فقط — تحديث الإعدادات
 exports.updateSettings = asyncHandler(async (req, res) => {
-  const result = await settingsService.updateSettings(req.body, req.user.id);
+  const result = await settingsService.updateSettings(req.body, req.user!.id);
   res.json({ msg: 'تم تحديث الإعدادات ✅', ...result });
 });
