@@ -1,5 +1,6 @@
 const SystemSettings = require('../models/SystemSettings');
 const AppError = require('../utils/AppError');
+import type { NextFunction, Request, RequestHandler, Response } from 'express';
 const {
   getBearerToken,
   resolveAccessIdentity,
@@ -14,10 +15,20 @@ const isAllowedPath = (path = '') => ALLOWED_PATH_PREFIXES.some(
   (prefix) => path === prefix || path.startsWith(`${prefix}/`)
 );
 
+type MaintenanceSettings = { maintenanceMode?: boolean };
+type MaintenanceOptions = {
+  getSettings?: () => Promise<MaintenanceSettings | null>;
+  resolveIdentity?: (token: string) => Promise<Express.AuthenticatedUser>;
+};
+
 const createMaintenanceMode = ({
   getSettings = () => SystemSettings.getCached(),
   resolveIdentity = resolveAccessIdentity,
-} = {}) => async (req, res, next) => {
+}: MaintenanceOptions = {}): RequestHandler => async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   try {
     const settings = await getSettings();
     if (!settings?.maintenanceMode || isAllowedPath(req.path)) return next();

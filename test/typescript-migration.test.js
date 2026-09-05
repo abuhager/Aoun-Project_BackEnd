@@ -44,7 +44,7 @@ test('مصادر Backend التشغيلية TypeScript وتُبنى إلى dist 
   ]);
 });
 
-test('طبقة TypeScript الصارمة تفحص Controllers وDTOs وRepositories وServices ضمن verify', async () => {
+test('طبقة TypeScript الصارمة تفحص كامل Backend التشغيلي ضمن verify', async () => {
   const [
     packageJson,
     strictConfig,
@@ -71,12 +71,20 @@ test('طبقة TypeScript الصارمة تفحص Controllers وDTOs وRepositor
 
   assert.equal(strictConfig.compilerOptions.strict, true);
   assert.equal(strictConfig.compilerOptions.noEmit, true);
-  assert.ok(strictConfig.include.includes('config/env.ts'));
+  assert.ok(strictConfig.include.includes('*.ts'));
+  assert.ok(strictConfig.include.includes('config/**/*.ts'));
   assert.ok(strictConfig.include.includes('controllers/**/*.ts'));
   assert.ok(strictConfig.include.includes('dtos/**/*.ts'));
+  assert.ok(strictConfig.include.includes('integrations/**/*.ts'));
+  assert.ok(strictConfig.include.includes('jobs/**/*.ts'));
+  assert.ok(strictConfig.include.includes('middlewares/**/*.ts'));
+  assert.ok(strictConfig.include.includes('models/**/*.ts'));
   assert.ok(strictConfig.include.includes('repositories/**/*.ts'));
+  assert.ok(strictConfig.include.includes('routes/**/*.ts'));
+  assert.ok(strictConfig.include.includes('scripts/**/*.ts'));
   assert.ok(strictConfig.include.includes('services/**/*.ts'));
-  assert.ok(strictConfig.include.includes('utils/otp.ts'));
+  assert.ok(strictConfig.include.includes('socket/**/*.ts'));
+  assert.ok(strictConfig.include.includes('utils/**/*.ts'));
   assert.match(packageJson.scripts.verify, /typecheck:strict/);
   assert.match(asyncHandler, /RequestHandler/);
   assert.match(asyncHandler, /export = asyncHandler/);

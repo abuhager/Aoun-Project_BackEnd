@@ -1,8 +1,21 @@
 const AppError = require('../utils/AppError');
 const { buildErrorResponse } = require('../utils/errorResponse');
 const multer = require('multer');
+import type { ErrorRequestHandler } from 'express';
 
-const normalizeMongo = (err) => {
+type ErrorLike = Error & {
+  code?: string | number;
+  path?: string;
+  status?: number;
+};
+
+const asErrorLike = (error: unknown): ErrorLike => {
+  if (error instanceof Error) return error as ErrorLike;
+  return Object.assign(new Error(String(error)), { originalError: error });
+};
+
+const normalizeMongo = (input: unknown): ErrorLike => {
+  const err = asErrorLike(input);
   if (err.name === 'CastError') {
     return AppError.badRequest(
       `قيمة غير صالحة للحقل "${err.path}"`,
@@ -27,7 +40,8 @@ const normalizeMongo = (err) => {
   return err;
 };
 
-const normalizeUpload = (err) => {
+const normalizeUpload = (input: unknown): ErrorLike => {
+  const err = asErrorLike(input);
   if (!(err instanceof multer.MulterError)) return err;
 
   if (err.code === 'LIMIT_FILE_SIZE') {
@@ -43,7 +57,8 @@ const normalizeUpload = (err) => {
   );
 };
 
-const normalizeCors = (err) => {
+const normalizeCors = (input: unknown): ErrorLike => {
+  const err = asErrorLike(input);
   if (err.code === 'CORS_ORIGIN_DENIED' || err.code === 'CORS_MISCONFIGURED') {
     return AppError.fromStatus(err.status || 403, err.message, err.code);
   }
@@ -51,16 +66,17 @@ const normalizeCors = (err) => {
 };
 
 // eslint-disable-next-line no-unused-vars
-const errorHandler = (err, req, res, next) => {
+const errorHandler: ErrorRequestHandler = (err: unknown, req, res, next) => {
   if (res.headersSent) {
+    const originalError = asErrorLike(err);
     console.error(
       `[errorHandler][Request-ID: ${req.id || 'N/A'}] Headers أُرسلت مسبقاً:`,
-      err.message
+      originalError.message
     );
-    return next(err);
+    return next(originalError);
   }
 
-  let error = normalizeMongo(err);
+  let error: ErrorLike = normalizeMongo(err);
   error = normalizeCors(error);
   error = normalizeUpload(error);
 

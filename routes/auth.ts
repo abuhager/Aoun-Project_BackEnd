@@ -9,6 +9,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
+import type { NextFunction, Request, Response } from 'express';
 const router  = express.Router();
 
 const { requireAuth }       = require('../middlewares/auth');
@@ -36,7 +37,7 @@ const {
 
 router.use(setPrivateNoStore);
 
-const conditionalUploadRateLimit = (req, res, next) => {
+const conditionalUploadRateLimit = (req: Request, res: Response, next: NextFunction) => {
   const contentType = req.headers['content-type'] ?? '';
   if (contentType.includes('multipart/form-data')) {
     return uploadLimiter(req, res, next);
@@ -44,7 +45,7 @@ const conditionalUploadRateLimit = (req, res, next) => {
   return next();
 };
 
-const conditionalUpload = (req, res, next) => {
+const conditionalUpload = (req: Request, res: Response, next: NextFunction) => {
   const ct = req.headers['content-type'] ?? '';
   if (ct.includes('multipart/form-data')) {
     return upload.single('avatar')(req, res, next);
@@ -52,7 +53,7 @@ const conditionalUpload = (req, res, next) => {
   next();
 };
 
-const conditionalVerify = (req, res, next) => {
+const conditionalVerify = (req: Request, res: Response, next: NextFunction) => {
   if (req.file) return verifyImageBuffer(req, res, next);
   next();
 };

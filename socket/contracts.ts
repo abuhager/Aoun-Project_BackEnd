@@ -29,17 +29,21 @@ const SOCKET_EVENTS = Object.freeze({
   NOTIFICATION_REFRESH: 'notification:refresh',
 });
 
-const normalizeMongoId = (value, label) => {
-  const id = value?._id ?? value;
-  const normalized = id?.toString().toLowerCase();
+type MongoIdLike = unknown;
+
+const normalizeMongoId = (value: MongoIdLike, label: string): string => {
+  const id = typeof value === 'object' && value !== null && '_id' in value
+    ? value._id
+    : value;
+  const normalized = id == null ? '' : String(id).toLowerCase();
   if (!normalized || !/^[a-f\d]{24}$/.test(normalized)) {
     throw new TypeError(`معرّف ${label} غير صالح لغرفة Socket`);
   }
   return normalized;
 };
 
-const userRoom = (userId) => `user_${normalizeMongoId(userId, 'المستخدم')}`;
-const conversationRoom = (conversationId) => (
+const userRoom = (userId: MongoIdLike): string => `user_${normalizeMongoId(userId, 'المستخدم')}`;
+const conversationRoom = (conversationId: MongoIdLike): string => (
   `conv_${normalizeMongoId(conversationId, 'المحادثة')}`
 );
 

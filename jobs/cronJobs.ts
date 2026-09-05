@@ -5,7 +5,8 @@
 // ✅ NJ-19 FIX (Flow11): تسجيل سجل مركزي لحالة كل Cron Job
 // ✅ NJ-20 FIX (Flow11): processExpiredItem تُرسل إشعار notifyUser للمستخدم المحظوظ
 
-const cron       = require('node-cron');
+const cron: typeof import('node-cron') = require('node-cron');
+import type { ScheduledTask } from 'node-cron';
 const User       = require('../models/User');
 const Item       = require('../models/Item');
 const SystemSettings  = require('../models/SystemSettings');
@@ -24,19 +25,62 @@ const {
 // ══════════════════════════════════════════════════════════════
 const JOB_TIMEZONE = 'Asia/Amman';
 const MAX_BOOKING_JOB_BATCH = 100;
-const scheduledTasks = new Map();
-let initialized = false;
-let initializationPromise = null;
-let settingsInvalidatedHandler = null;
+type JobName =
+  | 'quota-reset'
+  | 'expire-old-bookings'
+  | 'booking-reminder'
+  | 'expire-donation-requests';
+type CronStatusEntry = {
+  lastRun: Date | null;
+  lastFinishedAt?: Date | null;
+  lastStatus: string;
+  lastDurationMs?: number;
+  lastError?: string | null;
+};
+type CronStatusSnapshot = Record<string, CronStatusEntry & { scheduled: boolean }>;
+type IdLike = { toString(): string };
+type WaitlistEntry = { user?: IdLike | null };
+type BookingItem = {
+  _id: IdLike;
+  donor: IdLike;
+  bookedBy: IdLike;
+  title: string;
+  linkedRequestId?: unknown;
+  bookedAt?: Date;
+  cancelledBy?: IdLike[];
+  waitlist?: WaitlistEntry[];
+};
+type BookingSettings = {
+  maxBookingsPerUser?: number;
+  bookingExpiryHours?: number;
+  defaultUserQuota?: number;
+  level2Quota?: number;
+  quotaResetDayOfMonth?: number;
+};
+type WaitlistCandidate = { _id: IdLike; name: string; email: string };
+type SettingsInvalidatedHandler = (
+  event?: { changedFields?: string[] }
+) => Promise<void>;
 
-const cronStatus = {
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+const scheduledTasks = new Map<JobName, ScheduledTask>();
+let initialized = false;
+let initializationPromise: Promise<CronStatusSnapshot> | null = null;
+let settingsInvalidatedHandler: SettingsInvalidatedHandler | null = null;
+
+const cronStatus: Record<JobName, CronStatusEntry> = {
   'quota-reset':              { lastRun: null, lastStatus: 'pending' },
   'expire-old-bookings':      { lastRun: null, lastStatus: 'pending' },
   'booking-reminder':         { lastRun: null, lastStatus: 'pending' },
   'expire-donation-requests': { lastRun: null, lastStatus: 'pending' },
 };
 
-const runSafe = async (name, fn) => {
+const runSafe = async (
+  name: JobName,
+  fn: () => void | Promise<void>
+): Promise<void> => {
   const start = Date.now();
   cronStatus[name] = {
     ...cronStatus[name],
@@ -56,33 +100,36 @@ const runSafe = async (name, fn) => {
       lastError: null,
     };
     console.log(`[Cron] ✅ [${name}] اكتملت في ${duration}ms`);
-  } catch (err) {
+  } catch (err: unknown) {
     cronStatus[name] = {
       ...cronStatus[name],
       lastFinishedAt: new Date(),
       lastStatus: 'failed',
       lastDurationMs: Date.now() - start,
-      lastError: err.message,
+      lastError: getErrorMessage(err),
     };
-    console.error(`[Cron] ❌ [${name}] فشلت:`, err.message);
+    console.error(`[Cron] ❌ [${name}] فشلت:`, getErrorMessage(err));
   }
 };
 
-const getCronStatus = () => Object.fromEntries(
-  Object.entries(cronStatus).map(([name, status]) => [
+const getCronStatus = (): CronStatusSnapshot => Object.fromEntries(
+  (Object.entries(cronStatus) as Array<[JobName, CronStatusEntry]>).map(([name, status]) => [
     name,
     { ...status, scheduled: scheduledTasks.has(name) },
   ])
 );
 
-const replaceScheduledTask = (name, expression, handler) => {
+const replaceScheduledTask = (
+  name: JobName,
+  expression: string,
+  handler: () => void | Promise<void>
+): ScheduledTask => {
   const existing = scheduledTasks.get(name);
   if (existing) existing.destroy();
 
   const task = cron.schedule(expression, handler, {
     name,
     noOverlap: true,
-    scheduled: true,
     timezone: JOB_TIMEZONE,
   });
   scheduledTasks.set(name, task);
@@ -92,7 +139,7 @@ const replaceScheduledTask = (name, expression, handler) => {
 // ══════════════════════════════════════════════════════════════
 // DC-08: Cron تصفير الكوتا — ديناميكية الجدولة
 // ══════════════════════════════════════════════════════════════
-function scheduleQuotaReset(dayOfMonth) {
+function scheduleQuotaReset(dayOfMonth: number): void {
   const cronExpr = `0 0 ${dayOfMonth} * *`;
   console.log(`[Cron] 📅 جدولة تصفير الكوتا: "${cronExpr}"`);
 
@@ -119,8 +166,11 @@ function scheduleQuotaReset(dayOfMonth) {
 // ══════════════════════════════════════════════════════════════
 // ✅ NJ-20 FIX: processExpiredItem ترسل إشعار للمستخدم المحظوظ
 // ══════════════════════════════════════════════════════════════
-async function findEligibleWaitlistCandidate(item, maxBookings) {
-  const skippedUserIds = [];
+async function findEligibleWaitlistCandidate(
+  item: BookingItem,
+  maxBookings: number
+): Promise<{ candidate: WaitlistCandidate | null; skippedUserIds: IdLike[] }> {
+  const skippedUserIds: IdLike[] = [];
   const excludedUserIds = new Set(
     [item.donor, item.bookedBy, ...(item.cancelledBy ?? [])]
       .filter(Boolean)
@@ -162,7 +212,10 @@ async function findEligibleWaitlistCandidate(item, maxBookings) {
   return { candidate: null, skippedUserIds };
 }
 
-async function processExpiredItem(item, settings) {
+async function processExpiredItem(
+  item: BookingItem,
+  settings: BookingSettings
+): Promise<void> {
   // عناصر تلبية الطلبات لها دورة حياة خاصة ولا تدخل انتهاء الحجز أو قائمة الانتظار العامة.
   if (item.linkedRequestId) return;
 
@@ -225,8 +278,8 @@ async function processExpiredItem(item, settings) {
       itemId:    item._id,
       email:     candidate.email,
       actionUrl: `/items/${item._id}`,
-    }).catch((err) =>
-      console.warn('[Cron] notifyUser فشل:', err.message)
+    }).catch((err: unknown) =>
+      console.warn('[Cron] notifyUser فشل:', getErrorMessage(err))
     );
 
     const safeCandidateName = escapeHtml(candidate.name);
@@ -242,7 +295,10 @@ async function processExpiredItem(item, settings) {
           <p>يرجى التواصل مع المتبرع لتنسيق الاستلام.</p>
         </div>
       `,
-    }).catch((err) => console.warn('[Cron] فشل إرسال بريد الترقية:', err.message));
+    }).catch((err: unknown) => console.warn(
+      '[Cron] فشل إرسال بريد الترقية:',
+      getErrorMessage(err)
+    ));
 
     await notifyUser(item.donor, {
       type:      'booking_transferred',
@@ -250,7 +306,10 @@ async function processExpiredItem(item, settings) {
       body:      `انتهت مهلة المستلم السابق وانتقل حجز "${item.title}" للمنتظر التالي.`,
       itemId:    item._id,
       actionUrl: `/items/${item._id}`,
-    }).catch((err) => console.warn('[Cron] فشل إشعار المتبرع:', err.message));
+    }).catch((err: unknown) => console.warn(
+      '[Cron] فشل إشعار المتبرع:',
+      getErrorMessage(err)
+    ));
 
   } else {
     const releaseUpdate: {
@@ -295,7 +354,10 @@ async function processExpiredItem(item, settings) {
       body:      `عاد "${item.title}" متاحاً بعد انتهاء مهلة المستلم.`,
       itemId:    item._id,
       actionUrl: `/items/${item._id}`,
-    }).catch((err) => console.warn('[Cron] فشل إشعار المتبرع:', err.message));
+    }).catch((err: unknown) => console.warn(
+      '[Cron] فشل إشعار المتبرع:',
+      getErrorMessage(err)
+    ));
   }
 
   await notifyUser(previousBookerId, {
@@ -304,7 +366,10 @@ async function processExpiredItem(item, settings) {
     body:      `انتهت مهلة استلام "${item.title}" وتم إلغاء الحجز.`,
     itemId:    item._id,
     actionUrl: `/items/${item._id}`,
-  }).catch((err) => console.warn('[Cron] فشل إشعار المستلم السابق:', err.message));
+  }).catch((err: unknown) => console.warn(
+    '[Cron] فشل إشعار المستلم السابق:',
+    getErrorMessage(err)
+  ));
 
   emitToUser(previousBookerId, SOCKET_EVENTS.ITEM_BOOKING_CANCELLED, {
     itemId: item._id.toString(),
@@ -314,7 +379,7 @@ async function processExpiredItem(item, settings) {
 // ══════════════════════════════════════════════════════════════
 // تهيئة كل الـ Cron Jobs
 // ══════════════════════════════════════════════════════════════
-const stopCronJobs = async () => {
+const stopCronJobs = async (): Promise<void> => {
   initialized = false;
 
   if (settingsInvalidatedHandler) {
@@ -329,7 +394,7 @@ const stopCronJobs = async () => {
   );
 };
 
-const initCronJobs = () => {
+const initCronJobs = (): Promise<CronStatusSnapshot> => {
   if (initialized) return Promise.resolve(getCronStatus());
   if (initializationPromise) return initializationPromise;
 
@@ -352,8 +417,8 @@ const initCronJobs = () => {
         try {
           const fresh = await SystemSettings.getCached();
           if (initialized) scheduleQuotaReset(fresh.quotaResetDayOfMonth);
-        } catch (error) {
-          console.error('[Cron] ❌ فشل تحديث جدول الكوتا:', error.message);
+        } catch (error: unknown) {
+          console.error('[Cron] ❌ فشل تحديث جدول الكوتا:', getErrorMessage(error));
         }
       };
       settingsEvents.on('invalidated', settingsInvalidatedHandler);
@@ -382,7 +447,7 @@ const initCronJobs = () => {
 
           console.log(`[Cron] 🔍 حجوزات منتهية: ${expiredItems.length}`);
           const results = await Promise.allSettled(
-            expiredItems.map((item) => processExpiredItem(item, settings))
+            expiredItems.map((item: BookingItem) => processExpiredItem(item, settings))
           );
           const failed = results.filter(
             (result) => result.status === 'rejected'
@@ -451,7 +516,10 @@ const initCronJobs = () => {
           );
 
           const reminderResults = await Promise.allSettled(
-            soonExpiring.map(async (item) => {
+            soonExpiring.map(async (item: BookingItem & {
+              bookedBy: WaitlistCandidate;
+              bookedAt: Date;
+            }) => {
               if (!item.bookedBy?._id) return;
 
               const bookingFilter = {
@@ -476,12 +544,12 @@ const initCronJobs = () => {
                   itemId: item._id,
                   actionUrl: `/items/${item._id}`,
                 });
-              } catch (error) {
+              } catch (error: unknown) {
                 await Item.updateOne(
                   { ...bookingFilter, reminderSent: true },
                   { $set: { reminderSent: false } }
                 );
-                console.warn('[Cron] فشل إشعار التذكير:', error.message);
+                console.warn('[Cron] فشل إشعار التذكير:', getErrorMessage(error));
                 throw error;
               }
             })

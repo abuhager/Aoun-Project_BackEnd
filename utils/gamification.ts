@@ -14,16 +14,34 @@ const DEFAULT_LEVELS = Object.freeze([
   { level: 5, title: 'أسطورة', badge: '👑', minScore: 150, maxScore: null },
 ]);
 
-const normalizeScore = (value) => {
+type GamificationLevel = {
+  level: number;
+  title: string;
+  badge: string;
+  minScore: number;
+  maxScore: number | null;
+};
+
+type GamificationSettings = {
+  gamificationLevels?: readonly GamificationLevel[];
+};
+
+const normalizeScore = (value: unknown): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
 };
 
-const normalizeLevels = (levels) => {
+const normalizeLevels = (
+  levels: readonly GamificationLevel[] | unknown
+): GamificationLevel[] => {
   if (!Array.isArray(levels) || levels.length === 0) return [...DEFAULT_LEVELS];
 
   const normalized = levels
-    .filter((level) => Number.isFinite(Number(level?.minScore)))
+    .filter((level): level is GamificationLevel => (
+      typeof level === 'object'
+      && level !== null
+      && Number.isFinite(Number((level as Partial<GamificationLevel>).minScore))
+    ))
     .map((level) => ({ ...level, minScore: Number(level.minScore) }))
     .sort((left, right) => left.minScore - right.minScore);
 
@@ -31,7 +49,10 @@ const normalizeLevels = (levels) => {
 };
 
 // ✅ NJ-09: يقبل levels مخصصة من SystemSettings أو يستخدم الافتراضية
-const calcLevel = (trustScore, levels = DEFAULT_LEVELS) => {
+const calcLevel = (
+  trustScore: unknown,
+  levels: readonly GamificationLevel[] = DEFAULT_LEVELS
+): GamificationLevel => {
   const normalizedLevels = normalizeLevels(levels);
   const score = normalizeScore(trustScore);
   return [...normalizedLevels]
@@ -40,7 +61,10 @@ const calcLevel = (trustScore, levels = DEFAULT_LEVELS) => {
 };
 
 // ✅ NJ-10: حماية من أن levels تكون فارغة
-const calcProgress = (trustScore, levels = DEFAULT_LEVELS) => {
+const calcProgress = (
+  trustScore: unknown,
+  levels: readonly GamificationLevel[] = DEFAULT_LEVELS
+): { progress: number; pointsToNext: number | null } => {
   const normalizedLevels = normalizeLevels(levels);
   const score = normalizeScore(trustScore);
   const current = calcLevel(score, normalizedLevels);
@@ -61,7 +85,11 @@ const calcProgress = (trustScore, levels = DEFAULT_LEVELS) => {
 };
 
 // ✅ NJ-11: يقبل settings اختيارياً — إذا لم تأتِ يستخدم DEFAULT_LEVELS
-const buildGamificationProfile = (trustScore, totalDonations, settings = null) => {
+const buildGamificationProfile = (
+  trustScore: unknown,
+  totalDonations: unknown,
+  settings: GamificationSettings | null = null
+) => {
   // إذا كانت SystemSettings تحتوي على gamificationLevels استخدمها
   const levels    = settings?.gamificationLevels ?? DEFAULT_LEVELS;
   const normalizedScore = normalizeScore(trustScore);

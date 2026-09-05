@@ -1,5 +1,7 @@
 // middlewares/upload.js ✅ مصحّح — فحص Magic Bytes
 const multer = require('multer');
+import type { NextFunction, Request, Response } from 'express';
+import type { FileFilterCallback } from 'multer';
 const AppError = require('../utils/AppError');
 const {
   ALLOWED_IMAGE_TYPES,
@@ -12,7 +14,7 @@ const {
  * @param {string} mimetype - الـ mimetype المُعلَن
  * @returns {boolean}
  */
-const verifyMagicBytes = (buffer, mimetype) => {
+const verifyMagicBytes = (buffer: Buffer, mimetype: string): boolean => {
   if (!buffer || buffer.length < 4) return false;
 
   switch (mimetype) {
@@ -42,27 +44,30 @@ const verifyMagicBytes = (buffer, mimetype) => {
   }
 };
 
-const fileFilter = (_req, file, cb) => {
+const rejectFile = (cb: FileFilterCallback, error: Error): void => {
+  const callback = cb as unknown as (callbackError: Error, accepted: boolean) => void;
+  callback(error, false);
+};
+
+const fileFilter = (
+  _req: Request,
+  file: Express.Multer.File,
+  cb: FileFilterCallback
+) => {
   if (
     typeof file.originalname !== 'string'
     || Buffer.byteLength(file.originalname, 'utf8') > 255
     || /[\0\r\n]/.test(file.originalname)
   ) {
-    return cb(
-      new AppError('اسم الملف غير صالح', 400, 'INVALID_FILE_NAME'),
-      false
-    );
+    return rejectFile(cb, new AppError('اسم الملف غير صالح', 400, 'INVALID_FILE_NAME'));
   }
 
   if (!ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
-    return cb(
-      new AppError(
-        'نوع الملف غير مدعوم — الصور المسموحة: JPEG, PNG, WEBP فقط',
-        415,
-        'INVALID_IMAGE_TYPE'
-      ),
-      false
-    );
+    return rejectFile(cb, new AppError(
+      'نوع الملف غير مدعوم — الصور المسموحة: JPEG, PNG, WEBP فقط',
+      415,
+      'INVALID_IMAGE_TYPE'
+    ));
   }
   return cb(null, true);
 };
@@ -82,7 +87,7 @@ const upload = multer({
 
 // ✅ Middleware إضافي يُستدعى بعد upload.single()
 // يتحقق من Magic Bytes بعد تحميل الملف في الذاكرة
-const verifyImageBuffer = (req, _res, next) => {
+const verifyImageBuffer = (req: Request, _res: Response, next: NextFunction) => {
   if (!req.file) return next(); // لا ملف → تمرير للـ controller
 
   const { buffer, mimetype } = req.file;

@@ -1,11 +1,12 @@
 const { SOCKET_EVENTS, userRoom } = require('./contracts');
+import type { AounSocketServer } from './socketTypes';
 
-const getSocketServer = () => {
+const getSocketServer = (): AounSocketServer | null => {
   const { getIOOrNull } = require('./index');
   return getIOOrNull();
 };
 
-const emitToUser = (userId, event, payload) => {
+const emitToUser = (userId: unknown, event: string, payload?: unknown): boolean => {
   if (!userId) return false;
   const io = getSocketServer();
   if (!io) return false;
@@ -14,7 +15,7 @@ const emitToUser = (userId, event, payload) => {
   return true;
 };
 
-const emitToAll = (event, payload) => {
+const emitToAll = (event: string, payload?: unknown): boolean => {
   const io = getSocketServer();
   if (!io) return false;
 
@@ -23,12 +24,12 @@ const emitToAll = (event, payload) => {
 };
 
 const disconnectUserSockets = async (
-  userId,
+  userId: unknown,
   {
     code = 'SESSION_INVALIDATED',
     msg = 'انتهت صلاحية الجلسة، أعد تسجيل الدخول',
-  } = {}
-) => {
+  }: { code?: string; msg?: string } = {}
+): Promise<number> => {
   const io = getSocketServer();
   if (!io || !userId) return 0;
 

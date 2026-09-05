@@ -8,20 +8,20 @@
     "noEmit": true
   },
   "include": [
-    "config/cors.ts",
-    "config/env.ts",
+    "*.ts",
+    "config/**/*.ts",
     "controllers/**/*.ts",
     "dtos/**/*.ts",
+    "integrations/**/*.ts",
+    "jobs/**/*.ts",
+    "middlewares/**/*.ts",
+    "models/**/*.ts",
     "repositories/**/*.ts",
+    "routes/**/*.ts",
+    "scripts/**/*.ts",
     "services/**/*.ts",
-    "utils/AppError.ts",
-    "utils/asyncHandler.ts",
-    "utils/cryptoUtils.ts",
-    "utils/errorResponse.ts",
-    "utils/escapeRegex.ts",
-    "utils/otp.ts",
-    "utils/phoneUtils.ts",
-    "utils/sessionCache.ts",
+    "socket/**/*.ts",
+    "utils/**/*.ts",
     "types/**/*.d.ts"
   ]
 }

@@ -26,7 +26,10 @@ const MAX_IMAGE_SIZE = resolveMaxImageSize();
  * @param {Express.Multer.File} file
  * @param {object} opts — { required: boolean }
  */
-const validateImageFile = (file, { required = false } = {}) => {
+const validateImageFile = (
+  file: Express.Multer.File | undefined,
+  { required = false }: { required?: boolean } = {}
+): void => {
   if (!file) {
     if (required) throw new AppError('الصورة مطلوبة', 400, 'IMAGE_REQUIRED');
     return;

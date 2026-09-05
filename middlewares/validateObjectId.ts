@@ -1,13 +1,14 @@
 // middlewares/validateObjectId.js
 // ✅ يُستخدَم في جميع الـ routes التي تأخذ :id أو أي param من DB
 const mongoose = require('mongoose');
+import type { NextFunction, Request, Response } from 'express';
 
 /**
  * validateObjectId('id')           → يتحقق من req.params.id
  * validateObjectId('id', 'userId') → يتحقق من param متعدد
  */
-const validateObjectId = (...params) =>
-  (req, res, next) => {
+const validateObjectId = (...params: string[]) =>
+  (req: Request, res: Response, next: NextFunction) => {
     for (const param of params) {
       const value = req.params[param];
       if (value && !mongoose.Types.ObjectId.isValid(value)) {

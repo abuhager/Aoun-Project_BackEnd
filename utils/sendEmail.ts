@@ -16,6 +16,11 @@ type BrevoEmailBody = {
   replyTo?: { email: string };
 };
 
+type BrevoErrorBody = { message?: string };
+
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 // ✅ جلب platformName من DB مع Cache
 const getPlatformName = async () => {
   try {
@@ -60,8 +65,8 @@ const sendEmail = async (options: EmailOptions) => {
     });
 
     if (!response.ok) {
-      let errBody;
-      try { errBody = await response.json(); } catch { errBody = {}; }
+      let errBody: BrevoErrorBody = {};
+      try { errBody = await response.json() as BrevoErrorBody; } catch { errBody = {}; }
       console.error('[sendEmail] ❌ فشل إرسال الإيميل:', {
         status:  response.status,
         message: errBody?.message ?? response.statusText,
@@ -73,14 +78,14 @@ const sendEmail = async (options: EmailOptions) => {
     }
   } catch (error) {
     console.error('[sendEmail] 📧 Network/Parse Error:', {
-      message: error.message,
+      message: getErrorMessage(error),
       to:      options.email,
     });
   }
 };
 
-const fireSendEmail = (options) => sendEmail(options).catch((err) => {
-  console.error('[fireSendEmail] unhandled error:', err.message);
+const fireSendEmail = (options: EmailOptions): Promise<void> => sendEmail(options).catch((err: unknown) => {
+  console.error('[fireSendEmail] unhandled error:', getErrorMessage(err));
 });
 
 module.exports = sendEmail;

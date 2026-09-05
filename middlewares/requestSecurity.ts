@@ -4,7 +4,7 @@ const { isOriginAllowed } = require('../config/cors');
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const ALLOWED_FETCH_SITES = new Set(['same-origin', 'same-site', 'none']);
 
-const setPrivateNoStore = (_req, res, next) => {
+const setPrivateNoStore = (_req: Request, res: Response, next: NextFunction): void => {
   res.setHeader('Cache-Control', 'private, no-store, max-age=0');
   res.setHeader('Pragma', 'no-cache');
   next();
@@ -16,7 +16,7 @@ const setPrivateNoStore = (_req, res, next) => {
  * - JSON فقط، لذلك HTML forms البسيطة لا تستطيع تنفيذ الطلب.
  * - عملاء server-to-server بلا Origin يبقون مدعومين عند إرسال JSON.
  */
-const requireTrustedBrowserRequest = (req, _res, next) => {
+const requireTrustedBrowserRequest = (req: Request, _res: Response, next: NextFunction) => {
   if (SAFE_METHODS.has(req.method)) return next();
 
   const fetchSite = String(req.headers['sec-fetch-site'] ?? '').toLowerCase();
@@ -62,3 +62,4 @@ module.exports = {
   requireTrustedBrowserRequest,
   setPrivateNoStore,
 };
+import type { NextFunction, Request, Response } from 'express';

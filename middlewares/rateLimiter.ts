@@ -1,13 +1,25 @@
 const { createHash } = require('crypto');
-const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
-const { RedisStore } = require('rate-limit-redis');
-const { createClient } = require('redis');
+const { rateLimit, ipKeyGenerator }: typeof import('express-rate-limit') = require('express-rate-limit');
+const { RedisStore }: typeof import('rate-limit-redis') = require('rate-limit-redis');
+const { createClient }: typeof import('redis') = require('redis');
+import type { NextFunction, Request, RequestHandler, Response } from 'express';
+import type { RateLimitRequestHandler } from 'express-rate-limit';
 
 const { parsePositiveInteger } = require('../config/env');
 
-let redisClient = null;
+type RedisClient = ReturnType<typeof createClient>;
+type LimiterKeyType = 'email' | 'token' | 'user';
+type LimiterDefinition = readonly [
+  envPrefix: string,
+  defaultWindowMs: number,
+  defaultMax: number,
+  storePrefix: string,
+  messageType: string,
+  keyType?: LimiterKeyType,
+];
+
+let redisClient: RedisClient | null = null;
 let redisReady = false;
-let limiterInstances = {};
 
 const definitions = {
   globalLimiter: ['RATE_LIMIT_GLOBAL', 15 * 60 * 1000, 200, 'rl:global:', 'global'],
@@ -24,34 +36,37 @@ const definitions = {
   phoneVerifyLimiter: ['RATE_LIMIT_PHONE_VERIFY', 60 * 60 * 1000, 10, 'rl:phone-verify:', 'التحقق من الهاتف', 'user'],
   actionLimiter: ['RATE_LIMIT_ACTION', 60 * 1000, 30, 'rl:action:', 'تنفيذ العمليات', 'user'],
   donationActionLimiter: ['RATE_LIMIT_DONATION_ACTION', 60 * 1000, 10, 'rl:donation-action:', 'عمليات طلبات التبرع', 'user'],
-};
+} satisfies Record<string, LimiterDefinition>;
 
-const buildStore = (prefix) => {
+type LimiterName = keyof typeof definitions;
+let limiterInstances = {} as Record<LimiterName, RateLimitRequestHandler>;
+
+const buildStore = (prefix: string) => {
   if (!redisReady || !redisClient) return undefined;
   return new RedisStore({
     prefix,
-    sendCommand: (...args) => redisClient.sendCommand(args),
+    sendCommand: (...args: string[]) => redisClient!.sendCommand(args),
   });
 };
 
-const emailKeyGenerator = (req) => {
+const emailKeyGenerator = (req: Request): string => {
   const email = String(req.body?.email ?? '').trim().toLowerCase();
-  if (!email) return ipKeyGenerator(req.ip);
+  if (!email) return ipKeyGenerator(req.ip ?? 'unknown');
   const digest = createHash('sha256').update(email).digest('hex').slice(0, 24);
   return `email:${digest}`;
 };
 
-const tokenKeyGenerator = (req) => {
+const tokenKeyGenerator = (req: Request): string => {
   const token = String(req.body?.token ?? '').trim();
-  if (!token) return ipKeyGenerator(req.ip);
+  if (!token) return ipKeyGenerator(req.ip ?? 'unknown');
   const digest = createHash('sha256').update(token).digest('hex').slice(0, 24);
   return `token:${digest}`;
 };
 
-const userKeyGenerator = (req) =>
-  req.user?.id ? `user:${String(req.user.id)}` : ipKeyGenerator(req.ip);
+const userKeyGenerator = (req: Request): string =>
+  req.user?.id ? `user:${String(req.user.id)}` : ipKeyGenerator(req.ip ?? 'unknown');
 
-const createLimiter = (definition) => {
+const createLimiter = (definition: LimiterDefinition): RateLimitRequestHandler => {
   const [envPrefix, defaultWindowMs, defaultMax, storePrefix, messageType, keyType] = definition;
   const developmentMultiplier = process.env.NODE_ENV === 'production' ? 1 : 20;
   const windowMs = parsePositiveInteger(
@@ -87,14 +102,18 @@ const createLimiter = (definition) => {
 const rebuildLimiters = () => {
   limiterInstances = Object.fromEntries(
     Object.entries(definitions).map(([name, definition]) => [name, createLimiter(definition)])
-  );
+  ) as Record<LimiterName, RateLimitRequestHandler>;
 };
 
-const delegate = (name) => (req, res, next) => limiterInstances[name](req, res, next);
+const delegate = (name: LimiterName): RequestHandler => (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => limiterInstances[name](req, res, next);
 
 rebuildLimiters();
 
-const connectRedis = async () => {
+const connectRedis = async (): Promise<boolean> => {
   if (!process.env.REDIS_URL) {
     redisReady = false;
     rebuildLimiters();
@@ -111,7 +130,7 @@ const connectRedis = async () => {
       url: process.env.REDIS_URL,
       socket: {
         connectTimeout: parsePositiveInteger(process.env.REDIS_CONNECT_TIMEOUT_MS, 5_000),
-        reconnectStrategy: (retries) => {
+        reconnectStrategy: (retries: number) => {
           if (retries >= 5) return new Error('Redis: تجاوز الحد الأقصى لإعادة الاتصال');
           return Math.min(250 * 2 ** retries, 5_000);
         },
@@ -119,7 +138,7 @@ const connectRedis = async () => {
     });
 
     let errorLogged = false;
-    redisClient.on('error', (error) => {
+    redisClient.on('error', (error: Error) => {
       if (!errorLogged) {
         console.error('[Redis RateLimit] تعذر استخدام Redis:', error.message);
         errorLogged = true;
@@ -141,19 +160,22 @@ const connectRedis = async () => {
     rebuildLimiters();
     console.info('[Redis RateLimit] متصل وجاهز');
     return true;
-  } catch (error) {
+  } catch (error: unknown) {
     redisReady = false;
     rebuildLimiters();
     const failedClient = redisClient;
     redisClient = null;
     if (failedClient?.isOpen) await failedClient.disconnect();
     if (process.env.REDIS_REQUIRED === 'true') throw error;
-    console.warn('[rateLimiter] فشل Redis؛ تم الرجوع إلى MemoryStore:', error.message);
+    console.warn(
+      '[rateLimiter] فشل Redis؛ تم الرجوع إلى MemoryStore:',
+      error instanceof Error ? error.message : String(error)
+    );
     return false;
   }
 };
 
-const closeRedis = async () => {
+const closeRedis = async (): Promise<void> => {
   redisReady = false;
   rebuildLimiters();
   if (!redisClient?.isOpen) {

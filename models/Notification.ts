@@ -27,7 +27,7 @@ const NOTIFICATION_TYPES = Object.freeze([
   'offer_withdrawn',
 ]);
 
-const isInternalActionPath = (value) => value == null || (
+const isInternalActionPath = (value: unknown): boolean => value == null || (
   typeof value === 'string'
   && value.startsWith('/')
   && !value.startsWith('//')

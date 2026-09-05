@@ -19,6 +19,14 @@ type NotificationPayload = {
   conversationId?: unknown;
 };
 
+type NotificationTarget = {
+  _id?: unknown;
+  email?: string | null;
+};
+
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 const getPlatformName = async () => {
   try {
     const settings = await SystemSettings.getCached();
@@ -34,7 +42,7 @@ const CRITICAL_NOTIFICATION_TYPES = Object.freeze([
   'account_suspended',
 ]);
 
-const normalizeActionUrl = (value) => {
+const normalizeActionUrl = (value: unknown): string | null => {
   if (value == null || value === '') return null;
   if (typeof value !== 'string') {
     throw new AppError(
@@ -58,7 +66,11 @@ const normalizeActionUrl = (value) => {
   return normalized;
 };
 
-const normalizeRequiredText = (value, field, maxLength) => {
+const normalizeRequiredText = (
+  value: unknown,
+  field: string,
+  maxLength: number
+): string => {
   const normalized = typeof value === 'string' ? value.trim() : '';
   if (!normalized) {
     throw new AppError(
@@ -70,7 +82,7 @@ const normalizeRequiredText = (value, field, maxLength) => {
   return normalized.slice(0, maxLength);
 };
 
-const normalizeMetadata = (metadata) => {
+const normalizeMetadata = (metadata: unknown): Record<string, unknown> => {
   if (metadata == null) return {};
   if (typeof metadata !== 'object' || Array.isArray(metadata)) {
     throw new AppError(
@@ -99,10 +111,10 @@ const normalizeMetadata = (metadata) => {
     );
   }
 
-  return metadata;
+  return metadata as Record<string, unknown>;
 };
 
-const toAbsoluteClientUrl = (actionUrl) => {
+const toAbsoluteClientUrl = (actionUrl: string | null): string | null => {
   if (!actionUrl) return null;
   try {
     const clientOrigin = getClientOrigin();
@@ -113,18 +125,20 @@ const toAbsoluteClientUrl = (actionUrl) => {
   }
 };
 
-async function notifyUser(userId, payload: NotificationPayload = {}) {
-  const hasUserFields = userId && typeof userId === 'object' && userId._id != null;
-  const actualUserId = hasUserFields ? userId._id : userId;
+async function notifyUser(userId: unknown, payload: NotificationPayload = {}) {
+  const target = userId && typeof userId === 'object'
+    ? userId as NotificationTarget
+    : null;
+  const actualUserId = target?._id ?? userId;
 
   if (!actualUserId) {
     throw new AppError('userId مطلوب لإرسال الإشعار', 400, 'USER_ID_REQUIRED');
   }
-  if (!Notification.NOTIFICATION_TYPES.includes(payload.type)) {
+  if (typeof payload.type !== 'string' || !Notification.NOTIFICATION_TYPES.includes(payload.type)) {
     throw new AppError('نوع الإشعار غير صالح', 400, 'INVALID_NOTIFICATION_TYPE');
   }
 
-  const userEmail = payload.email ?? (hasUserFields ? userId.email : null);
+  const userEmail = payload.email ?? target?.email ?? null;
   const title = normalizeRequiredText(
     payload.title ?? 'إشعار جديد',
     'عنوان الإشعار',
@@ -155,8 +169,8 @@ async function notifyUser(userId, payload: NotificationPayload = {}) {
       SOCKET_EVENTS.NOTIFICATION_NEW,
       toNotificationDto(notification)
     );
-  } catch (error) {
-    console.error('[notifyUser Socket Error]:', error.message);
+  } catch (error: unknown) {
+    console.error('[notifyUser Socket Error]:', getErrorMessage(error));
   }
 
   if (CRITICAL_NOTIFICATION_TYPES.includes(payload.type)) {
@@ -165,10 +179,10 @@ async function notifyUser(userId, payload: NotificationPayload = {}) {
       try {
         const user = await User.findById(actualUserId).select('email').lean();
         resolvedEmail = user?.email ?? null;
-      } catch (error) {
+      } catch (error: unknown) {
         console.warn(
           '[notifyUser] تعذر جلب بريد مستلم الإشعار:',
-          error.message
+          getErrorMessage(error)
         );
       }
     }
@@ -206,16 +220,16 @@ async function notifyUser(userId, payload: NotificationPayload = {}) {
               </p>
             </div>
           `,
-        }).catch((emailError) =>
+        }).catch((emailError: unknown) =>
           console.error(
             '[notifyUser Email Fallback] فشل الإرسال:',
-            emailError.message
+            getErrorMessage(emailError)
           )
         );
-      } catch (emailError) {
+      } catch (emailError: unknown) {
         console.warn(
           '[notifyUser] تعذر تجهيز بريد الإشعار:',
-          emailError.message
+          getErrorMessage(emailError)
         );
       }
     } else {

@@ -1,12 +1,14 @@
 ﻿// utils/uploadToCloudinary.js
 const cloudinary = require('../config/cloudinary');
+import type { UploadApiErrorResponse, UploadApiResponse } from 'cloudinary';
 
-const uploadToCloudinary = (buffer, folder = 'aoun-items') =>
-  new Promise((resolve, reject) => {
+const uploadToCloudinary = (buffer: Buffer, folder = 'aoun-items') =>
+  new Promise<UploadApiResponse>((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       { folder, resource_type: 'image' },
-      (error, result) => {
+      (error: UploadApiErrorResponse | undefined, result: UploadApiResponse | undefined) => {
         if (error) return reject(error);
+        if (!result) return reject(new Error('Cloudinary did not return an upload result'));
         resolve(result);
       }
     );
@@ -14,7 +16,7 @@ const uploadToCloudinary = (buffer, folder = 'aoun-items') =>
   });
 
 // ✅ [CRIT-4] دالة حذف الصورة القديمة من Cloudinary عند تعديل الغرض
-const deleteFromCloudinary = (publicId) =>
+const deleteFromCloudinary = (publicId: string) =>
   cloudinary.uploader.destroy(publicId);
 
 module.exports = { uploadToCloudinary, deleteFromCloudinary };

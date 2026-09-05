@@ -1,4 +1,12 @@
 const mongoose = require('mongoose');
+import type {
+  AounSocket,
+  AounSocketServer,
+  SocketAck,
+  SocketAckPayload,
+  SocketOperationError,
+} from './socketTypes';
+import { asSocketError } from './socketTypes';
 
 const repo = require('../repositories/conversationRepository');
 const dto = require('../dtos/conversationDto');
@@ -21,23 +29,48 @@ type ChatEventPayload = {
   isTyping?: boolean;
 };
 
-const chatError = (message, code, statusCode = 400) => Object.assign(
+type UnknownRecord = Record<string, unknown>;
+type ConversationRecord = UnknownRecord & {
+  _id: unknown;
+  participants?: unknown[];
+  item?: unknown;
+  owner?: unknown;
+  requester?: unknown;
+};
+
+const chatError = (
+  message: string,
+  code: string,
+  statusCode = 400
+): SocketOperationError => Object.assign(
   new Error(message),
   { code, statusCode }
 );
 
-const asId = (value) => (value?._id || value)?.toString();
+const asRecord = (value: unknown): UnknownRecord | null => (
+  typeof value === 'object' && value !== null ? value as UnknownRecord : null
+);
 
-const participantIds = (conversation) => (
+const asId = (value: unknown): string | undefined => {
+  const record = asRecord(value);
+  const id = record?._id ?? value;
+  return id == null ? undefined : String(id);
+};
+
+const participantIds = (conversation: ConversationRecord): string[] => (
   [...new Set((conversation?.participants || []).map(asId).filter(Boolean))]
-);
+) as string[];
 
-const canSendInConversation = (conversation) => (
-  asId(conversation?.item?.donor) === asId(conversation?.owner)
-  && asId(conversation?.item?.bookedBy) === asId(conversation?.requester)
-);
+const canSendInConversation = (conversation: ConversationRecord): boolean => {
+  const item = asRecord(conversation.item);
+  return asId(item?.donor) === asId(conversation.owner)
+    && asId(item?.bookedBy) === asId(conversation.requester);
+};
 
-async function assertParticipant(conversationId, userId) {
+async function assertParticipant(
+  conversationId: unknown,
+  userId: unknown
+): Promise<ConversationRecord> {
   if (!mongoose.isObjectIdOrHexString(conversationId)) {
     throw chatError('معرّف المحادثة غير صالح', 'INVALID_CONVERSATION_ID');
   }
@@ -53,21 +86,29 @@ async function assertParticipant(conversationId, userId) {
     throw chatError('غير مصرح لك بدخول هذه المحادثة', 'CHAT_FORBIDDEN', 403);
   }
 
-  return conversation;
+  return conversation as ConversationRecord;
 }
 
-const safeAck = (ack, payload) => {
+const safeAck = (ack: SocketAck | undefined, payload: SocketAckPayload): boolean => {
   if (typeof ack !== 'function') return false;
   ack(payload);
   return true;
 };
 
-const sendSocketError = (socket, scope, error, ack) => {
+const sendSocketError = (
+  socket: AounSocket,
+  scope: string,
+  error: unknown,
+  ack?: SocketAck
+): void => {
+  const socketError = asSocketError(error);
   const payload = {
     ok: false,
     success: false,
-    code: error.code || 'CHAT_ERROR',
-    error: error.statusCode >= 500 ? 'تعذر تنفيذ عملية المحادثة' : error.message,
+    code: socketError.code || 'CHAT_ERROR',
+    error: Number(socketError.statusCode) >= 500
+      ? 'تعذر تنفيذ عملية المحادثة'
+      : socketError.message,
   };
 
   if (!safeAck(ack, payload)) {
@@ -79,7 +120,11 @@ const sendSocketError = (socket, scope, error, ack) => {
   }
 };
 
-const broadcastConversationRefresh = (io, conversation, conversationId) => {
+const broadcastConversationRefresh = (
+  io: AounSocketServer,
+  conversation: ConversationRecord,
+  conversationId: string
+): void => {
   participantIds(conversation).forEach((participantId) => {
     io.to(userRoom(participantId)).emit(
       SOCKET_EVENTS.CONVERSATION_UPDATED,
@@ -88,7 +133,12 @@ const broadcastConversationRefresh = (io, conversation, conversationId) => {
   });
 };
 
-const markReadAndBroadcast = async (io, conversation, conversationId, userId) => {
+const markReadAndBroadcast = async (
+  io: AounSocketServer,
+  conversation: ConversationRecord,
+  conversationId: string,
+  userId: string
+): Promise<number> => {
   const [markedCount, markedNotificationCount] = await Promise.all([
     repo.markMessagesRead(conversationId, userId),
     repo.markMessageNotificationsRead(conversationId, userId),
@@ -108,15 +158,18 @@ const markReadAndBroadcast = async (io, conversation, conversationId, userId) =>
   return markedCount;
 };
 
-function registerChatHandlers(io, socket) {
-  let recentMessageTimes = [];
+function registerChatHandlers(io: AounSocketServer, socket: AounSocket): void {
+  let recentMessageTimes: number[] = [];
   const userId = socket.data.userId;
   const userName = socket.data.userName;
 
-  socket.on(SOCKET_EVENTS.JOIN_ROOM, async ({ convId }: ChatEventPayload = {}, ack) => {
+  socket.on(SOCKET_EVENTS.JOIN_ROOM, async (
+    { convId }: ChatEventPayload = {},
+    ack?: SocketAck
+  ) => {
     try {
       const conversation = await assertParticipant(convId, userId);
-      const conversationId = conversation._id.toString();
+      const conversationId = String(conversation._id);
       const targetRoom = conversationRoom(conversationId);
 
       for (const room of socket.rooms) {
@@ -141,8 +194,9 @@ function registerChatHandlers(io, socket) {
         totalPages: page.totalPages,
         canSend: canSendInConversation(conversation),
       });
-    } catch (error) {
-      console.warn(`[Socket Chat][join_room] ${error.code || 'CHAT_ERROR'}: ${error.message}`);
+    } catch (error: unknown) {
+      const socketError = asSocketError(error);
+      console.warn(`[Socket Chat][join_room] ${socketError.code || 'CHAT_ERROR'}: ${socketError.message}`);
       sendSocketError(socket, 'join_room', error, ack);
     }
   });
@@ -162,7 +216,10 @@ function registerChatHandlers(io, socket) {
 
   socket.on(
     SOCKET_EVENTS.SEND_MESSAGE,
-    async ({ convId, text, correlationId }: ChatEventPayload = {}, ack) => {
+    async (
+      { convId, text, correlationId }: ChatEventPayload = {},
+      ack?: SocketAck
+    ) => {
     try {
       if (typeof text !== 'string') {
         throw chatError('نص الرسالة مطلوب', 'INVALID_MESSAGE');
@@ -190,7 +247,7 @@ function registerChatHandlers(io, socket) {
       }
 
       const conversation = await assertParticipant(convId, userId);
-      const conversationId = conversation._id.toString();
+      const conversationId = String(conversation._id);
       if (!canSendInConversation(conversation)) {
         throw chatError(
           'هذه المحادثة للقراءة فقط لأن الحجز لم يعد قائماً',
@@ -228,11 +285,11 @@ function registerChatHandlers(io, socket) {
       broadcastConversationRefresh(io, conversation, conversationId);
 
       const sender = (conversation.participants || [])
-        .find((participant) => asId(participant) === userId.toString());
-      const senderName = sender?.name || userName || 'مستخدم عون';
+        .find((participant: unknown) => asId(participant) === userId.toString());
+      const senderName = String(asRecord(sender)?.name || userName || 'مستخدم عون');
       const itemId = asId(conversation.item) || null;
       const preview = trimmed.length > 100 ? `${trimmed.slice(0, 100)}…` : trimmed;
-      let activeUserIds = new Set();
+      let activeUserIds = new Set<string>();
       try {
         const activeSockets = await io.in(room).fetchSockets();
         activeUserIds = new Set(
@@ -241,8 +298,8 @@ function registerChatHandlers(io, socket) {
             .filter(Boolean)
             .map(String)
         );
-      } catch (error) {
-        console.warn(`[Socket Chat][presence] ${error.message}`);
+      } catch (error: unknown) {
+        console.warn(`[Socket Chat][presence] ${asSocketError(error).message}`);
       }
 
       participantIds(conversation)
@@ -256,21 +313,25 @@ function registerChatHandlers(io, socket) {
             itemId,
             conversationId,
             metadata: { senderId: userId.toString() },
-          }).catch((error) => {
-            console.warn(`[Socket Chat][notification] ${error.message}`);
+          }).catch((error: unknown) => {
+            console.warn(`[Socket Chat][notification] ${asSocketError(error).message}`);
           });
         });
-    } catch (error) {
-      console.warn(`[Socket Chat][send_message] ${error.code || 'CHAT_ERROR'}: ${error.message}`);
+    } catch (error: unknown) {
+      const socketError = asSocketError(error);
+      console.warn(`[Socket Chat][send_message] ${socketError.code || 'CHAT_ERROR'}: ${socketError.message}`);
       sendSocketError(socket, 'send_message', error, ack);
     }
     }
   );
 
-  socket.on(SOCKET_EVENTS.MARK_READ, async ({ convId }: ChatEventPayload = {}, ack) => {
+  socket.on(SOCKET_EVENTS.MARK_READ, async (
+    { convId }: ChatEventPayload = {},
+    ack?: SocketAck
+  ) => {
     try {
       const conversation = await assertParticipant(convId, userId);
-      const conversationId = conversation._id.toString();
+      const conversationId = String(conversation._id);
       if (!socket.rooms.has(conversationRoom(conversationId))) {
         throw chatError('المحادثة غير مفتوحة', 'CHAT_ROOM_NOT_JOINED', 409);
       }
@@ -282,7 +343,7 @@ function registerChatHandlers(io, socket) {
         userId
       );
       safeAck(ack, { ok: true, success: true, markedCount });
-    } catch (error) {
+    } catch (error: unknown) {
       sendSocketError(socket, 'mark_read', error, ack);
     }
   });

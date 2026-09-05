@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+import type { NextFunction, Request, Response } from 'express';
 
 const AppError = require('../utils/AppError');
 const { verifyAccessToken } = require('../utils/tokenUtils');
@@ -9,22 +10,24 @@ const ROLES = Object.freeze({
   USER: 'user',
   ADMIN: 'admin',
   SUPER_ADMIN: 'super_admin',
-});
+} as const);
 
-const setAuthenticatedResponseHeaders = (res) => {
+type AuthState = Express.AuthenticatedUser;
+
+const setAuthenticatedResponseHeaders = (res: Response): void => {
   res.setHeader('Cache-Control', 'private, no-store, max-age=0');
   res.setHeader('Pragma', 'no-cache');
 };
 
-const getBearerToken = (authorization) => {
+const getBearerToken = (authorization: unknown): string | null => {
   if (typeof authorization !== 'string') return null;
   const match = authorization.match(/^Bearer\s+(\S+)$/i);
   return match?.[1] ?? null;
 };
 
-const loadAuthState = async (userId) => {
+const loadAuthState = async (userId: unknown): Promise<AuthState | null> => {
   const id = String(userId);
-  let state = sessionCache.get(id);
+  let state = sessionCache.get(id) as AuthState | null | undefined;
   if (state !== undefined) return state;
 
   const user = await userRepository.findAuthStateById(id);
@@ -46,7 +49,7 @@ const loadAuthState = async (userId) => {
   return state;
 };
 
-const resolveAccessIdentity = async (token) => {
+const resolveAccessIdentity = async (token: string): Promise<AuthState> => {
   const decoded = verifyAccessToken(token);
   const userId = decoded?.user?.id;
 
@@ -94,7 +97,7 @@ const resolveAccessIdentity = async (token) => {
   return state;
 };
 
-exports.requireAuth = async (req, res, next) => {
+exports.requireAuth = async (req: Request, res: Response, next: NextFunction) => {
   setAuthenticatedResponseHeaders(res);
   const token = getBearerToken(req.headers.authorization);
   if (!token) {
@@ -104,9 +107,9 @@ exports.requireAuth = async (req, res, next) => {
   try {
     req.user = await resolveAccessIdentity(token);
     return next();
-  } catch (error) {
+  } catch (error: unknown) {
     if (error instanceof AppError) return next(error);
-    const isExpired = error.name === 'TokenExpiredError';
+    const isExpired = error instanceof Error && error.name === 'TokenExpiredError';
     return next(new AppError(
       isExpired ? 'انتهت صلاحية الجلسة ⏰' : 'توكن غير صالح ⚠️',
       401,
@@ -115,17 +118,17 @@ exports.requireAuth = async (req, res, next) => {
   }
 };
 
-exports.requireAdmin = (req, _res, next) => {
+exports.requireAdmin = (req: Request, _res: Response, next: NextFunction) => {
   if (!req.user) {
     return next(new AppError('غير مصرح — يجب تسجيل الدخول أولاً 🔒', 401, 'UNAUTHORIZED'));
   }
-  if (![ROLES.ADMIN, ROLES.SUPER_ADMIN].includes(req.user.role)) {
+  if (req.user.role !== ROLES.ADMIN && req.user.role !== ROLES.SUPER_ADMIN) {
     return next(new AppError('هذه المنطقة للمشرفين فقط 🛡️', 403, 'FORBIDDEN_ADMIN_ONLY'));
   }
   return next();
 };
 
-exports.requireSuperAdmin = (req, _res, next) => {
+exports.requireSuperAdmin = (req: Request, _res: Response, next: NextFunction) => {
   if (!req.user) {
     return next(new AppError('غير مصرح — يجب تسجيل الدخول أولاً 🔒', 401, 'UNAUTHORIZED'));
   }
@@ -139,7 +142,7 @@ exports.requireSuperAdmin = (req, _res, next) => {
   return next();
 };
 
-exports.requireLevel2 = (req, _res, next) => {
+exports.requireLevel2 = (req: Request, _res: Response, next: NextFunction) => {
   if (!req.user) {
     return next(new AppError('غير مصرح — يجب تسجيل الدخول أولاً 🔒', 401, 'UNAUTHORIZED'));
   }
@@ -153,7 +156,7 @@ exports.requireLevel2 = (req, _res, next) => {
   return next();
 };
 
-exports.optionalAuth = async (req, res, next) => {
+exports.optionalAuth = async (req: Request, res: Response, next: NextFunction) => {
   const token = getBearerToken(req.headers.authorization);
   if (!token) {
     req.user = null;

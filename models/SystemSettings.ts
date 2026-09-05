@@ -4,7 +4,9 @@ const EventEmitter  = require('events');
 
 const settingsEvents = new EventEmitter();
 
-const normalizeStringList = (values) => {
+type CachedSettings = Record<string, unknown>;
+
+const normalizeStringList = (values: unknown): string[] => {
   if (!Array.isArray(values)) return [];
   const normalized = values
     .map((value) => String(value).trim())
@@ -12,7 +14,7 @@ const normalizeStringList = (values) => {
   return [...new Map(normalized.map((value) => [value.toLocaleLowerCase('en'), value])).values()];
 };
 
-const normalizeDomainList = (values) => (
+const normalizeDomainList = (values: unknown): string[] => (
   normalizeStringList(values).map((value) => value.toLowerCase())
 );
 
@@ -52,10 +54,10 @@ const systemSettingsSchema = new mongoose.Schema(
       default: ['كتب', 'إلكترونيات', 'أثاث', 'ملابس', 'أخرى'],
       set: normalizeStringList,
       validate: {
-        validator: (values) => (
+        validator: (values: string[]) => (
           values.length >= 1
           && values.length <= 30
-          && values.every((value) => value.length >= 2 && value.length <= 50)
+          && values.every((value: string) => value.length >= 2 && value.length <= 50)
         ),
         message:   'يجب أن يكون هناك تصنيف واحد على الأقل',
       },
@@ -65,10 +67,10 @@ const systemSettingsSchema = new mongoose.Schema(
       default: ['عمان', 'الزرقاء', 'إربد', 'العقبة', 'السلط', 'مادبا'],
       set: normalizeStringList,
       validate: {
-        validator: (values) => (
+        validator: (values: string[]) => (
           values.length >= 1
           && values.length <= 30
-          && values.every((value) => value.length >= 2 && value.length <= 60)
+          && values.every((value: string) => value.length >= 2 && value.length <= 60)
         ),
         message: 'يجب أن تكون هناك منطقة واحدة على الأقل',
       },
@@ -81,10 +83,10 @@ const systemSettingsSchema = new mongoose.Schema(
       ],
       set: normalizeStringList,
       validate: {
-        validator: (values) => (
+        validator: (values: string[]) => (
           values.length >= 1
           && values.length <= 50
-          && values.every((value) => value.length >= 2 && value.length <= 100)
+          && values.every((value: string) => value.length >= 2 && value.length <= 100)
         ),
         message: 'يجب أن يكون هناك سبب بلاغ واحد على الأقل',
       },
@@ -134,9 +136,9 @@ const systemSettingsSchema = new mongoose.Schema(
       ],
       set: normalizeDomainList,
       validate: {
-        validator: (values) => (
+        validator: (values: string[]) => (
           values.length <= 50
-          && values.every((value) => /^@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z]{2,})+$/.test(value))
+          && values.every((value: string) => /^@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z]{2,})+$/.test(value))
         ),
         message: 'نطاقات البريد الجامعي غير صالحة',
       },
@@ -201,9 +203,9 @@ systemSettingsSchema.statics.getInstance = async function () {
 const IS_CLUSTER = parseInt(process.env.WEB_CONCURRENCY ?? '1', 10) > 1;
 const CACHE_TTL  = IS_CLUSTER ? 5_000 : 60_000;
 
-let _cache   = null;
+let _cache: CachedSettings | null = null;
 let _cacheAt = 0;
-let _cachePromise = null;
+let _cachePromise: Promise<CachedSettings> | null = null;
 let _cacheGeneration = 0;
 
 systemSettingsSchema.statics.getCached = async function () {
@@ -212,7 +214,7 @@ systemSettingsSchema.statics.getCached = async function () {
 
   const generation = _cacheGeneration;
   const pending = this.getInstance()
-    .then((settings) => {
+    .then((settings: CachedSettings) => {
       if (generation === _cacheGeneration) {
         _cache = settings;
         _cacheAt = Date.now();

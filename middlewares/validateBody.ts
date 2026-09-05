@@ -1,6 +1,8 @@
 // middlewares/validateBody.js
 
-const Joi = require('joi');
+const Joi: typeof import('joi') = require('joi');
+import type { CustomHelpers, ObjectSchema, StringSchema } from 'joi';
+import type { NextFunction, Request, Response } from 'express';
 
 // ─── Regex Patterns ────────────────────────────────────────────────
 const ARABIC_NAME    = /^[\u0600-\u06FFa-zA-Z0-9\s.'-]{2,60}$/;
@@ -27,7 +29,7 @@ const passwordRule = Joi.string()
 
 const jordanPhoneRule = Joi.string()
   .max(32)
-  .custom((value, helpers) => {
+  .custom((value: unknown, helpers: CustomHelpers) => {
     const normalized = normalizeJordanPhone(value);
     return PHONE_REGEX.test(normalized)
       ? normalized
@@ -37,7 +39,8 @@ const jordanPhoneRule = Joi.string()
     'string.pattern.base': 'رقم الهاتف غير صالح — استخدم رقماً أردنياً يبدأ بـ 77 أو 78 أو 79',
   });
 
-const textField = (min, max) => Joi.string().min(min).max(max).trim();
+const textField = (min: number, max: number): StringSchema =>
+  Joi.string().min(min).max(max).trim();
 const donationOfferBody = Joi.object({
   condition: Joi.string()
     .valid('جديد', 'مستعمل ممتاز', 'مستعمل جيد')
@@ -234,10 +237,14 @@ const schemas = {
   verifyPhoneToken: Joi.object({
     idToken: Joi.string().min(100).max(10_000).required(),
   }).unknown(false),
-};
+} satisfies Record<string, ObjectSchema>;
 
 // ─── Middleware ─────────────────────────────────────────────────────
-const validateBody = (schemaName) => (req, res, next) => {
+const validateBody = (schemaName: keyof typeof schemas) => (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   const schema = schemas[schemaName];
 
   if (!schema) {
@@ -261,7 +268,7 @@ const validateBody = (schemaName) => (req, res, next) => {
       message,
       msg:       message,
       code:      'VALIDATION_ERROR',
-      errors:    error.details.map((d) => d.message),
+      errors:    error.details.map((d: import('joi').ValidationErrorItem) => d.message),
       requestId: req.id ?? req.headers?.['x-request-id'] ?? null,
     });
   }

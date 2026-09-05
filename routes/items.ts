@@ -1,5 +1,6 @@
 // routes/items.js
 const express = require('express');
+import type { NextFunction, Request, Response } from 'express';
 const router  = express.Router();
 
 // ── Middlewares ─────────────────────────────────────────────────────────────
@@ -29,12 +30,12 @@ const {
 // ── Custom Middlewares ──────────────────────────────────────────────────────
 
 // ✅ [LOGIC-01]: حقن confirmationType تلقائياً للمستلم
-const injectRecipientConfirm = (req, _res, next) => {
+const injectRecipientConfirm = (req: Request, _res: Response, next: NextFunction) => {
   req.body = { ...req.body, confirmationType: 'recipient_confirm' };
   next();
 };
 
-const injectDonorConfirm = (req, _res, next) => {
+const injectDonorConfirm = (req: Request, _res: Response, next: NextFunction) => {
   req.body = { ...req.body, confirmationType: 'donor_confirm' };
   next();
 };

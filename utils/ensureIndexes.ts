@@ -21,7 +21,30 @@ type IndexDefinition = {
   replaceIfDifferent?: boolean;
 };
 
-const indexGroups: Array<{ model: any; indexes: IndexDefinition[] }> = [
+type ExistingIndex = IndexDefinition & { name: string };
+type IndexableCollection = {
+  indexes: () => Promise<ExistingIndex[]>;
+  dropIndex: (name: string) => Promise<unknown>;
+  createIndex: (
+    key: Record<string, unknown>,
+    options: Omit<IndexDefinition, 'key' | 'replaceIfDifferent'>
+  ) => Promise<unknown>;
+};
+type IndexableModel = {
+  modelName: string;
+  collection: IndexableCollection;
+};
+
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+const isNamespaceMissing = (error: unknown): boolean => {
+  if (typeof error !== 'object' || error === null) return false;
+  const record = error as { code?: number; codeName?: string };
+  return record.code === 26 || record.codeName === 'NamespaceNotFound';
+};
+
+const indexGroups: Array<{ model: IndexableModel; indexes: IndexDefinition[] }> = [
   {
     model: Item,
     indexes: [
@@ -128,10 +151,16 @@ const indexGroups: Array<{ model: any; indexes: IndexDefinition[] }> = [
   },
 ];
 
-const indexKeysEqual = (left, right) =>
+const indexKeysEqual = (
+  left: Record<string, unknown> | undefined,
+  right: Record<string, unknown> | undefined
+): boolean =>
   isDeepStrictEqual(Object.entries(left ?? {}), Object.entries(right ?? {}));
 
-const indexDefinitionsEquivalent = (existing, requested) => {
+const indexDefinitionsEquivalent = (
+  existing: IndexDefinition,
+  requested: IndexDefinition
+): boolean => {
   const existingTtl = existing.expireAfterSeconds === undefined
     ? undefined
     : Number(existing.expireAfterSeconds);
@@ -153,36 +182,39 @@ const indexCreateOptions = ({
   ...options
 }: IndexDefinition) => options;
 
-const dropObsoleteDonationRequestTtlIndexes = async () => {
-  const existingIndexes = await listExistingIndexes(DonationRequest.collection);
-  const obsoleteIndexes = existingIndexes.filter((index) =>
+const dropObsoleteDonationRequestTtlIndexes = async (): Promise<void> => {
+  const collection = DonationRequest.collection as IndexableCollection;
+  const existingIndexes = await listExistingIndexes(collection);
+  const obsoleteIndexes = existingIndexes.filter((index: ExistingIndex) =>
     index.expireAfterSeconds !== undefined
     && indexKeysEqual(index.key, { expiresAt: 1 })
   );
 
   for (const index of obsoleteIndexes) {
-    await DonationRequest.collection.dropIndex(index.name);
+    await collection.dropIndex(index.name);
   }
 };
 
-const listExistingIndexes = async (collection) => {
+const listExistingIndexes = async (
+  collection: IndexableCollection
+): Promise<ExistingIndex[]> => {
   try {
     return await collection.indexes();
-  } catch (error) {
-    if (error.code === 26 || error.codeName === 'NamespaceNotFound') return [];
+  } catch (error: unknown) {
+    if (isNamespaceMissing(error)) return [];
     throw error;
   }
 };
 
-const ensureIndexes = async () => {
-  const failures = [];
+const ensureIndexes = async (): Promise<void> => {
+  const failures: Error[] = [];
 
   try {
     // الطلب المنتهي يجب أن يُؤرشف، لا أن يُحذف تلقائياً من MongoDB.
     await dropObsoleteDonationRequestTtlIndexes();
-  } catch (error) {
+  } catch (error: unknown) {
     failures.push(new Error(
-      `DonationRequest: تعذر إزالة فهرس TTL القديم: ${error.message}`,
+      `DonationRequest: تعذر إزالة فهرس TTL القديم: ${getErrorMessage(error)}`,
       { cause: error }
     ));
   }
@@ -191,13 +223,13 @@ const ensureIndexes = async () => {
     let existingIndexes;
     try {
       existingIndexes = await listExistingIndexes(model.collection);
-    } catch (error) {
-      failures.push(new Error(`${model.modelName}: تعذر قراءة الفهارس: ${error.message}`, { cause: error }));
+    } catch (error: unknown) {
+      failures.push(new Error(`${model.modelName}: تعذر قراءة الفهارس: ${getErrorMessage(error)}`, { cause: error }));
       continue;
     }
 
     for (const index of indexes) {
-      const sameKeyIndex = existingIndexes.find((existing) =>
+      const sameKeyIndex = existingIndexes.find((existing: ExistingIndex) =>
         indexKeysEqual(existing.key, index.key)
       );
 
@@ -209,9 +241,9 @@ const ensureIndexes = async () => {
               await model.collection.createIndex(index.key, indexCreateOptions(index));
               const indexPosition = existingIndexes.indexOf(sameKeyIndex);
               existingIndexes.splice(indexPosition, 1, index);
-            } catch (error) {
+            } catch (error: unknown) {
               failures.push(new Error(
-                `${model.modelName}.${index.name}: تعذر ترقية الفهرس القديم: ${error.message}`,
+                `${model.modelName}.${index.name}: تعذر ترقية الفهرس القديم: ${getErrorMessage(error)}`,
                 { cause: error }
               ));
             }
@@ -230,9 +262,9 @@ const ensureIndexes = async () => {
               await model.collection.createIndex(index.key, indexCreateOptions(index));
               const indexPosition = existingIndexes.indexOf(sameKeyIndex);
               existingIndexes.splice(indexPosition, 1, index);
-            } catch (error) {
+            } catch (error: unknown) {
               failures.push(new Error(
-                `${model.modelName}.${index.name}: تعذر ترقية فهرس الهاتف القديم: ${error.message}`,
+                `${model.modelName}.${index.name}: تعذر ترقية فهرس الهاتف القديم: ${getErrorMessage(error)}`,
                 { cause: error }
               ));
             }
@@ -249,8 +281,8 @@ const ensureIndexes = async () => {
       try {
         await model.collection.createIndex(index.key, indexCreateOptions(index));
         existingIndexes.push(index);
-      } catch (error) {
-        failures.push(new Error(`${model.modelName}.${index.name}: ${error.message}`, { cause: error }));
+      } catch (error: unknown) {
+        failures.push(new Error(`${model.modelName}.${index.name}: ${getErrorMessage(error)}`, { cause: error }));
       }
     }
   }
@@ -272,7 +304,7 @@ if (require.main === module) {
     mongoose.connect(process.env.MONGO_URI, { autoIndex: false })
       .then(ensureIndexes)
       .then(() => console.log('[Indexes] اكتملت المهمة بنجاح'))
-      .catch((error) => {
+      .catch((error: unknown) => {
         console.error('[Indexes] فشلت المهمة:', error);
         process.exitCode = 1;
       })

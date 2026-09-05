@@ -50,7 +50,7 @@ const connectDB = async () => {
   mongoose.connection.on('reconnected', () => {
     console.info('[MongoDB] أُعيد الاتصال');
   });
-  mongoose.connection.on('error', (error) => {
+  mongoose.connection.on('error', (error: Error) => {
     console.error('[MongoDB] خطأ اتصال:', error.message);
   });
 };

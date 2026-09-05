@@ -1,13 +1,18 @@
 const mongoose = require('mongoose');
+import type { AounSocket, SocketNext, SocketOperationError } from './socketTypes';
+import { asSocketError } from './socketTypes';
 
 const { verifyAccessToken } = require('../utils/tokenUtils');
 const { resolveAccessIdentity } = require('../middlewares/auth');
 
-const createSocketAuthError = (message, code = 'SOCKET_UNAUTHORIZED') => {
+const createSocketAuthError = (
+  message: string,
+  code = 'SOCKET_UNAUTHORIZED'
+): SocketOperationError => {
   return Object.assign(new Error(message), { data: { code } });
 };
 
-const verifySocketToken = (token) => {
+const verifySocketToken = (token: unknown): { id: string; expiresAt: number } => {
   if (!token || typeof token !== 'string') {
     throw createSocketAuthError('مطلوب تسجيل الدخول للاتصال الفوري');
   }
@@ -15,8 +20,8 @@ const verifySocketToken = (token) => {
   let decoded;
   try {
     decoded = verifyAccessToken(token);
-  } catch (error) {
-    const code = error?.name === 'TokenExpiredError'
+  } catch (error: unknown) {
+    const code = error instanceof Error && error.name === 'TokenExpiredError'
       ? 'TOKEN_EXPIRED'
       : 'SOCKET_UNAUTHORIZED';
     throw createSocketAuthError(
@@ -40,7 +45,7 @@ const verifySocketToken = (token) => {
   return { id: String(userId), expiresAt };
 };
 
-const socketAuthMiddleware = async (socket, next) => {
+const socketAuthMiddleware = async (socket: AounSocket, next: SocketNext) => {
   const token = socket.handshake.auth?.token;
   try {
     const verifiedToken = verifySocketToken(token);
@@ -53,13 +58,14 @@ const socketAuthMiddleware = async (socket, next) => {
       tokenExpiresAt: verifiedToken.expiresAt,
     };
     return next();
-  } catch (error) {
-    const code = error.code || error.data?.code || 'SOCKET_UNAUTHORIZED';
-    const isSafeClientError = Number.isInteger(error.statusCode)
-      ? error.statusCode < 500
-      : Boolean(error.data?.code);
+  } catch (error: unknown) {
+    const socketError = asSocketError(error);
+    const code = socketError.code || socketError.data?.code || 'SOCKET_UNAUTHORIZED';
+    const isSafeClientError = Number.isInteger(socketError.statusCode)
+      ? Number(socketError.statusCode) < 500
+      : Boolean(socketError.data?.code);
     return next(createSocketAuthError(
-      isSafeClientError ? error.message : 'تعذر التحقق من هوية الاتصال',
+      isSafeClientError ? socketError.message : 'تعذر التحقق من هوية الاتصال',
       code
     ));
   }

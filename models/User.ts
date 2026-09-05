@@ -28,7 +28,7 @@ const userSchema = new mongoose.Schema(
       required: true,
       trim: true,
       validate: {
-        validator: (value) => JORDAN_PHONE_REGEX.test(value),
+        validator: (value: string) => JORDAN_PHONE_REGEX.test(value),
         message: 'رقم الهاتف يجب أن يكون بصيغة دولية أردنية صحيحة (+9627XXXXXXXX)',
       },
     },

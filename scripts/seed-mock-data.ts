@@ -20,7 +20,7 @@ const ensureIndexes = require("../utils/ensureIndexes");
 
 const DEMO_PASSWORD = "AounDemo2026!";
 
-const unsplashImage = (photoId) =>
+const unsplashImage = (photoId: string): string =>
   `https://images.unsplash.com/photo-${photoId}?auto=format&fit=crop&w=1200&h=800&q=82`;
 
 // صور عامة ثابتة للعرض التجريبي؛ كل صورة تطابق الغرض المرتبط بها.
@@ -47,7 +47,30 @@ const MOCK_IMAGES = Object.freeze({
   offeredLaptop: unsplashImage("1517336714731-489689fd1ca8"),
 });
 
-const MODELS = [
+type DatasetCollectionKey =
+  | "settings"
+  | "users"
+  | "hubs"
+  | "requests"
+  | "items"
+  | "offers"
+  | "conversations"
+  | "messages"
+  | "notifications"
+  | "ratings"
+  | "reports"
+  | "adminLogs";
+type SeedModel = {
+  modelName: string;
+  new (record: unknown): { validate: () => Promise<void> };
+  createIndexes: () => Promise<unknown>;
+  insertMany: (records: readonly unknown[]) => Promise<unknown>;
+};
+
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+const MODELS: ReadonlyArray<readonly [DatasetCollectionKey, SeedModel]> = [
   ["settings", SystemSettings],
   ["users", User],
   ["hubs", SafeHub],
@@ -62,19 +85,20 @@ const MODELS = [
   ["adminLogs", AdminLog],
 ];
 
-const createIds = (names) => Object.fromEntries(
-  names.map((name) => [name, new mongoose.Types.ObjectId()])
-);
+const createIds = (names: readonly string[]): Record<string, import('mongoose').Types.ObjectId> =>
+  Object.fromEntries(
+    names.map((name: string) => [name, new mongoose.Types.ObjectId()])
+  );
 
-const toId = (value) => String(value ?? "");
+const toId = (value: unknown): string => String(value ?? "");
 
-const addDays = (date, days) =>
+const addDays = (date: Date, days: number): Date =>
   new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 
-const monthKey = (date) =>
+const monthKey = (date: Date): string =>
   `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 
-function buildMockDataset(passwordHash, now = new Date()) {
+function buildMockDataset(passwordHash: string, now = new Date()) {
   const userIds = createIds([
     "admin",
     "student",
@@ -920,14 +944,26 @@ function buildMockDataset(passwordHash, now = new Date()) {
   };
 }
 
-async function validateDataset(dataset) {
+type MockDataset = ReturnType<typeof buildMockDataset>;
+type IntegrityItem = {
+  _id: unknown;
+  title: string;
+  donor: unknown;
+  status: string;
+  bookedBy?: unknown;
+  safeHub?: unknown;
+  linkedRequestId?: unknown;
+  waitlist?: Array<{ user?: unknown }>;
+};
+
+async function validateDataset(dataset: MockDataset): Promise<void> {
   for (const [key, Model] of MODELS) {
     for (const [index, record] of dataset[key].entries()) {
       try {
         await new Model(record).validate();
-      } catch (error) {
+      } catch (error: unknown) {
         throw new Error(
-          `Mock validation failed for ${Model.modelName}[${index}]: ${error.message}`,
+          `Mock validation failed for ${Model.modelName}[${index}]: ${getErrorMessage(error)}`,
           { cause: error }
         );
       }
@@ -935,8 +971,9 @@ async function validateDataset(dataset) {
   }
 }
 
-function assertDatasetIntegrity(dataset) {
-  const idsOf = (records) => new Set(records.map((record) => toId(record._id)));
+function assertDatasetIntegrity(dataset: MockDataset): void {
+  const idsOf = (records: ReadonlyArray<{ _id: unknown }>): Set<string> =>
+    new Set(records.map((record: { _id: unknown }) => toId(record._id)));
   const userIds = idsOf(dataset.users);
   const hubIds = idsOf(dataset.hubs);
   const requestIds = idsOf(dataset.requests);
@@ -944,11 +981,12 @@ function assertDatasetIntegrity(dataset) {
   const conversationIds = idsOf(dataset.conversations);
   const reportIds = idsOf(dataset.reports);
 
-  const requireRef = (set, value, label) => {
+  const requireRef = (set: Set<string>, value: unknown, label: string): void => {
     assert.ok(set.has(toId(value)), `مرجع Mock غير موجود: ${label}`);
   };
 
-  for (const item of dataset.items) {
+  for (const rawItem of dataset.items) {
+    const item = rawItem as IntegrityItem;
     requireRef(userIds, item.donor, `Item.donor (${item.title})`);
     if (item.bookedBy) requireRef(userIds, item.bookedBy, `Item.bookedBy (${item.title})`);
     if (item.safeHub) requireRef(hubIds, item.safeHub, `Item.safeHub (${item.title})`);
@@ -966,7 +1004,8 @@ function assertDatasetIntegrity(dataset) {
       requireRef(itemIds, request.fulfilledByItem, `DonationRequest.fulfilledByItem (${request.title})`);
       const linkedItem = dataset.items.find(
         (item) => toId(item._id) === toId(request.fulfilledByItem)
-      );
+      ) as IntegrityItem | undefined;
+      if (!linkedItem) throw new Error(`Linked item missing for request ${request.title}`);
       assert.equal(toId(linkedItem.linkedRequestId), toId(request._id));
     }
   }
@@ -993,6 +1032,7 @@ function assertDatasetIntegrity(dataset) {
     const conversation = dataset.conversations.find(
       (entry) => toId(entry._id) === toId(message.conversation)
     );
+    if (!conversation) throw new Error('Conversation missing for mock message');
     assert.ok(conversation.participants.map(toId).includes(toId(message.sender)));
   }
 
@@ -1008,7 +1048,10 @@ function assertDatasetIntegrity(dataset) {
     requireRef(itemIds, rating.item, "Rating.item");
     requireRef(userIds, rating.rater, "Rating.rater");
     requireRef(userIds, rating.ratee, "Rating.ratee");
-    const item = dataset.items.find((entry) => toId(entry._id) === toId(rating.item));
+    const item = dataset.items.find(
+      (entry) => toId(entry._id) === toId(rating.item)
+    ) as IntegrityItem | undefined;
+    if (!item) throw new Error('Item missing for mock rating');
     assert.equal(item.status, "تم التسليم");
     assert.equal(toId(item.bookedBy), toId(rating.rater));
     assert.equal(toId(item.donor), toId(rating.ratee));
@@ -1021,7 +1064,8 @@ function assertDatasetIntegrity(dataset) {
       requireRef(itemIds, report.relatedItem, "Report.relatedItem");
       const item = dataset.items.find(
         (entry) => toId(entry._id) === toId(report.relatedItem)
-      );
+      ) as IntegrityItem | undefined;
+      if (!item) throw new Error('Item missing for mock report');
       assert.equal(item.status, "تم التسليم");
       const parties = new Set([toId(item.donor), toId(item.bookedBy)]);
       assert.ok(parties.has(toId(report.reporter)));
@@ -1063,14 +1107,14 @@ function assertDatasetIntegrity(dataset) {
   );
 }
 
-async function recreateIndexes() {
+async function recreateIndexes(): Promise<void> {
   for (const [, Model] of MODELS) {
     await Model.createIndexes();
   }
   await ensureIndexes();
 }
 
-async function insertDataset(dataset) {
+async function insertDataset(dataset: MockDataset): Promise<void> {
   await SystemSettings.insertMany(dataset.settings);
   await User.insertMany(dataset.users);
   await SafeHub.insertMany(dataset.hubs);
@@ -1085,7 +1129,7 @@ async function insertDataset(dataset) {
   await AdminLog.insertMany(dataset.adminLogs);
 }
 
-function assertResetAuthorization(actualDatabaseName) {
+function assertResetAuthorization(actualDatabaseName: string): void {
   if (process.env.ALLOW_MOCK_RESET !== "true") {
     throw new Error(
       "للحماية: أضف ALLOW_MOCK_RESET=true فقط عند تشغيل Seed على قاعدة Demo"
@@ -1105,7 +1149,7 @@ function assertResetAuthorization(actualDatabaseName) {
   }
 }
 
-async function main() {
+async function main(): Promise<void> {
   const uri = process.env.MONGODB_URI || process.env.MONGO_URI;
   if (!uri) throw new Error("ضع MONGODB_URI أو MONGO_URI في ملف .env");
 

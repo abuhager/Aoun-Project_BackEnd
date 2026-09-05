@@ -23,14 +23,16 @@ const closeResources = async () => {
   const { stopCronJobs } = require('./jobs/cronJobs');
   await stopCronJobs();
 
-  if (runtime.io) {
+  const activeIo = runtime.io;
+  const activeServer = runtime.server;
+  if (activeIo) {
     const { resetIO } = require('./socket');
-    await new Promise<void>((resolve) => runtime.io.close(() => resolve()));
+    await new Promise<void>((resolve) => activeIo.close(() => resolve()));
     runtime.io = null;
     resetIO();
-  } else if (runtime.server?.listening) {
+  } else if (activeServer?.listening) {
     await new Promise<void>((resolve, reject) => {
-      runtime.server.close((error) => (error ? reject(error) : resolve()));
+      activeServer.close((error) => (error ? reject(error) : resolve()));
     });
   }
 
@@ -44,7 +46,7 @@ const closeResources = async () => {
   }
 };
 
-const gracefulShutdown = (signal, exitCode = 0) => {
+const gracefulShutdown = (signal: string, exitCode = 0): Promise<void> => {
   if (shutdownPromise) return shutdownPromise;
 
   console.log(`[Shutdown] بدء الإغلاق الآمن بسبب ${signal}`);
@@ -69,7 +71,7 @@ const gracefulShutdown = (signal, exitCode = 0) => {
   return shutdownPromise;
 };
 
-const shutdownAndExit = async (signal, exitCode) => {
+const shutdownAndExit = async (signal: string, exitCode: number): Promise<never> => {
   await gracefulShutdown(signal, exitCode);
   process.exit(process.exitCode ?? exitCode);
 };
@@ -97,18 +99,20 @@ const startServer = async () => {
   const { initCronJobs } = require('./jobs/cronJobs');
   const { initSocket } = require('./socket');
 
+  const server = http.createServer(app);
+  const io = initSocket(server);
   runtime.app = app;
-  runtime.server = http.createServer(app);
-  runtime.io = initSocket(runtime.server);
-  app.set('io', runtime.io);
+  runtime.server = server;
+  runtime.io = io;
+  app.set('io', io);
 
   await connectRedis();
   await connectDB();
 
   await new Promise<void>((resolve, reject) => {
-    runtime.server.once('error', reject);
-    runtime.server.listen(port, () => {
-      runtime.server.off('error', reject);
+    server.once('error', reject);
+    server.listen(port, () => {
+      server.off('error', reject);
       resolve();
     });
   });

@@ -1,4 +1,7 @@
-const { Server } = require('socket.io');
+const { Server }: typeof import('socket.io') = require('socket.io');
+import type { IncomingMessage, Server as HttpServer } from 'http';
+import type { ServerOptions } from 'socket.io';
+import type { AounSocket, AounSocketServer } from './socketTypes';
 
 const { corsOrigin, isOriginAllowed } = require('../config/cors');
 const { socketAuthMiddleware } = require('./auth');
@@ -8,17 +11,20 @@ const {
   userRoom,
 } = require('./contracts');
 
-let io = null;
+let io: AounSocketServer | null = null;
 
 const TOKEN_REFRESH_LEEWAY_MS = 30_000;
 
-const buildSocketServerOptions = () => ({
+const buildSocketServerOptions = (): Partial<ServerOptions> => ({
   cors: {
     origin: corsOrigin,
     credentials: true,
     methods: ['GET', 'POST'],
   },
-  allowRequest: (request, callback) => {
+  allowRequest: (
+    request: IncomingMessage,
+    callback: (error: string | null | undefined, success: boolean) => void
+  ) => {
     try {
       callback(null, isOriginAllowed(request.headers.origin));
     } catch {
@@ -38,7 +44,7 @@ const buildSocketServerOptions = () => ({
   pingTimeout: 20_000,
 });
 
-const scheduleTokenLifecycle = (socket) => {
+const scheduleTokenLifecycle = (socket: AounSocket): (() => void) => {
   const expiresAt = Number(socket.data.tokenExpiresAt);
   if (!Number.isFinite(expiresAt)) return () => {};
 
@@ -65,14 +71,15 @@ const scheduleTokenLifecycle = (socket) => {
   };
 };
 
-const initSocket = (httpServer) => {
+const initSocket = (httpServer: HttpServer): AounSocketServer => {
   if (io) throw new Error('Socket.io initialized more than once');
 
   io = new Server(httpServer, buildSocketServerOptions());
 
   io.use(socketAuthMiddleware);
 
-  io.on('connection', async (socket) => {
+  io.on('connection', async (rawSocket) => {
+    const socket = rawSocket as AounSocket;
     const userId = socket.data.userId;
     await socket.join(userRoom(userId));
     registerChatHandlers(io, socket);
@@ -102,14 +109,14 @@ const initSocket = (httpServer) => {
   return io;
 };
 
-const getIO = () => {
+const getIO = (): AounSocketServer => {
   if (!io) throw new Error('Socket.io not initialized');
   return io;
 };
 
-const getIOOrNull = () => io;
+const getIOOrNull = (): AounSocketServer | null => io;
 
-const resetIO = () => {
+const resetIO = (): void => {
   io = null;
 };
 

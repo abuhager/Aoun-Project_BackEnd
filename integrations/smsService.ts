@@ -36,7 +36,7 @@ const initFirebase = () => {
 // ─── التحقق من idToken وإرجاع رقم الهاتف ─────────────────────
 // idToken: يأتي من Firebase Client SDK بعد تأكيد OTP
 // يُرجع: رقم الهاتف بصيغة E.164 (مثل +96279xxxxxxx)
-exports.verifyFirebasePhoneToken = async (idToken) => {
+exports.verifyFirebasePhoneToken = async (idToken: string): Promise<string> => {
   initFirebase();
 
   let decoded;
