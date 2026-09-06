@@ -18,10 +18,10 @@
 
 ## المكونات القابلة لإعادة الاستخدام
 
-- `utils/AppError.js`: الخطأ التشغيلي ومصانع الحالات الشائعة.
-- `utils/errorResponse.js`: يحدد status ويبني الاستجابة ويمنع تسريب أخطاء 5xx في production.
-- `utils/asyncHandler.js`: يمرر رفض الدوال غير المتزامنة إلى Express error middleware.
-- `middlewares/errorHandler.js`: يطبّع أخطاء MongoDB وMulter وCORS ثم يستعمل العقد المركزي.
+- `utils/AppError.ts`: الخطأ التشغيلي ومصانع الحالات الشائعة.
+- `utils/errorResponse.ts`: يحدد status ويبني الاستجابة ويمنع تسريب أخطاء 5xx في production.
+- `utils/asyncHandler.ts`: يمرر رفض الدوال غير المتزامنة إلى Express error middleware.
+- `middlewares/errorHandler.ts`: يطبّع أخطاء MongoDB وMulter وCORS ثم يستعمل العقد المركزي.
 
 ## قواعد الاستخدام
 
@@ -42,8 +42,7 @@ throw AppError.conflict('الطلب منجز مسبقاً', 'REQUEST_ALREADY_FUL
 ## التحقق
 
 ```bash
-npm run check
-npm test
+npm run verify
 ```
 
 الاختبارات الخاصة بهذا التدفق موجودة في

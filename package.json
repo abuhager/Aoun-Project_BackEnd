@@ -13,7 +13,8 @@
     "check": "npm run typecheck",
     "verify": "npm run typecheck && npm test && npm run build",
     "db:indexes": "tsx utils/ensureIndexes.ts",
-    "db:seed:mock": "tsx scripts/seed-mock-data.ts"
+    "db:seed:mock": "tsx scripts/seed-mock-data.ts",
+    "perf:smoke": "tsx scripts/load-smoke.ts"
   },
   "keywords": [],
   "author": "Adham Abu Hager",

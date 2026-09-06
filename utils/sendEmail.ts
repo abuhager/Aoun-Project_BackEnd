@@ -15,11 +15,6 @@ type BrevoEmailBody = {
   replyTo?: { email: string };
 };
 
-type BrevoErrorBody = { message?: string };
-
-const getErrorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
-
 // ✅ جلب platformName من DB مع Cache
 const getPlatformName = async () => {
   try {
@@ -64,27 +59,24 @@ const sendEmail = async (options: EmailOptions) => {
     });
 
     if (!response.ok) {
-      let errBody: BrevoErrorBody = {};
-      try { errBody = await response.json() as BrevoErrorBody; } catch { errBody = {}; }
+      // Vendor responses may contain recipient details; log only the HTTP status.
+      await response.body?.cancel();
       console.error('[sendEmail] ❌ فشل إرسال الإيميل:', {
         status:  response.status,
-        message: errBody?.message ?? response.statusText,
-        to:      options.email,
-        subject: options.subject,
       });
     } else {
-      console.log(`[sendEmail] ✅ أُرسل بنجاح → ${options.email} | "${options.subject}"`);
+      await response.body?.cancel();
+      if (process.env.NODE_ENV !== 'production') {
+        console.info('[sendEmail] ✅ أُرسل البريد بنجاح');
+      }
     }
-  } catch (error) {
-    console.error('[sendEmail] 📧 Network/Parse Error:', {
-      message: getErrorMessage(error),
-      to:      options.email,
-    });
+  } catch {
+    console.error('[sendEmail] تعذر الاتصال بخدمة البريد');
   }
 };
 
-const fireSendEmail = (options: EmailOptions): Promise<void> => sendEmail(options).catch((err: unknown) => {
-  console.error('[fireSendEmail] unhandled error:', getErrorMessage(err));
+const fireSendEmail = (options: EmailOptions): Promise<void> => sendEmail(options).catch(() => {
+  console.error('[fireSendEmail] تعذر تجهيز رسالة البريد');
 });
 
 const emailClient = Object.assign(sendEmail, { sendEmail, fireSendEmail });

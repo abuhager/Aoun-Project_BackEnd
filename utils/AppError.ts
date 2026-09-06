@@ -13,7 +13,7 @@ class AppError extends Error {
    * @param {string}  message      - رسالة بشرية (قد تُعرض للمستخدم)
    * @param {number}  statusCode   - HTTP status code
    * @param {string}  code         - كود آلي مستقر للـ frontend (مثل 'ITEM_NOT_FOUND')
-   * @param {any}     [details]    - بيانات إضافية (validation errors مثلاً) — لا تُرسَل في production
+   * @param {unknown} [details]   - بيانات إضافية (validation errors مثلاً) — لا تُرسَل في production
    */
   constructor(
     message: string,

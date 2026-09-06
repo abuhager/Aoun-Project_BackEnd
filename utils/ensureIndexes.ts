@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import type { CollationOptions, CreateIndexesOptions, IndexDirection } from 'mongodb';
+import type { mongo } from 'mongoose';
 import { isDeepStrictEqual } from 'node:util';
 import Item from '../models/Item.js';
 import Report from '../models/Report.js';
@@ -11,13 +11,13 @@ import Conversation from '../models/Conversation.js';
 import Message from '../models/Message.js';
 
 type IndexDefinition = {
-  key: Record<string, IndexDirection>;
+  key: Record<string, mongo.IndexDirection>;
   name: string;
   unique?: boolean;
   sparse?: boolean;
   expireAfterSeconds?: number;
   partialFilterExpression?: Record<string, unknown>;
-  collation?: CollationOptions;
+  collation?: mongo.CollationOptions;
   replaceIfDifferent?: boolean;
 };
 
@@ -173,7 +173,7 @@ const indexCreateOptions = ({
   key: _key,
   replaceIfDifferent: _replace,
   ...options
-}: IndexDefinition): CreateIndexesOptions => options;
+}: IndexDefinition): mongo.CreateIndexesOptions => options;
 
 const dropObsoleteDonationRequestTtlIndexes = async (): Promise<void> => {
   const collection = DonationRequest.collection;

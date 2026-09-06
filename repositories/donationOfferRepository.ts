@@ -63,6 +63,4 @@ export const countPendingOffersByDonor = async (donorId: EntityId) => {
   return DonationOffer.countDocuments({ donor: donorId, status: 'pending' });
 };
 
-export const countPendingByDonor = countPendingOffersByDonor;
-
-export default { countPendingByHub, createOffer, existsByRequestAndDonor, findViewerOffer, findOffersByRequest, findOfferById, rejectAllPendingExcept, acceptOffer, countPendingOffersByDonor, countPendingByDonor };
+export default { countPendingByHub, createOffer, existsByRequestAndDonor, findViewerOffer, findOffersByRequest, findOfferById, rejectAllPendingExcept, acceptOffer, countPendingOffersByDonor };
