@@ -47,7 +47,7 @@ test('مصادر Backend التشغيلية TypeScript وتُبنى إلى dist 
 test('طبقة TypeScript الصارمة تفحص كامل Backend التشغيلي ضمن verify', async () => {
   const [
     packageJson,
-    strictConfig,
+    tsconfig,
     asyncHandler,
     adminController,
     dtoTypes,
@@ -58,7 +58,7 @@ test('طبقة TypeScript الصارمة تفحص كامل Backend التشغي�
     donationRequestService,
   ] = await Promise.all([
     readFile(path.join(projectRoot, 'package.json'), 'utf8').then(JSON.parse),
-    readFile(path.join(projectRoot, 'tsconfig.strict.json'), 'utf8').then(JSON.parse),
+    readFile(path.join(projectRoot, 'tsconfig.json'), 'utf8').then(JSON.parse),
     readFile(path.join(projectRoot, 'utils', 'asyncHandler.ts'), 'utf8'),
     readFile(path.join(projectRoot, 'controllers', 'adminController.ts'), 'utf8'),
     readFile(path.join(projectRoot, 'dtos', 'dtoTypes.ts'), 'utf8'),
@@ -69,23 +69,25 @@ test('طبقة TypeScript الصارمة تفحص كامل Backend التشغي�
     readFile(path.join(projectRoot, 'services', 'donationRequestService.ts'), 'utf8'),
   ]);
 
-  assert.equal(strictConfig.compilerOptions.strict, true);
-  assert.equal(strictConfig.compilerOptions.noEmit, true);
-  assert.ok(strictConfig.include.includes('*.ts'));
-  assert.ok(strictConfig.include.includes('config/**/*.ts'));
-  assert.ok(strictConfig.include.includes('controllers/**/*.ts'));
-  assert.ok(strictConfig.include.includes('dtos/**/*.ts'));
-  assert.ok(strictConfig.include.includes('integrations/**/*.ts'));
-  assert.ok(strictConfig.include.includes('jobs/**/*.ts'));
-  assert.ok(strictConfig.include.includes('middlewares/**/*.ts'));
-  assert.ok(strictConfig.include.includes('models/**/*.ts'));
-  assert.ok(strictConfig.include.includes('repositories/**/*.ts'));
-  assert.ok(strictConfig.include.includes('routes/**/*.ts'));
-  assert.ok(strictConfig.include.includes('scripts/**/*.ts'));
-  assert.ok(strictConfig.include.includes('services/**/*.ts'));
-  assert.ok(strictConfig.include.includes('socket/**/*.ts'));
-  assert.ok(strictConfig.include.includes('utils/**/*.ts'));
-  assert.match(packageJson.scripts.verify, /typecheck:strict/);
+  assert.equal(tsconfig.compilerOptions.strict, true);
+  assert.equal(tsconfig.compilerOptions.noImplicitAny, true);
+  assert.equal(tsconfig.compilerOptions.useUnknownInCatchVariables, true);
+  assert.ok(tsconfig.include.includes('*.ts'));
+  assert.ok(tsconfig.include.includes('config/**/*.ts'));
+  assert.ok(tsconfig.include.includes('controllers/**/*.ts'));
+  assert.ok(tsconfig.include.includes('dtos/**/*.ts'));
+  assert.ok(tsconfig.include.includes('integrations/**/*.ts'));
+  assert.ok(tsconfig.include.includes('jobs/**/*.ts'));
+  assert.ok(tsconfig.include.includes('middlewares/**/*.ts'));
+  assert.ok(tsconfig.include.includes('models/**/*.ts'));
+  assert.ok(tsconfig.include.includes('repositories/**/*.ts'));
+  assert.ok(tsconfig.include.includes('routes/**/*.ts'));
+  assert.ok(tsconfig.include.includes('scripts/**/*.ts'));
+  assert.ok(tsconfig.include.includes('services/**/*.ts'));
+  assert.ok(tsconfig.include.includes('socket/**/*.ts'));
+  assert.ok(tsconfig.include.includes('utils/**/*.ts'));
+  assert.equal(packageJson.scripts.typecheck, 'tsc --noEmit');
+  assert.doesNotMatch(packageJson.scripts.verify, /typecheck:strict/);
   assert.match(asyncHandler, /RequestHandler/);
   assert.match(asyncHandler, /export = asyncHandler/);
   assert.match(adminController, /import asyncHandler = require/);
