@@ -1,4 +1,4 @@
-import corsConfig = require('./cors');
+import corsConfig from './cors.js';
 
 const REQUIRED_ENV = [
   'MONGO_URI',
@@ -207,4 +207,5 @@ const environment = {
   validateEnvironment,
 };
 
-export = environment;
+export { REQUIRED_ENV, isPlaceholderSecret, parseDurationMs, parsePositiveInteger, validateEnvironment };
+export default environment;

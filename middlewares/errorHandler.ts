@@ -1,6 +1,6 @@
-const AppError = require('../utils/AppError');
-const { buildErrorResponse } = require('../utils/errorResponse');
-const multer = require('multer');
+import AppError from '../utils/AppError.js';
+import { buildErrorResponse } from '../utils/errorResponse.js';
+import multer from 'multer';
 import type { ErrorRequestHandler } from 'express';
 
 type ErrorLike = Error & {
@@ -80,7 +80,8 @@ const errorHandler: ErrorRequestHandler = (err: unknown, req, res, next) => {
   error = normalizeCors(error);
   error = normalizeUpload(error);
 
-  const requestId = req.id || req.headers['x-request-id'];
+  const rawRequestId = req.id || req.headers['x-request-id'];
+  const requestId = Array.isArray(rawRequestId) ? rawRequestId[0] : rawRequestId;
   const { statusCode, isOperational, body } = buildErrorResponse(error, {
     requestId,
   });
@@ -101,4 +102,4 @@ const errorHandler: ErrorRequestHandler = (err: unknown, req, res, next) => {
   return res.status(statusCode).json(body);
 };
 
-module.exports = errorHandler;
+export default errorHandler;

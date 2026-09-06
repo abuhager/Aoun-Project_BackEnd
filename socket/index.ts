@@ -1,17 +1,12 @@
-const { Server }: typeof import('socket.io') = require('socket.io');
+import { Server } from 'socket.io';
 import type { IncomingMessage, Server as HttpServer } from 'http';
 import type { ServerOptions } from 'socket.io';
-import type { AounSocket, AounSocketServer } from './socketTypes';
-
-const { corsOrigin, isOriginAllowed } = require('../config/cors');
-const { socketAuthMiddleware } = require('./auth');
-const { registerChatHandlers } = require('./chatHandlers');
-const {
-  SOCKET_EVENTS,
-  userRoom,
-} = require('./contracts');
-
-let io: AounSocketServer | null = null;
+import type { AounSocket, AounSocketServer } from './socketTypes.js';
+import { corsOrigin, isOriginAllowed } from '../config/cors.js';
+import { socketAuthMiddleware } from './auth.js';
+import { registerChatHandlers } from './chatHandlers.js';
+import { SOCKET_EVENTS, userRoom } from './contracts.js';
+import { getIO, getIOOrNull, resetIO, setIO } from './registry.js';
 
 const TOKEN_REFRESH_LEEWAY_MS = 30_000;
 
@@ -72,17 +67,16 @@ const scheduleTokenLifecycle = (socket: AounSocket): (() => void) => {
 };
 
 const initSocket = (httpServer: HttpServer): AounSocketServer => {
-  if (io) throw new Error('Socket.io initialized more than once');
+  const socketServer = new Server(httpServer, buildSocketServerOptions());
+  setIO(socketServer);
 
-  io = new Server(httpServer, buildSocketServerOptions());
+  socketServer.use(socketAuthMiddleware);
 
-  io.use(socketAuthMiddleware);
-
-  io.on('connection', async (rawSocket) => {
+  socketServer.on('connection', async (rawSocket) => {
     const socket = rawSocket as AounSocket;
     const userId = socket.data.userId;
     await socket.join(userRoom(userId));
-    registerChatHandlers(io, socket);
+    registerChatHandlers(socketServer, socket);
     const clearTokenLifecycle = scheduleTokenLifecycle(socket);
 
     socket.emit(SOCKET_EVENTS.SOCKET_READY, {
@@ -106,21 +100,11 @@ const initSocket = (httpServer: HttpServer): AounSocketServer => {
     socket.once('disconnect', clearTokenLifecycle);
   });
 
-  return io;
+  return socketServer;
 };
 
-const getIO = (): AounSocketServer => {
-  if (!io) throw new Error('Socket.io not initialized');
-  return io;
-};
-
-const getIOOrNull = (): AounSocketServer | null => io;
-
-const resetIO = (): void => {
-  io = null;
-};
-
-module.exports = {
+export { TOKEN_REFRESH_LEEWAY_MS, buildSocketServerOptions, getIO, getIOOrNull, initSocket, resetIO, scheduleTokenLifecycle };
+export default {
   TOKEN_REFRESH_LEEWAY_MS,
   buildSocketServerOptions,
   getIO,

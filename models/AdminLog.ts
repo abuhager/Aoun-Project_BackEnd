@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const adminLogSchema = new mongoose.Schema({
   adminId: {
@@ -38,6 +38,5 @@ const adminLogSchema = new mongoose.Schema({
   adminNote:  { type: String, default: null },
 
   meta: { type: mongoose.Schema.Types.Mixed, default: {} },
-}, { timestamps: true });
-
-module.exports = mongoose.model('AdminLog', adminLogSchema);
+}, { timestamps: true });const AdminLog = mongoose.model('AdminLog', adminLogSchema);
+export default AdminLog;

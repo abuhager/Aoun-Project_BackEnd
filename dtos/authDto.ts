@@ -1,13 +1,9 @@
-const { buildGamificationProfile } = require('../utils/gamification');
-import { toId, toIsoDate, toPlainRecord } from './dtoTypes';
+import { buildGamificationProfile } from '../utils/gamification.js';
+import { toId, toIsoDate, toPlainRecord } from './dtoTypes.js';
 
 const toDate = toIsoDate;
 
-/**
- * العقد الوحيد لهوية المستخدم التي يمكن إرسالها للواجهة.
- * حقول كلمات المرور وOTP والجلسات لا يمكن أن تدخل هذا الكائن حتى لو تغيّر الاستعلام.
- */
-exports.toAuthUser = (rawUser: unknown) => {
+export const toAuthUser = (rawUser: unknown) => {
   const user = toPlainRecord(rawUser);
   if (!user) return null;
 
@@ -36,7 +32,7 @@ exports.toAuthUser = (rawUser: unknown) => {
   });
 };
 
-exports.toProfileActivityItem = (rawItem: unknown) => {
+export const toProfileActivityItem = (rawItem: unknown) => {
   const item = toPlainRecord(rawItem);
   if (!item) return null;
 
@@ -51,4 +47,6 @@ exports.toProfileActivityItem = (rawItem: unknown) => {
   });
 };
 
-exports._private = { toDate, toId };
+export const _private = { toDate, toId };
+
+export default { toAuthUser, toProfileActivityItem, _private };

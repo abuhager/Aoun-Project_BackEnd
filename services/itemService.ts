@@ -1,31 +1,21 @@
-// services/itemService.js
-// ✅ PATCHED v3 — إصلاحات Flow 5 Review
-// FIX [CANCEL-01]: cancelBookingLogic تستخدم findOneAndUpdate ذري بدل findById + save
-// FIX [SESSION-01]: session.endSession() في finally بدل التكرار
-
-const mongoose        = require('mongoose');
-const Item            = require('../models/Item');
-const User            = require('../models/User');
-const SystemSettings  = require('../models/SystemSettings');
-const DonationRequest = require('../models/DonationRequest');
-const SafeHub         = require('../models/SafeHub');
-
-const itemRepository  = require('../repositories/itemRepository');
-const AppError        = require('../utils/AppError');
-
-const {
-  uploadToCloudinary,
-  deleteFromCloudinary,
-} = require('../utils/uploadToCloudinary');
-const notifyUser             = require('../utils/notifyUser');
-const escapeRegex            = require('../utils/escapeRegex');
-const { validateImageFile }  = require('../utils/imageValidation');
-const { toPublicItem, toDonorItem, toReceiverItem } = require('../dtos/itemDto');
-const { buildGamificationProfile } = require('../utils/gamification');
-const { SOCKET_EVENTS }      = require('../socket/contracts');
-const { emitToAll, emitToUser } = require('../socket/emitter');
-import type { EntityId, ServicePayload, UploadedFile } from './serviceTypes';
-import { getErrorMessage } from './serviceTypes';
+import mongoose from 'mongoose';
+import Item from '../models/Item.js';
+import User from '../models/User.js';
+import SystemSettings from '../models/SystemSettings.js';
+import DonationRequest from '../models/DonationRequest.js';
+import SafeHub from '../models/SafeHub.js';
+import itemRepository from '../repositories/itemRepository.js';
+import AppError from '../utils/AppError.js';
+import { uploadToCloudinary, deleteFromCloudinary } from '../utils/uploadToCloudinary.js';
+import notifyUser from '../utils/notifyUser.js';
+import escapeRegex from '../utils/escapeRegex.js';
+import { validateImageFile } from '../utils/imageValidation.js';
+import { toPublicItem, toDonorItem, toReceiverItem } from '../dtos/itemDto.js';
+import { buildGamificationProfile } from '../utils/gamification.js';
+import { SOCKET_EVENTS } from '../socket/contracts.js';
+import { emitToAll, emitToUser } from '../socket/emitter.js';
+import type { EntityId, ServicePayload, ServiceRecord, UploadedFile } from './serviceTypes.js';
+import { getErrorMessage } from './serviceTypes.js';
 
 // ── ✅ ARCH-01: ثوابت مشتركة ────────────────────────────────────────────────
 const DEFAULT_MAX_WAITLIST = 10;
@@ -52,16 +42,16 @@ type ItemLifecycle = {
   cancelledBy?: EntityId[];
 };
 type NotificationPayload = ServicePayload & { type: string };
-type ItemInput = {
+export type ItemInput = {
   title: string;
   description?: string;
   category: string;
   location: string;
-  condition: string;
+  condition: 'جديد' | 'مستعمل ممتاز' | 'مستعمل جيد';
   safeHub?: EntityId | null;
 };
 type ItemUpdateInput = ServicePayload & Partial<ItemInput>;
-type DeliveryConfirmation = 'recipient_confirm' | 'donor_confirm';
+export type DeliveryConfirmation = 'recipient_confirm' | 'donor_confirm';
 
 const resolveEntityId = (value: EntityReference): EntityId | undefined => {
   if (typeof value === 'object' && value !== null && '_id' in value) {
@@ -69,6 +59,12 @@ const resolveEntityId = (value: EntityReference): EntityId | undefined => {
   }
   return value as EntityId;
 };
+
+const asServiceRecord = (value: unknown): ServiceRecord | null => (
+  typeof value === 'object' && value !== null
+    ? value as unknown as ServiceRecord
+    : null
+);
 
 const queueNotification = (
   userId: EntityId | null | undefined,
@@ -163,10 +159,7 @@ const assertGenericLifecycleAllowed = (
   );
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 1. جلب الأغراض المتاحة
-// ─────────────────────────────────────────────────────────────────────────────
-exports.getItemsLogic = async (query: ItemListQuery = {}) => {
+export const getItemsLogic = async (query: ItemListQuery = {}) => {
   const page        = Math.max(1, parseInt(String(query.page ?? ''), 10) || 1);
   const settings    = await SystemSettings.getCached();
   const maxPageSize = settings.maxPageSize ?? 20;
@@ -207,10 +200,7 @@ exports.getItemsLogic = async (query: ItemListQuery = {}) => {
   };
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 2. جلب أغراضي
-// ─────────────────────────────────────────────────────────────────────────────
-exports.getMyItemsLogic = async (userId: EntityId) => {
+export const getMyItemsLogic = async (userId: EntityId) => {
   const [user, myDonations, myRequests] = await Promise.all([
     User.findById(userId)
       .select(
@@ -236,10 +226,7 @@ exports.getMyItemsLogic = async (userId: EntityId) => {
   };
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 3. جلب غرض بالـ ID
-// ─────────────────────────────────────────────────────────────────────────────
-exports.getItemByIdLogic = async (
+export const getItemByIdLogic = async (
   itemId: EntityId,
   requesterId: EntityId | null,
   requesterRole = 'user'
@@ -248,13 +235,21 @@ exports.getItemByIdLogic = async (
   if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
 
   const settings = await SystemSettings.getCached();
-  const obj      = item.toObject ? item.toObject() : { ...item };
+  const obj = (item.toObject ? item.toObject() : { ...item }) as unknown as (
+    ServiceRecord & ItemLifecycle & {
+      expiryHours?: number;
+      status?: string;
+      waitlistCount?: number;
+    }
+  );
 
   obj.expiryHours   = settings.bookingExpiryHours ?? 72;
   obj.waitlistCount = obj.waitlist?.length ?? 0;
 
-  const isOwner     = requesterId && obj.donor?._id?.toString() === requesterId.toString();
-  const isBookerReq = requesterId && obj.bookedBy?._id?.toString() === requesterId.toString();
+  const isOwner = requesterId
+    && resolveEntityId(obj.donor as EntityReference)?.toString() === requesterId.toString();
+  const isBookerReq = requesterId
+    && resolveEntityId(obj.bookedBy as EntityReference)?.toString() === requesterId.toString();
   const isAdmin     = isAdminRole(requesterRole);
 
   if (obj.linkedRequestId && !isOwner && !isBookerReq && !isAdmin)
@@ -264,26 +259,17 @@ exports.getItemByIdLogic = async (
     throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
 
   if (isOwner || isAdmin) {
-    const result = toDonorItem(obj, requesterId);
-    delete result.waitlist;
-    return result;
+    return toDonorItem(obj, requesterId);
   }
 
   if (isBookerReq) {
-    const result = toReceiverItem(obj, requesterId);
-    delete result.waitlist;
-    return result;
+    return toReceiverItem(obj, requesterId);
   }
 
-  const result = toPublicItem(obj, requesterId);
-  delete result.waitlist;
-  return result;
+  return toPublicItem(obj, requesterId);
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 4. إضافة غرض جديد
-// ─────────────────────────────────────────────────────────────────────────────
-exports.createItemLogic = async (
+export const createItemLogic = async (
   body: ItemInput,
   userId: EntityId,
   file: UploadedFile
@@ -390,10 +376,7 @@ exports.createItemLogic = async (
   return { item: toDonorItem(item.toObject(), userId) };
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 5. حجز غرض
-// ─────────────────────────────────────────────────────────────────────────────
-exports.bookItemLogic = async (itemId: EntityId, userId: EntityId) => {
+export const bookItemLogic = async (itemId: EntityId, userId: EntityId) => {
   const [user, settings, snapshot] = await Promise.all([
     User.findById(userId).select('isVerified trustLevel role').lean(),
     SystemSettings.getCached(),
@@ -571,10 +554,7 @@ exports.bookItemLogic = async (itemId: EntityId, userId: EntityId) => {
   throw new AppError('الغرض غير متاح للحجز', 409, 'ITEM_NOT_AVAILABLE');
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 6. مغادرة قائمة الانتظار
-// ─────────────────────────────────────────────────────────────────────────────
-exports.leaveWaitlistLogic = async (itemId: EntityId, userId: EntityId) => {
+export const leaveWaitlistLogic = async (itemId: EntityId, userId: EntityId) => {
   const userObjectId = new mongoose.Types.ObjectId(userId);
   const updated = await Item.findOneAndUpdate(
     {
@@ -607,10 +587,7 @@ exports.leaveWaitlistLogic = async (itemId: EntityId, userId: EntityId) => {
   throw new AppError('أنت لست في قائمة الانتظار', 400, 'NOT_IN_WAITLIST');
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 7. إلغاء الحجز ونقل الدور إن أمكن
-// ─────────────────────────────────────────────────────────────────────────────
-exports.cancelBookingLogic = async (itemId: EntityId, userId: EntityId) => {
+export const cancelBookingLogic = async (itemId: EntityId, userId: EntityId) => {
   const snapshot = await Item.findById(itemId)
     .select('status donor bookedBy waitlist cancelledBy title recipientConfirmed linkedRequestId')
     .lean();
@@ -628,7 +605,7 @@ exports.cancelBookingLogic = async (itemId: EntityId, userId: EntityId) => {
     throw new AppError('ليس لديك صلاحية إلغاء هذا الحجز', 403, 'FORBIDDEN');
 
   if (inWait && !isBooker && !isDonor) {
-    return exports.leaveWaitlistLogic(itemId, userId);
+    return leaveWaitlistLogic(itemId, userId);
   }
 
   if (snapshot.status !== 'محجوز' || !snapshot.bookedBy)
@@ -719,8 +696,11 @@ exports.cancelBookingLogic = async (itemId: EntityId, userId: EntityId) => {
       itemId: promoted._id,
       status: promoted.status,
       promoted: true,
-      bookedBy: promoted.bookedBy
-        ? { _id: promoted.bookedBy._id, name: promoted.bookedBy.name }
+      bookedBy: asServiceRecord(promoted.bookedBy)
+        ? {
+            _id: asServiceRecord(promoted.bookedBy)?._id,
+            name: asServiceRecord(promoted.bookedBy)?.name,
+          }
         : null,
     };
   }
@@ -792,11 +772,7 @@ exports.cancelBookingLogic = async (itemId: EntityId, userId: EntityId) => {
   };
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 8. تأكيد التسليم المزدوج
-// ✅ FIX [SESSION-01]: session.endSession() في finally بدل التكرار
-// ─────────────────────────────────────────────────────────────────────────────
-exports.completeDeliveryLogic = async (
+export const completeDeliveryLogic = async (
   itemId: EntityId,
   userId: EntityId,
   confirmationType: DeliveryConfirmation
@@ -926,12 +902,18 @@ exports.completeDeliveryLogic = async (
       try { session.endSession(); } catch (_) {}
     }
 
-    emitToUser(deliveredItem.bookedBy._id, SOCKET_EVENTS.ITEM_DELIVERED, {
+    const deliveredBooker = asServiceRecord(deliveredItem.bookedBy);
+    const deliveredBookerId = deliveredBooker?._id ?? deliveredItem.bookedBy;
+    if (!deliveredBookerId) {
+      throw new AppError('بيانات مستلم الغرض غير مكتملة', 500, 'DELIVERY_RECIPIENT_MISSING');
+    }
+
+    emitToUser(deliveredBookerId as EntityId, SOCKET_EVENTS.ITEM_DELIVERED, {
       itemId:    deliveredItem._id,
       itemTitle: deliveredItem.title,
       message:   '🎉 تم تأكيد التسليم من المتبرع — العملية مكتملة!',
     });
-    queueNotification(deliveredItem.bookedBy._id, {
+    queueNotification(deliveredBookerId as EntityId, {
       type:      'delivery_completed',
       title:     'اكتملت عملية التسليم 🎉',
       body:      `تم تأكيد تسليم "${deliveredItem.title}" بنجاح.`,
@@ -952,10 +934,7 @@ exports.completeDeliveryLogic = async (
   throw new AppError('نوع التأكيد غير معروف', 400, 'INVALID_CONFIRMATION_TYPE');
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 9. تعديل غرض
-// ─────────────────────────────────────────────────────────────────────────────
-exports.updateItemLogic = async (
+export const updateItemLogic = async (
   itemId: EntityId,
   userId: EntityId,
   body: ItemUpdateInput = {},
@@ -982,7 +961,7 @@ exports.updateItemLogic = async (
   const settings = needsSettings ? await SystemSettings.getCached() : null;
 
   if (body.category) {
-    if (!settings.categories?.includes(body.category))
+    if (!settings?.categories?.includes(body.category))
       throw new AppError(
         `التصنيف "${body.category}" غير مدعوم`,
         400,
@@ -1120,10 +1099,7 @@ exports.updateItemLogic = async (
   };
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 10. حذف غرض
-// ─────────────────────────────────────────────────────────────────────────────
-exports.deleteItemLogic = async (itemId: EntityId, userId: EntityId) => {
+export const deleteItemLogic = async (itemId: EntityId, userId: EntityId) => {
   const snapshot = await Item.findById(itemId)
     .select('donor bookedBy waitlist status cloudinaryId title recipientConfirmed linkedRequestId')
     .lean();
@@ -1154,8 +1130,8 @@ exports.deleteItemLogic = async (itemId: EntityId, userId: EntityId) => {
     _id: itemId,
     donor: userId,
     linkedRequestId: null,
-    status: { $ne: 'تم التسليم' },
-    recipientConfirmed: { $ne: true },
+    status: { $ne: 'تم التسليم' as const },
+    recipientConfirmed: { $ne: true as const },
   };
 
   const deletedItem = await Item.findOneAndDelete(deleteFilter);
@@ -1196,3 +1172,5 @@ exports.deleteItemLogic = async (itemId: EntityId, userId: EntityId) => {
 
   return { msg: 'تم حذف الغرض بنجاح ✅' };
 };
+
+export default { getItemsLogic, getMyItemsLogic, getItemByIdLogic, createItemLogic, bookItemLogic, leaveWaitlistLogic, cancelBookingLogic, completeDeliveryLogic, updateItemLogic, deleteItemLogic };

@@ -1,12 +1,12 @@
-// routes/leaderboard.js
-const express               = require('express');
+import express from 'express';
+import { requireAuth } from '../middlewares/auth.js';
+import { meLimiter } from '../middlewares/rateLimiter.js';
+import leaderboardController from '../controllers/leaderboardController.js';
+
 const router                = express.Router();
-const { requireAuth }       = require('../middlewares/auth');
-const { meLimiter }         = require('../middlewares/rateLimiter');
-const leaderboardController = require('../controllers/leaderboardController');
 
 // لوحة المتصدرين متاحة لكل حساب مسجّل دخوله، وليست API عامة.
 router.get('/',   meLimiter, requireAuth, leaderboardController.getLeaderboard);
 router.get('/me', meLimiter, requireAuth, leaderboardController.getUserRank);
 
-module.exports = router;
+export default router;

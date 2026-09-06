@@ -1,5 +1,4 @@
-// utils/sendEmail.js
-const SystemSettings = require('../models/SystemSettings');
+import SystemSettings from '../models/SystemSettings.js';
 
 type EmailOptions = {
   email: string;
@@ -88,6 +87,10 @@ const fireSendEmail = (options: EmailOptions): Promise<void> => sendEmail(option
   console.error('[fireSendEmail] unhandled error:', getErrorMessage(err));
 });
 
-module.exports = sendEmail;
-module.exports.sendEmail     = sendEmail;
-module.exports.fireSendEmail = fireSendEmail;
+const emailClient = Object.assign(sendEmail, { sendEmail, fireSendEmail });
+
+export default emailClient;
+
+export { sendEmail };
+
+export { fireSendEmail };

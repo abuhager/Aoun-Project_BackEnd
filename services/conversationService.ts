@@ -1,20 +1,15 @@
-const mongoose = require('mongoose');
-
-const Item = require('../models/Item');
-const repo = require('../repositories/conversationRepository');
-const dto = require('../dtos/conversationDto');
-const AppError = require('../utils/AppError');
-const {
-  SOCKET_EVENTS,
-  conversationRoom,
-  userRoom,
-} = require('../socket/contracts');
+import mongoose from 'mongoose';
+import Item from '../models/Item.js';
+import repo from '../repositories/conversationRepository.js';
+import dto from '../dtos/conversationDto.js';
+import AppError from '../utils/AppError.js';
+import { SOCKET_EVENTS, conversationRoom, userRoom } from '../socket/contracts.js';
 import type {
   EntityId,
   RealtimeServer,
   ServiceRecord,
-} from './serviceTypes';
-import { hasErrorCode } from './serviceTypes';
+} from './serviceTypes.js';
+import { hasErrorCode } from './serviceTypes.js';
 
 type ConversationRecord = ServiceRecord & {
   _id: EntityId;
@@ -66,7 +61,7 @@ const assertParticipant = (
   }
 };
 
-exports.listConversationsLogic = async (userId: EntityId) => {
+export const listConversationsLogic = async (userId: EntityId) => {
   assertObjectId(userId, 'المستخدم');
 
   const conversations = await repo.findUserConversations(userId);
@@ -81,13 +76,13 @@ exports.listConversationsLogic = async (userId: EntityId) => {
   ));
 };
 
-exports.getUnreadCountLogic = async (userId: EntityId) => {
+export const getUnreadCountLogic = async (userId: EntityId) => {
   assertObjectId(userId, 'المستخدم');
   const unreadCount = await repo.countUnreadForUser(userId);
   return { unreadCount };
 };
 
-exports.openConversationLogic = async ({
+export const openConversationLogic = async ({
   itemId,
   userId,
   targetUserId = null,
@@ -177,7 +172,7 @@ exports.openConversationLogic = async ({
   return response;
 };
 
-exports.getMessagesLogic = async ({
+export const getMessagesLogic = async ({
   conversationId,
   userId,
   page = 1,
@@ -210,7 +205,7 @@ exports.getMessagesLogic = async ({
   };
 };
 
-exports.markConversationReadLogic = async ({
+export const markConversationReadLogic = async ({
   conversationId,
   userId,
   io,
@@ -249,3 +244,5 @@ exports.markConversationReadLogic = async ({
 
   return { success: true, markedCount, markedNotificationCount };
 };
+
+export default { listConversationsLogic, getUnreadCountLogic, openConversationLogic, getMessagesLogic, markConversationReadLogic };

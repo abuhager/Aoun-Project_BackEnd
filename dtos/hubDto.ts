@@ -1,7 +1,6 @@
-import { toPlainRecord } from './dtoTypes';
+import { toPlainRecord } from './dtoTypes.js';
 
-/** ما يُرجع للمستخدمين العاديين */
-exports.toPublicHub = (rawHub: unknown) => {
+export const toPublicHub = (rawHub: unknown) => {
   const hub = toPlainRecord(rawHub);
   if (!hub) return null;
 
@@ -17,13 +16,12 @@ exports.toPublicHub = (rawHub: unknown) => {
   });
 };
 
-/** ما يُرجع للأدمن (يشمل createdBy + timestamps) */
-exports.toAdminHub = (rawHub: unknown) => {
+export const toAdminHub = (rawHub: unknown) => {
   const hub = toPlainRecord(rawHub);
   if (!hub) return null;
 
   return ({
-    ...exports.toPublicHub(hub),
+    ...toPublicHub(hub),
     createdBy: hub.createdBy,
     createdAt: hub.createdAt,
     updatedAt: hub.updatedAt,
@@ -36,4 +34,6 @@ const ALLOWED_UPDATE_FIELDS: readonly string[] = [
   'name', 'address', 'city', 'coordinates', 'workingHours',
 ];
 
-exports.ALLOWED_UPDATE_FIELDS = ALLOWED_UPDATE_FIELDS;
+export { ALLOWED_UPDATE_FIELDS };
+
+export default { toPublicHub, toAdminHub, ALLOWED_UPDATE_FIELDS };

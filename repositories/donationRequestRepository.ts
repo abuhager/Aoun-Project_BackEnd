@@ -1,9 +1,9 @@
-const DonationRequest = require('../models/DonationRequest');
+import DonationRequest from '../models/DonationRequest.js';
 import type {
   EntityId,
   RepositoryFilter,
   RepositoryPayload,
-} from './repositoryTypes';
+} from './repositoryTypes.js';
 
 type MonthlyRequestQuery = { userId: EntityId; month: string };
 type ActiveMonthlyRequestQuery = MonthlyRequestQuery & { now: Date };
@@ -19,12 +19,10 @@ type ExpiredRequestQuery = {
   limit?: number;
 };
 
-// عدد الطلبات في الشهر (بغض النظر عن الحالة) — للحد الأقصى عند الإنشاء
-exports.countAllMonthlyRequests = ({ userId, month }: MonthlyRequestQuery) =>
+export const countAllMonthlyRequests = ({ userId, month }: MonthlyRequestQuery) =>
   DonationRequest.countDocuments({ requester: userId, month });
 
-// عدد الطلبات النشطة في الشهر — للعرض في صفحة "طلباتي"
-exports.countActiveMonthlyRequests = ({ userId, month, now }: ActiveMonthlyRequestQuery) =>
+export const countActiveMonthlyRequests = ({ userId, month, now }: ActiveMonthlyRequestQuery) =>
   DonationRequest.countDocuments({
     requester: userId,
     month,
@@ -32,10 +30,10 @@ exports.countActiveMonthlyRequests = ({ userId, month, now }: ActiveMonthlyReque
     expiresAt: { $gt: now },
   });
 
-exports.createRequest = (payload: RepositoryPayload) =>
+export const createRequest = (payload: RepositoryPayload) =>
   DonationRequest.create(payload);
 
-exports.findRequests = ({ filter, skip, limit }: RequestListQuery) =>
+export const findRequests = ({ filter, skip, limit }: RequestListQuery) =>
   DonationRequest.find(filter)
     .populate('requester', 'name avatar trustLevel trustScore')
     .populate({
@@ -51,17 +49,17 @@ exports.findRequests = ({ filter, skip, limit }: RequestListQuery) =>
     .limit(limit)
     .lean();
 
-exports.countRequests = (filter: RepositoryFilter) =>
+export const countRequests = (filter: RepositoryFilter) =>
   DonationRequest.countDocuments(filter);
 
-exports.cancelOwnedActiveRequest = ({ requestId, userId }: OwnedRequestQuery) =>
+export const cancelOwnedActiveRequest = ({ requestId, userId }: OwnedRequestQuery) =>
   DonationRequest.findOneAndUpdate(
     { _id: requestId, requester: userId, status: 'active' },
     { $set: { status: 'cancelled' } },
     { returnDocument: 'after' }
   );
 
-exports.findUserRequests = (userId: EntityId) =>
+export const findUserRequests = (userId: EntityId) =>
   DonationRequest.find({ requester: userId })
     .sort({ createdAt: -1 })
     .populate('requester', 'name avatar trustLevel trustScore')
@@ -75,7 +73,7 @@ exports.findUserRequests = (userId: EntityId) =>
     })
     .lean();
 
-exports.findActiveRequestById = (requestId: EntityId) =>
+export const findActiveRequestById = (requestId: EntityId) =>
   DonationRequest.findOne({
     _id:       requestId,
     status:    'active',
@@ -84,7 +82,7 @@ exports.findActiveRequestById = (requestId: EntityId) =>
     .populate('requester', 'name avatar trustLevel trustScore')
     .lean();
 
-exports.findRequestByIdWithItem = (requestId: EntityId) =>
+export const findRequestByIdWithItem = (requestId: EntityId) =>
   DonationRequest.findById(requestId)
     .populate('requester', 'name avatar trustLevel trustScore')
     .populate({
@@ -97,12 +95,12 @@ exports.findRequestByIdWithItem = (requestId: EntityId) =>
     })
     .lean();
 
-exports.findRequestById = (requestId: EntityId) =>
+export const findRequestById = (requestId: EntityId) =>
   DonationRequest.findById(requestId)
     .populate('requester', 'name avatar trustLevel trustScore')
     .lean();
 
-exports.findExpiredActiveIds = ({
+export const findExpiredActiveIds = ({
   now,
   requester,
   limit = 200,
@@ -119,3 +117,5 @@ exports.findExpiredActiveIds = ({
     .limit(limit)
     .lean();
 };
+
+export default { countAllMonthlyRequests, countActiveMonthlyRequests, createRequest, findRequests, countRequests, cancelOwnedActiveRequest, findUserRequests, findActiveRequestById, findRequestByIdWithItem, findRequestById, findExpiredActiveIds };

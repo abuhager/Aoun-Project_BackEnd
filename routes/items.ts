@@ -1,31 +1,13 @@
-// routes/items.js
-const express = require('express');
+import express from 'express';
 import type { NextFunction, Request, Response } from 'express';
+import { requireAuth, optionalAuth } from '../middlewares/auth.js';
+import validateObjectId from '../middlewares/validateObjectId.js';
+import validateBody from '../middlewares/validateBody.js';
+import { upload, verifyImageBuffer } from '../middlewares/upload.js';
+import { actionLimiter, uploadLimiter } from '../middlewares/rateLimiter.js';
+import { getItems, getMyItems, getItemById, createItem, bookItem, cancelBooking, leaveWaitlist, completeDelivery, updateItem, deleteItem } from '../controllers/itemController.js';
+
 const router  = express.Router();
-
-// ── Middlewares ─────────────────────────────────────────────────────────────
-const { requireAuth, optionalAuth } = require('../middlewares/auth');
-const validateObjectId = require('../middlewares/validateObjectId');
-const validateBody     = require('../middlewares/validateBody');
-const { upload, verifyImageBuffer } = require('../middlewares/upload');
-const {
-  actionLimiter,
-  uploadLimiter,
-} = require('../middlewares/rateLimiter');
-
-// ── Controllers ─────────────────────────────────────────────────────────────
-const {
-  getItems,
-  getMyItems,
-  getItemById,
-  createItem,
-  bookItem,
-  cancelBooking,
-  leaveWaitlist,
-  completeDelivery,
-  updateItem,
-  deleteItem,
-} = require('../controllers/itemController');
 
 // ── Custom Middlewares ──────────────────────────────────────────────────────
 
@@ -139,4 +121,4 @@ router.delete(
   deleteItem
 );
 
-module.exports = router;
+export default router;

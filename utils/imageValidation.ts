@@ -1,6 +1,4 @@
-// utils/imageValidation.js ✅ NEW [ARCH-01]
-// مصدر واحد للحقيقة — يُستخدم في itemService + donationRequestService + middleware/upload
-const AppError = require('./AppError');
+import AppError from './AppError.js';
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const DEFAULT_MAX_IMAGE_SIZE = 5 * 1024 * 1024;
@@ -44,7 +42,8 @@ const validateImageFile = (
     );
 };
 
-module.exports = {
+export { validateImageFile, ALLOWED_IMAGE_TYPES, DEFAULT_MAX_IMAGE_SIZE, MAX_IMAGE_SIZE, MAX_IMAGE_SIZE_LIMIT, MIN_IMAGE_SIZE_LIMIT, resolveMaxImageSize };
+export default {
   validateImageFile,
   ALLOWED_IMAGE_TYPES,
   DEFAULT_MAX_IMAGE_SIZE,

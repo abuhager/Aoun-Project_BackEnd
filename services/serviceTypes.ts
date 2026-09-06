@@ -4,7 +4,7 @@ import type { Server as SocketServer } from 'socket.io';
 export type EntityId = string | Types.ObjectId;
 export type ServiceRecord = Record<string, unknown>;
 export type ServicePayload = Record<string, unknown>;
-export type UploadedFile = Pick<Express.Multer.File, 'buffer' | 'mimetype'>;
+export type UploadedFile = Express.Multer.File;
 export type RealtimeServer = SocketServer;
 
 export type ErrorDetails = {

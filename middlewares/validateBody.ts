@@ -1,16 +1,11 @@
-// middlewares/validateBody.js
-
-const Joi: typeof import('joi') = require('joi');
+import Joi from 'joi';
 import type { CustomHelpers, ObjectSchema, StringSchema } from 'joi';
 import type { NextFunction, Request, Response } from 'express';
+import { JORDAN_PHONE_REGEX as PHONE_REGEX, normalizeJordanPhone } from '../utils/phoneUtils.js';
+import { updateSettings } from '../dtos/settingsDto.js';
 
 // ─── Regex Patterns ────────────────────────────────────────────────
 const ARABIC_NAME    = /^[\u0600-\u06FFa-zA-Z0-9\s.'-]{2,60}$/;
-const {
-  JORDAN_PHONE_REGEX: PHONE_REGEX,
-  normalizeJordanPhone,
-} = require('../utils/phoneUtils');
-const { updateSettings } = require('../dtos/settingsDto');
 const OTP_REGEX      = /^\d{6}$/;
 
 // ─── Factory Functions & Reusable Rules ─────────────────────────────
@@ -277,4 +272,4 @@ const validateBody = (schemaName: keyof typeof schemas) => (
   next();
 };
 
-module.exports = validateBody;
+export default validateBody;

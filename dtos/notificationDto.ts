@@ -1,4 +1,4 @@
-import { toId, toPlainRecord } from './dtoTypes';
+import { toId, toPlainRecord } from './dtoTypes.js';
 
 const asId = toId;
 
@@ -20,4 +20,5 @@ const toNotificationDto = (notification: unknown) => {
   };
 };
 
-module.exports = { toNotificationDto };
+export { toNotificationDto };
+export default { toNotificationDto };

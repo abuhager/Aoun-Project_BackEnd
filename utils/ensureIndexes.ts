@@ -1,39 +1,32 @@
-if (require.main === module) require('dotenv').config();
-
-const mongoose = require('mongoose');
-const { isDeepStrictEqual } = require('node:util');
-const Item = require('../models/Item');
-const Report = require('../models/Report');
-const DonationRequest = require('../models/DonationRequest');
-const DonationOffer = require('../models/DonationOffer');
-const User = require('../models/User');
-const Conversation = require('../models/Conversation');
-const Message = require('../models/Message');
+import 'dotenv/config';
+import mongoose from 'mongoose';
+import type { CollationOptions, CreateIndexesOptions, IndexDirection } from 'mongodb';
+import { isDeepStrictEqual } from 'node:util';
+import Item from '../models/Item.js';
+import Report from '../models/Report.js';
+import DonationRequest from '../models/DonationRequest.js';
+import DonationOffer from '../models/DonationOffer.js';
+import User from '../models/User.js';
+import Conversation from '../models/Conversation.js';
+import Message from '../models/Message.js';
 
 type IndexDefinition = {
-  key: Record<string, unknown>;
+  key: Record<string, IndexDirection>;
   name: string;
   unique?: boolean;
   sparse?: boolean;
   expireAfterSeconds?: number;
   partialFilterExpression?: Record<string, unknown>;
-  collation?: Record<string, unknown>;
+  collation?: CollationOptions;
   replaceIfDifferent?: boolean;
 };
 
 type ExistingIndex = IndexDefinition & { name: string };
-type IndexableCollection = {
-  indexes: () => Promise<ExistingIndex[]>;
-  dropIndex: (name: string) => Promise<unknown>;
-  createIndex: (
-    key: Record<string, unknown>,
-    options: Omit<IndexDefinition, 'key' | 'replaceIfDifferent'>
-  ) => Promise<unknown>;
-};
 type IndexableModel = {
   modelName: string;
-  collection: IndexableCollection;
+  collection: mongoose.Collection;
 };
+type IndexableCollection = mongoose.Collection;
 
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -180,10 +173,10 @@ const indexCreateOptions = ({
   key: _key,
   replaceIfDifferent: _replace,
   ...options
-}: IndexDefinition) => options;
+}: IndexDefinition): CreateIndexesOptions => options;
 
 const dropObsoleteDonationRequestTtlIndexes = async (): Promise<void> => {
-  const collection = DonationRequest.collection as IndexableCollection;
+  const collection = DonationRequest.collection;
   const existingIndexes = await listExistingIndexes(collection);
   const obsoleteIndexes = existingIndexes.filter((index: ExistingIndex) =>
     index.expireAfterSeconds !== undefined
@@ -199,7 +192,7 @@ const listExistingIndexes = async (
   collection: IndexableCollection
 ): Promise<ExistingIndex[]> => {
   try {
-    return await collection.indexes();
+    return await collection.indexes() as unknown as ExistingIndex[];
   } catch (error: unknown) {
     if (isNamespaceMissing(error)) return [];
     throw error;
@@ -292,11 +285,14 @@ const ensureIndexes = async (): Promise<void> => {
   }
 };
 
-module.exports = ensureIndexes;
-module.exports.indexDefinitionsEquivalent = indexDefinitionsEquivalent;
-module.exports.dropObsoleteDonationRequestTtlIndexes = dropObsoleteDonationRequestTtlIndexes;
+export default ensureIndexes;
 
-if (require.main === module) {
+export { indexDefinitionsEquivalent };
+
+export { dropObsoleteDonationRequestTtlIndexes };
+
+const isDirectExecution = /(?:^|[\\/])ensureIndexes\.(?:ts|js)$/.test(process.argv[1] ?? '');
+if (isDirectExecution) {
   if (!process.env.MONGO_URI) {
     console.error('[Indexes] MONGO_URI مطلوب لتشغيل مهمة الفهارس');
     process.exitCode = 1;

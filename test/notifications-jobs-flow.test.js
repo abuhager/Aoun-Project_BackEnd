@@ -13,14 +13,15 @@ process.env.CLOUDINARY_CLOUD_NAME = 'test-cloud';
 process.env.CLOUDINARY_API_KEY = 'test-key';
 process.env.CLOUDINARY_API_SECRET = 'test-secret';
 
-const Notification = require('../models/Notification');
-const User = require('../models/User');
-const SystemSettings = require('../models/SystemSettings');
-const notificationRepository = require('../repositories/notificationRepository');
-const notificationService = require('../services/notificationService');
-const notifyUser = require('../utils/notifyUser');
-const cronJobs = require('../jobs/cronJobs');
-const sendEmail = require('../utils/sendEmail');
+const Notification = require('../models/Notification').default;
+const User = require('../models/User').default;
+const systemSettingsModule = require('../models/SystemSettings');
+const SystemSettings = systemSettingsModule.default;
+const notificationRepository = require('../repositories/notificationRepository').default;
+const notificationService = require('../services/notificationService').default;
+const notifyUser = require('../utils/notifyUser').default;
+const cronJobs = require('../jobs/cronJobs').default;
+const sendEmail = require('../utils/sendEmail').default;
 
 const USER_ID = '507f1f77bcf86cd799439011';
 const ITEM_ID = '507f1f77bcf86cd799439012';
@@ -194,7 +195,7 @@ test('notifyUser يوحد عقد Socket ويجلب البريد الحرج وي�
 
 test('تشغيل Cron متزامن لا يكرر المهام أو المستمع ويُغلقها بالكامل', async (t) => {
   const originalGetCached = SystemSettings.getCached;
-  const { settingsEvents } = SystemSettings;
+  const { settingsEvents } = systemSettingsModule;
   const listenersBefore = settingsEvents.listenerCount('invalidated');
 
   SystemSettings.getCached = async () => ({

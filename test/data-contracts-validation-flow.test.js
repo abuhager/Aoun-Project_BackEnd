@@ -12,11 +12,11 @@ process.env.CLOUDINARY_CLOUD_NAME = 'contracts-cloud';
 process.env.CLOUDINARY_API_KEY = 'contracts-key';
 process.env.CLOUDINARY_API_SECRET = 'contracts-secret';
 
-const validateBody = require('../middlewares/validateBody');
-const validateObjectId = require('../middlewares/validateObjectId');
-const authDto = require('../dtos/authDto');
-const adminDto = require('../dtos/adminDto');
-const ratingDto = require('../dtos/ratingDto');
+const validateBody = require('../middlewares/validateBody').default;
+const validateObjectId = require('../middlewares/validateObjectId').default;
+const authDto = require('../dtos/authDto').default;
+const adminDto = require('../dtos/adminDto').default;
+const ratingDto = require('../dtos/ratingDto').default;
 
 const USER_ID = '507f1f77bcf86cd799439011';
 

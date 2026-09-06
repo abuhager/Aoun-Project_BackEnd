@@ -1,7 +1,6 @@
-const axios = require('axios');
-
-const SystemSettings = require('../models/SystemSettings');
-const { getAllowedOrigins } = require('../config/cors');
+import axios from 'axios';
+import SystemSettings from '../models/SystemSettings.js';
+import { getAllowedOrigins } from '../config/cors.js';
 
 type SendEmailInput = {
   to: string;
@@ -61,7 +60,7 @@ const send = async ({ to, subject, htmlContent, platformName }: SendEmailInput) 
   );
 };
 
-exports.sendVerificationEmail = async (
+export const sendVerificationEmail = async (
   to: string,
   otp: string | number,
   name = '',
@@ -95,7 +94,7 @@ exports.sendVerificationEmail = async (
   });
 };
 
-exports.sendPasswordResetEmail = async (
+export const sendPasswordResetEmail = async (
   to: string,
   resetToken: string,
   name = '',
@@ -127,5 +126,8 @@ exports.sendPasswordResetEmail = async (
   });
 };
 
-exports.escapeHtml = escapeHtml;
-exports.getClientOrigin = getClientOrigin;
+export { escapeHtml };
+
+export { getClientOrigin };
+
+export default { sendVerificationEmail, sendPasswordResetEmail, escapeHtml, getClientOrigin };

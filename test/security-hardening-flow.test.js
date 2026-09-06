@@ -11,7 +11,7 @@ process.env.JWT_REFRESH_SECRET = 'test-refresh-secret-that-is-long-enough-12345'
 process.env.JWT_ACCESS_EXPIRE = '15m';
 process.env.JWT_REFRESH_EXPIRE = '7d';
 
-const AppError = require('../utils/AppError');
+const AppError = require('../utils/AppError').default;
 const { validateEnvironment } = require('../config/env');
 const {
   requireTrustedBrowserRequest,
@@ -32,8 +32,8 @@ const {
   DEFAULT_MAX_IMAGE_SIZE,
   resolveMaxImageSize,
 } = require('../utils/imageValidation');
-const { _private: limiterKeys } = require('../middlewares/rateLimiter');
-const errorHandler = require('../middlewares/errorHandler');
+const { _private: limiterKeys } = require('../middlewares/rateLimiter').default;
+const errorHandler = require('../middlewares/errorHandler').default;
 
 const read = (relativePath) => fs.readFileSync(
   path.join(__dirname, '..', relativePath),

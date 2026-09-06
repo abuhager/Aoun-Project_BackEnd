@@ -1,8 +1,7 @@
-// services/notificationService.js
-const notificationRepository = require('../repositories/notificationRepository');
-const AppError = require('../utils/AppError');
-const { toNotificationDto } = require('../dtos/notificationDto');
-import type { EntityId } from './serviceTypes';
+import notificationRepository from '../repositories/notificationRepository.js';
+import AppError from '../utils/AppError.js';
+import { toNotificationDto } from '../dtos/notificationDto.js';
+import type { EntityId } from './serviceTypes.js';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
@@ -13,7 +12,7 @@ const normalizeLimit = (value: unknown) => {
   return Math.min(MAX_LIMIT, Math.max(1, parsed));
 };
 
-exports.getNotificationsLogic = async (
+export const getNotificationsLogic = async (
   userId: EntityId,
   { limit }: { limit?: string | number } = {}
 ) => {
@@ -33,7 +32,7 @@ exports.getNotificationsLogic = async (
   };
 };
 
-exports.markAllReadLogic = async (userId: EntityId) => {
+export const markAllReadLogic = async (userId: EntityId) => {
   const result = await notificationRepository.markAllReadByUser(userId);
 
   return {
@@ -42,7 +41,7 @@ exports.markAllReadLogic = async (userId: EntityId) => {
   };
 };
 
-exports.markOneReadLogic = async (notificationId: EntityId, userId: EntityId) => {
+export const markOneReadLogic = async (notificationId: EntityId, userId: EntityId) => {
   const notification = await notificationRepository.markOneReadByUser(
     notificationId,
     userId
@@ -58,4 +57,6 @@ exports.markOneReadLogic = async (notificationId: EntityId, userId: EntityId) =>
   };
 };
 
-exports.normalizeLimit = normalizeLimit;
+export { normalizeLimit };
+
+export default { getNotificationsLogic, markAllReadLogic, markOneReadLogic, normalizeLimit };

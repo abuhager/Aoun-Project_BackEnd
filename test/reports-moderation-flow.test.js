@@ -13,16 +13,16 @@ process.env.CLOUDINARY_CLOUD_NAME = 'reports-test-cloud';
 process.env.CLOUDINARY_API_KEY = 'reports-test-key';
 process.env.CLOUDINARY_API_SECRET = 'reports-test-secret';
 
-const Report = require('../models/Report');
-const Notification = require('../models/Notification');
-const SystemSettings = require('../models/SystemSettings');
-const reportRepository = require('../repositories/reportRepository');
-const userRepository = require('../repositories/userRepository');
-const adminRepository = require('../repositories/adminRepository');
-const reportService = require('../services/reportService');
-const adminService = require('../services/adminService');
-const validateBody = require('../middlewares/validateBody');
-const sendEmail = require('../utils/sendEmail');
+const Report = require('../models/Report').default;
+const Notification = require('../models/Notification').default;
+const SystemSettings = require('../models/SystemSettings').default;
+const reportRepository = require('../repositories/reportRepository').default;
+const userRepository = require('../repositories/userRepository').default;
+const adminRepository = require('../repositories/adminRepository').default;
+const reportService = require('../services/reportService').default;
+const adminService = require('../services/adminService').default;
+const validateBody = require('../middlewares/validateBody').default;
+const sendEmail = require('../utils/sendEmail').default;
 
 const REPORTER_ID = '507f1f77bcf86cd799439011';
 const REPORTED_ID = '507f1f77bcf86cd799439012';
@@ -314,7 +314,7 @@ test('فهرس البلاغ المفتوح جزئي وقابل للترقية د
 
 test('تجميع تقارير الإدارة يحسب العدادات بمرور واحد ويوازي العدد الكلي', () => {
   const source = readSource('../repositories/adminRepository.ts');
-  const section = source.slice(source.indexOf('exports.findPendingReportsWithCounts'));
+  const section = source.slice(source.indexOf('export const findPendingReportsWithCounts'));
 
   assert.equal((section.match(/from:\s*'reports'/g) || []).length, 1);
   assert.match(section, /reportStatsLookup/);
@@ -333,7 +333,7 @@ test('لوحة التبرعات لا تعرض اعتراضاً على بلاغ �
   );
   assert.match(
     controllerSource,
-    /reportService\.createReport\(req\.user!?\.id, req\.body\)/
+    /reportService\.createReport\(req\.user!?\.id, req\.body(?: as CreateReportInput)?\)/
   );
   assert.match(
     controllerSource,

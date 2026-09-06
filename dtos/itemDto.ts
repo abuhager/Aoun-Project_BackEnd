@@ -1,7 +1,7 @@
 // backend/dtos/itemDto.js
 // تحقق شكل الطلبات موحّد في middlewares/validateBody.js،
 // والتحقق الديناميكي من التصنيفات والمراكز يتم في itemService.
-import { asRecord, toPlainRecord } from './dtoTypes';
+import { asRecord, toPlainRecord } from './dtoTypes.js';
 
 const getReferenceId = (value: unknown) => {
   if (!value) return null;
@@ -13,8 +13,7 @@ const isSameId = (left: unknown, right: unknown) => (
   left != null && right != null && left.toString() === right.toString()
 );
 
-// لا نكشف قائمة الانتظار أو هوية الحاجز للعموم؛ نعيد فقط الحالة اللازمة للواجهة.
-exports.toPublicItem = (rawItem: unknown, requesterId: unknown = null) => {
+export const toPublicItem = (rawItem: unknown, requesterId: unknown = null) => {
   const item = toPlainRecord(rawItem);
   if (!item) return null;
   const waitlist = Array.isArray(item.waitlist) ? item.waitlist : [];
@@ -78,15 +77,13 @@ exports.toPublicItem = (rawItem: unknown, requesterId: unknown = null) => {
   });
 };
 
-
-// للمتبرع — يرى بيانات الحاجز (email + phone)
-exports.toDonorItem = (rawItem: unknown, requesterId: unknown = null) => {
+export const toDonorItem = (rawItem: unknown, requesterId: unknown = null) => {
   const item = toPlainRecord(rawItem);
   if (!item) return null;
   const bookedBy = asRecord(item.bookedBy);
 
   return ({
-  ...exports.toPublicItem(item, requesterId),
+  ...toPublicItem(item, requesterId),
   reportCount: item.reportCount ?? 0,
   reportId: item.reportId ?? null,
   bookedBy: bookedBy
@@ -100,16 +97,14 @@ exports.toDonorItem = (rawItem: unknown, requesterId: unknown = null) => {
   });
 };
 
-
-// للمستلم — يرى بيانات المتبرع (phone)
-exports.toReceiverItem = (rawItem: unknown, requesterId: unknown = null) => {
+export const toReceiverItem = (rawItem: unknown, requesterId: unknown = null) => {
   const item = toPlainRecord(rawItem);
   if (!item) return null;
   const bookedBy = asRecord(item.bookedBy);
   const donor = asRecord(item.donor);
 
   return ({
-  ...exports.toPublicItem(item, requesterId),
+  ...toPublicItem(item, requesterId),
   reportId: item.reportId ?? null,
   bookedBy: bookedBy
     ? {
@@ -129,3 +124,5 @@ exports.toReceiverItem = (rawItem: unknown, requesterId: unknown = null) => {
     : null,
   });
 };
+
+export default { toPublicItem, toDonorItem, toReceiverItem };

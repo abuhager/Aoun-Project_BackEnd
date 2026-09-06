@@ -1,8 +1,7 @@
-const mongoose = require('mongoose');
-
-const Item = require('../models/Item');
-const Rating = require('../models/Rating');
-import type { EntityId, RepositoryFilter } from './repositoryTypes';
+import mongoose from 'mongoose';
+import Item from '../models/Item.js';
+import Rating from '../models/Rating.js';
+import type { EntityId, RepositoryFilter } from './repositoryTypes.js';
 
 const ACTIVITY_FIELDS = '_id title category status imageUrl createdAt deliveredAt';
 
@@ -19,10 +18,10 @@ const findActivity = (
     .select(ACTIVITY_FIELDS)
     .lean();
 
-exports.findOwnDonations = (userId: EntityId, skip: number, limit: number) =>
+export const findOwnDonations = (userId: EntityId, skip: number, limit: number) =>
   findActivity({ donor: userId }, 'createdAt', skip, limit);
 
-exports.findReceivedItems = (userId: EntityId, skip: number, limit: number) =>
+export const findReceivedItems = (userId: EntityId, skip: number, limit: number) =>
   findActivity(
     { bookedBy: userId, status: 'تم التسليم' },
     'deliveredAt',
@@ -30,12 +29,12 @@ exports.findReceivedItems = (userId: EntityId, skip: number, limit: number) =>
     limit
   );
 
-exports.countOwnDonations = (userId: EntityId) => Item.countDocuments({ donor: userId });
+export const countOwnDonations = (userId: EntityId) => Item.countDocuments({ donor: userId });
 
-exports.countReceivedItems = (userId: EntityId) =>
+export const countReceivedItems = (userId: EntityId) =>
   Item.countDocuments({ bookedBy: userId, status: 'تم التسليم' });
 
-exports.findPublicDonations = (userId: EntityId, skip: number, limit: number) =>
+export const findPublicDonations = (userId: EntityId, skip: number, limit: number) =>
   findActivity(
     { donor: userId, status: 'تم التسليم', linkedRequestId: null },
     'deliveredAt',
@@ -43,7 +42,7 @@ exports.findPublicDonations = (userId: EntityId, skip: number, limit: number) =>
     limit
   );
 
-exports.findPublicReceivedItems = (userId: EntityId, skip: number, limit: number) =>
+export const findPublicReceivedItems = (userId: EntityId, skip: number, limit: number) =>
   findActivity(
     { bookedBy: userId, status: 'تم التسليم', linkedRequestId: null },
     'deliveredAt',
@@ -51,13 +50,13 @@ exports.findPublicReceivedItems = (userId: EntityId, skip: number, limit: number
     limit
   );
 
-exports.countPublicDonations = (userId: EntityId) =>
+export const countPublicDonations = (userId: EntityId) =>
   Item.countDocuments({ donor: userId, status: 'تم التسليم', linkedRequestId: null });
 
-exports.countPublicReceivedItems = (userId: EntityId) =>
+export const countPublicReceivedItems = (userId: EntityId) =>
   Item.countDocuments({ bookedBy: userId, status: 'تم التسليم', linkedRequestId: null });
 
-exports.getRatingSummary = async (userId: EntityId) => {
+export const getRatingSummary = async (userId: EntityId) => {
   const [summary] = await Rating.aggregate([
     { $match: { ratee: new mongoose.Types.ObjectId(String(userId)) } },
     {
@@ -74,3 +73,5 @@ exports.getRatingSummary = async (userId: EntityId) => {
     averageRating: Number((summary?.averageRating ?? 0).toFixed(1)),
   };
 };
+
+export default { findOwnDonations, findReceivedItems, countOwnDonations, countReceivedItems, findPublicDonations, findPublicReceivedItems, countPublicDonations, countPublicReceivedItems, getRatingSummary };

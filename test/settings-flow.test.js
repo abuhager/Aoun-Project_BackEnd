@@ -12,12 +12,12 @@ process.env.CLOUDINARY_CLOUD_NAME = 'settings-test-cloud';
 process.env.CLOUDINARY_API_KEY = 'settings-test-key';
 process.env.CLOUDINARY_API_SECRET = 'settings-test-secret';
 
-const SystemSettings = require('../models/SystemSettings');
-const Item = require('../models/Item');
-const DonationOffer = require('../models/DonationOffer');
-const AdminLog = require('../models/AdminLog');
-const settingsService = require('../services/settingsService');
-const adminService = require('../services/adminService');
+const SystemSettings = require('../models/SystemSettings').default;
+const Item = require('../models/Item').default;
+const DonationOffer = require('../models/DonationOffer').default;
+const AdminLog = require('../models/AdminLog').default;
+const settingsService = require('../services/settingsService').default;
+const adminService = require('../services/adminService').default;
 const {
   EDITABLE_SETTING_FIELDS,
   assertSettingsInvariants,

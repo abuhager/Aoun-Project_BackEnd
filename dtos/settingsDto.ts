@@ -1,5 +1,5 @@
-const Joi = require('joi');
-import { toPlainRecord } from './dtoTypes';
+import Joi from 'joi';
+import { toPlainRecord } from './dtoTypes.js';
 
 const EMAIL_DOMAIN = /^@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+$/;
 
@@ -153,7 +153,8 @@ const assertSettingsInvariants = (rawSettings: unknown) => {
   }
 };
 
-module.exports = {
+export { EDITABLE_SETTING_FIELDS, assertSettingsInvariants, updateSettings };
+export default {
   EDITABLE_SETTING_FIELDS,
   assertSettingsInvariants,
   updateSettings,

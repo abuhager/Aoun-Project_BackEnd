@@ -1,27 +1,30 @@
-// services/adminService.js
-const adminRepo        = require('../repositories/adminRepository');
-const reportRepository = require('../repositories/reportRepository');
-const userRepository   = require('../repositories/userRepository');
-const AdminLog         = require('../models/AdminLog');
-const User             = require('../models/User');
-const Item             = require('../models/Item');
-const SystemSettings   = require('../models/SystemSettings');
-const notifyUser       = require('../utils/notifyUser');
-const { deleteFromCloudinary } = require('../utils/uploadToCloudinary');
-const AppError         = require('../utils/AppError');
-const sessionCache     = require('../utils/sessionCache');
-const { SOCKET_EVENTS } = require('../socket/contracts');
-const { disconnectUserSockets, emitToUser } = require('../socket/emitter');
-const adminDto = require('../dtos/adminDto');
-import type { EntityId, ServicePayload, ServiceRecord } from './serviceTypes';
-import { getErrorMessage } from './serviceTypes';
+import adminRepo from '../repositories/adminRepository.js';
+import reportRepository from '../repositories/reportRepository.js';
+import userRepository from '../repositories/userRepository.js';
+import AdminLog from '../models/AdminLog.js';
+import User from '../models/User.js';
+import Item from '../models/Item.js';
+import SystemSettings from '../models/SystemSettings.js';
+import notifyUser from '../utils/notifyUser.js';
+import { deleteFromCloudinary } from '../utils/uploadToCloudinary.js';
+import AppError from '../utils/AppError.js';
+import sessionCache from '../utils/sessionCache.js';
+import { SOCKET_EVENTS } from '../socket/contracts.js';
+import { disconnectUserSockets, emitToUser } from '../socket/emitter.js';
+import adminDto from '../dtos/adminDto.js';
+import type { EntityId, ServicePayload, ServiceRecord } from './serviceTypes.js';
+import { getErrorMessage } from './serviceTypes.js';
 
-type AdminRole = 'admin' | 'super_admin';
+export type AdminRole = 'admin' | 'super_admin';
 type ReportResolutionStatus = 'actioned' | 'reviewed' | 'dismissed';
 type WaitlistEntry = { user: EntityId };
+type ReportListOptions = {
+  page?: number;
+  status?: string | null;
+};
 
 const notifyBestEffort = async (
-  user: EntityId | ServiceRecord,
+  user: unknown,
   payload: ServicePayload,
   context: string
 ) => {
@@ -31,6 +34,12 @@ const notifyBestEffort = async (
     console.warn(`[Admin Notification][${context}] ${getErrorMessage(error)}`);
   }
 };
+
+const asServiceRecord = (value: unknown): ServiceRecord | null => (
+  typeof value === 'object' && value !== null
+    ? value as unknown as ServiceRecord
+    : null
+);
 
 const assertCanManageUser = async (
   targetId: EntityId,
@@ -104,11 +113,9 @@ const applyBanConsequences = async (userId: EntityId) => {
   }
 };
 
-// ─── Stats ────────────────────────────────────────────────────
-exports.getStats = () => adminRepo.getDashboardStats();
+export const getStats = () => adminRepo.getDashboardStats();
 
-// ─── Users ────────────────────────────────────────────────────
-exports.listUsers = async ({ page = 1, search = '', banned = '' }) => {
+export const listUsers = async ({ page = 1, search = '', banned = '' }) => {
   const normalizedPage = Math.max(1, +page || 1);
   const settings  = await SystemSettings.getCached();
   const PAGE_SIZE = settings?.adminPageSize ?? 20;
@@ -125,7 +132,7 @@ exports.listUsers = async ({ page = 1, search = '', banned = '' }) => {
   };
 };
 
-exports.banUser = async (
+export const banUser = async (
   userId: EntityId,
   adminId: EntityId,
   adminRole: AdminRole,
@@ -157,7 +164,7 @@ exports.banUser = async (
   return user;
 };
 
-exports.unbanUser = async (
+export const unbanUser = async (
   userId: EntityId,
   adminId: EntityId,
   adminRole: AdminRole,
@@ -177,8 +184,7 @@ exports.unbanUser = async (
   return user;
 };
 
-// ─── Items ────────────────────────────────────────────────────
-exports.listItems = async ({ page = 1 }) => {
+export const listItems = async ({ page = 1 }) => {
   const normalizedPage = Math.max(1, +page || 1);
   const settings  = await SystemSettings.getCached();
   const PAGE_SIZE = settings?.adminPageSize ?? 20;
@@ -195,7 +201,7 @@ exports.listItems = async ({ page = 1 }) => {
   };
 };
 
-exports.deleteItem = async (
+export const deleteItem = async (
   itemId: EntityId,
   adminId: EntityId,
   adminNote: string | null
@@ -203,8 +209,9 @@ exports.deleteItem = async (
   const item = await Item.findById(itemId).populate('donor', 'name email');
   if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
 
-  const donorName  = item.donor?.name  ?? null;
-  const donorEmail = item.donor?.email ?? null;
+  const donor = asServiceRecord(item.donor);
+  const donorName  = typeof donor?.name === 'string' ? donor.name : null;
+  const donorEmail = typeof donor?.email === 'string' ? donor.email : null;
   const itemTitle  = item.title        ?? 'غرض محذوف';
 
   await Item.deleteOne({ _id: itemId });
@@ -221,10 +228,10 @@ exports.deleteItem = async (
   }
 
   const affectedUserIds = [
-    item.donor?._id ?? item.donor,
+    donor?._id ?? item.donor,
     item.bookedBy,
     ...(item.waitlist ?? []).map((entry: WaitlistEntry) => entry.user),
-  ].filter(Boolean);
+  ].filter((id): id is EntityId => typeof id === 'string' || id instanceof Object);
   const uniqueAffectedUserIds = [
     ...new Map(affectedUserIds.map((id) => [id.toString(), id])).values(),
   ];
@@ -250,8 +257,7 @@ exports.deleteItem = async (
   return item;
 };
 
-// ─── Reports ──────────────────────────────────────────────────
-exports.listReports = async ({ page = 1, status = null } = {}) => {
+export const listReports = async ({ page = 1, status = null }: ReportListOptions = {}) => {
   const normalizedPage = Math.max(1, +page || 1);
   const settings = await SystemSettings.getCached();
   const LIMIT    = settings?.adminReportsPageSize ?? 10;
@@ -274,7 +280,7 @@ exports.listReports = async ({ page = 1, status = null } = {}) => {
   };
 };
 
-exports.resolveReport = async (
+export const resolveReport = async (
   reportId: EntityId,
   adminId: EntityId,
   adminRole: AdminRole,
@@ -313,6 +319,9 @@ exports.resolveReport = async (
   }
 
   const fullReport = await reportRepository.findByIdPopulated(reportId);
+  const reporter = asServiceRecord(fullReport?.reporter);
+  const reportedUser = asServiceRecord(fullReport?.reportedUser);
+  const relatedItem = asServiceRecord(fullReport?.relatedItem);
 
   const statusLabel = {
     actioned:  'تم الإجراء',
@@ -328,11 +337,11 @@ exports.resolveReport = async (
     reason:      statusLabel,
     adminNote:   adminNote ?? null,
     meta: {
-      targetName:       fullReport?.reportedUser?.name  ?? '—',
-      reportedBy:       fullReport?.reporter?.name      ?? '—',
+      targetName:       reportedUser?.name  ?? '—',
+      reportedBy:       reporter?.name      ?? '—',
       reason:           fullReport?.reason              ?? '—',
       action:           statusLabel,
-      relatedItemTitle: fullReport?.relatedItem?.title  ?? null,
+      relatedItemTitle: relatedItem?.title  ?? null,
     },
   });
 
@@ -342,23 +351,23 @@ exports.resolveReport = async (
     dismissed: 'تمت مراجعة بلاغك ولم يتم اعتماد إجراء عليه.',
   }[resolutionStatus];
 
-  if (fullReport?.reporter?._id) {
-    await notifyBestEffort(fullReport.reporter, {
+  if (reporter?._id) {
+    await notifyBestEffort(reporter, {
       type:      'report_resolved',
       title:     'تمت معالجة بلاغك',
       body:      reporterMessage,
-      itemId:    fullReport?.relatedItem?._id ?? null,
+      itemId:    relatedItem?._id ?? null,
       actionUrl: '/dashboard',
       metadata:  { reportId: String(reportId), status: resolutionStatus },
     }, 'report-resolution');
   }
 
   if (resolutionStatus === 'actioned' && report.reportedUser) {
-    await notifyBestEffort(fullReport?.reportedUser ?? report.reportedUser, {
+    await notifyBestEffort(reportedUser ?? report.reportedUser, {
       type:   'admin_warning',
       title:  'تحذير من الإدارة',
       body:   '⚠️ اتخذت الإدارة إجراءً بسبب بلاغ مقدم ضدك.',
-      itemId: fullReport?.relatedItem?._id ?? null,
+      itemId: relatedItem?._id ?? null,
       actionUrl: '/dashboard',
       metadata: { reportId: String(reportId), status: resolutionStatus },
     }, 'report-warning');
@@ -368,7 +377,7 @@ exports.resolveReport = async (
     const actionedCount = await reportRepository.countActionedByReportedUser(
       report.reportedUser
     );
-    const target = fullReport?.reportedUser;
+    const target = reportedUser;
 
     if (
       actionedCount >= threshold
@@ -376,7 +385,7 @@ exports.resolveReport = async (
       && !target.isBanned
       && target.role === 'user'
     ) {
-      await exports.banUser(
+      await banUser(
         report.reportedUser,
         adminId,
         adminRole,
@@ -389,10 +398,9 @@ exports.resolveReport = async (
   return fullReport ?? report;
 };
 
-exports.applyBanConsequences = applyBanConsequences;
+export { applyBanConsequences };
 
-// ─── Audit Logs ───────────────────────────────────────────────
-exports.listAuditLogs = async ({ page = 1 }) => {
+export const listAuditLogs = async ({ page = 1 }) => {
   const normalizedPage = Math.max(1, +page || 1);
   const settings  = await SystemSettings.getCached();
   const PAGE_SIZE = settings?.adminPageSize ?? 20;
@@ -409,8 +417,7 @@ exports.listAuditLogs = async ({ page = 1 }) => {
   };
 };
 
-// ─── Promote / Demote ─────────────────────────────────────────
-exports.promoteToLevel2 = async (
+export const promoteToLevel2 = async (
   targetId: EntityId,
   adminId: EntityId,
   adminRole: AdminRole,
@@ -439,7 +446,7 @@ exports.promoteToLevel2 = async (
   return updated;
 };
 
-exports.demoteToLevel1 = async (
+export const demoteToLevel1 = async (
   targetId: EntityId,
   adminId: EntityId,
   adminRole: AdminRole,
@@ -463,3 +470,5 @@ exports.demoteToLevel1 = async (
 
   return updated;
 };
+
+export default { getStats, listUsers, banUser, unbanUser, listItems, deleteItem, listReports, resolveReport, applyBanConsequences, listAuditLogs, promoteToLevel2, demoteToLevel1 };

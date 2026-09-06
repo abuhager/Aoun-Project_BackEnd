@@ -1,21 +1,16 @@
-const User = require('../models/User');
-const AppError = require('../utils/AppError');
-const { verifyFirebasePhoneToken } = require('../integrations/smsService');
-const sessionCache = require('../utils/sessionCache');
-const {
-  isPhoneVerificationEnabled,
-} = require('../middlewares/phoneVerificationFeature');
-const {
-  isValidJordanPhone,
-  normalizeJordanPhone,
-} = require('../utils/phoneUtils');
-import type { EntityId } from './serviceTypes';
-import { hasErrorCode } from './serviceTypes';
+import User from '../models/User.js';
+import AppError from '../utils/AppError.js';
+import { verifyFirebasePhoneToken } from '../integrations/smsService.js';
+import sessionCache from '../utils/sessionCache.js';
+import { isPhoneVerificationEnabled } from '../middlewares/phoneVerificationFeature.js';
+import { isValidJordanPhone, normalizeJordanPhone } from '../utils/phoneUtils.js';
+import type { EntityId } from './serviceTypes.js';
+import { hasErrorCode } from './serviceTypes.js';
 
 const serviceError = (message: string, status: number, code: string) =>
   new AppError(message, status, code);
 
-exports.verifyPhoneWithFirebase = async (userId: EntityId, idToken: string) => {
+export const verifyPhoneWithFirebase = async (userId: EntityId, idToken: string) => {
   if (!isPhoneVerificationEnabled()) {
     throw serviceError(
       'التحقق من الهاتف متوقف مؤقتاً',
@@ -79,3 +74,5 @@ exports.verifyPhoneWithFirebase = async (userId: EntityId, idToken: string) => {
   sessionCache.invalidate(userId);
   return { phone: updated.phone, trustLevel: updated.trustLevel };
 };
+
+export default { verifyPhoneWithFirebase };

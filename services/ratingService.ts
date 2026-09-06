@@ -1,9 +1,8 @@
-// services/ratingService.js
-const ratingRepository = require('../repositories/ratingRepository');
-const SystemSettings   = require('../models/SystemSettings');
-const notifyUser       = require('../utils/notifyUser');
-const AppError         = require('../utils/AppError');
-import type { EntityId } from './serviceTypes';
+import ratingRepository from '../repositories/ratingRepository.js';
+import SystemSettings from '../models/SystemSettings.js';
+import notifyUser from '../utils/notifyUser.js';
+import AppError from '../utils/AppError.js';
+import type { EntityId } from './serviceTypes.js';
 
 type RatingSettings = {
   ratingThresholdExcellent?: number;
@@ -28,7 +27,7 @@ const calcTrustDelta = (score: number, s: RatingSettings | null | undefined) => 
   return -2;
 };
 
-exports.submitRating = async ({ itemId, raterId, score, comment }: SubmitRatingInput) => {
+export const submitRating = async ({ itemId, raterId, score, comment }: SubmitRatingInput) => {
   const [item, settings] = await Promise.all([
     ratingRepository.findItemById(itemId),
     SystemSettings.getCached(),
@@ -85,11 +84,11 @@ exports.submitRating = async ({ itemId, raterId, score, comment }: SubmitRatingI
   return rating;
 };
 
-exports.getUserRatings = async (userId: EntityId) => {
+export const getUserRatings = async (userId: EntityId) => {
   return ratingRepository.findRatingsForUser(userId);
 };
 
-exports.getPendingRating = async (userId: EntityId) => {
+export const getPendingRating = async (userId: EntityId) => {
   // 1. جلب كافة الأغراض المسلمة التي يكون المستخدم طرفاً فيها (متبرع أو مستلم)
   const [asDonor, asReceiver] = await Promise.all([
     ratingRepository.findDeliveredItemsAsDonor(userId),
@@ -108,3 +107,5 @@ exports.getPendingRating = async (userId: EntityId) => {
 
   return { pendingRating: pending ?? null };
 };
+
+export default { submitRating, getUserRatings, getPendingRating };

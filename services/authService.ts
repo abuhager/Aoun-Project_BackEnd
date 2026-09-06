@@ -1,55 +1,19 @@
-// services/authService.js
-// ═══════════════════════════════════════════════════════════════════
-// سجل الإصلاحات الكاملة:
-//
-// ── الجولة الحالية ──────────────────────────────────────────────
-// ✅ [AUTH-LEVEL]    الحسابات العادية تبدأ Level 1، والترقية فقط بإثبات الاستحقاق
-// ✅ [SEC-NEW-01]    registerLogic — Generic message + fire-and-forget OTP
-// ✅ [SEC-NEW-02]    loginLogic     — إصدار accessToken من DB بعد التحقق من الحفظ
-// ✅ [SEC-NEW-03]    resendOtpLogic — فحص isFrozen إضافةً لـ isBanned
-// ✅ [PERF-NEW-01]   _upgradeStudentTrust — تقبل settings parameter بدل getCached مزدوج
-// ✅ [PERF-NEW-02]   getMeLogic     — safePage لمنع skip عالٍ جداً (الآن في Controller)
-// ✅ [LOGIC-NEW-01] verifyEmailLogic — user.toObject() بدل spread على Mongoose document
-// ✅ [LOGIC-NEW-02] refreshLogic   — فحص isVerified قبل إصدار tokens جديدة
-// ✅ [LOGIC-NEW-03] loginLogic     — فحص otpAttempts قبل إرسال OTP لمنع lockout bypass
-// ✅ [DUP-NEW-01]    _issueVerificationOtp — دالة مشتركة تحذف تكرار 3 أماكن
-// ✅ [ARCH-NEW-02]   buildSafeUser  — إضافة isFrozen + isBanned
-// ✅ [HC-NEW-01]    BCRYPT_ROUNDS  — فحص نطاق [10,14]
-//
-// ── جولات سابقة محفوظة ──────────────────────────────────────────
-// ✅ [BUG-01..04]      إصلاحات Flow 2
-// ✅ [SEC-AUTH-02]     Refresh Token Reuse Detection + IP logging
-// ✅ [HC-02/03]        أبعاد الصورة ديناميكية من SystemSettings
-// ✅ [DUP-PROF-01]     _getProfilePageParams مشتركة
-// ✅ [PERF-PROF-02]    حذف .select().lean() المكرر
-// ✅ [SEC-PROF-03]     توحيد صيغة الهاتف +962
-// ✅ [STUDENT-UPGRADE] إصلاح الترقية التلقائية للطلاب
-// ✅ [PHONE-TRUST-02]  إعادة ضبط phoneVerified عند تغيير الرقم
-// ═══════════════════════════════════════════════════════════════════
-
-
-const bcrypt       = require('bcryptjs');
-const crypto       = require('crypto');
-const { Readable } = require('stream');
-const cloudinary   = require('../config/cloudinary');
-
-
-const SystemSettings = require('../models/SystemSettings');
-
-
-const userRepository = require('../repositories/userRepository');
-const profileRepository = require('../repositories/profileRepository');
-const emailService   = require('./emailService');
-const sessionCache   = require('../utils/sessionCache');
-
-
-const { buildGamificationProfile } = require('../utils/gamification');
-const { toAuthUser, toProfileActivityItem } = require('../dtos/authDto');
-const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/tokenUtils');
-const { generateOtp, hashOtp, verifyOtp } = require('../utils/otp');
-const { hashToken } = require('../utils/cryptoUtils');
-import type { EntityId, ServicePayload } from './serviceTypes';
-import { getErrorMessage } from './serviceTypes';
+import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
+import { Readable } from 'stream';
+import cloudinary from '../config/cloudinary.js';
+import SystemSettings from '../models/SystemSettings.js';
+import userRepository from '../repositories/userRepository.js';
+import profileRepository from '../repositories/profileRepository.js';
+import emailService from './emailService.js';
+import sessionCache from '../utils/sessionCache.js';
+import { buildGamificationProfile } from '../utils/gamification.js';
+import { toAuthUser, toProfileActivityItem } from '../dtos/authDto.js';
+import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/tokenUtils.js';
+import { generateOtp, hashOtp, verifyOtp } from '../utils/otp.js';
+import { hashToken } from '../utils/cryptoUtils.js';
+import type { EntityId, ServicePayload } from './serviceTypes.js';
+import { getErrorMessage } from './serviceTypes.js';
 
 type AuthSettings = {
   studentDefaultTrustLevel?: number;
@@ -65,13 +29,13 @@ type MutableAuthUser = {
 };
 
 type EmailInput = { email: string };
-type RegistrationInput = EmailInput & {
+export type RegistrationInput = EmailInput & {
   name: string;
   password: string;
   phone?: string;
 };
-type VerificationInput = EmailInput & { otp: string };
-type LoginInput = EmailInput & { password: string };
+export type VerificationInput = EmailInput & { otp: string };
+export type LoginInput = EmailInput & { password: string };
 type PasswordUpdateInput = {
   currentPassword: string;
   newPassword: string;
@@ -185,17 +149,13 @@ const _issueVerificationOtp = async (
     ));
 };
 
-
-// ─── getCurrentUserLogic ──────────────────────────────────────────
-exports.getCurrentUserLogic = async (userId: EntityId) => {
+export const getCurrentUserLogic = async (userId: EntityId) => {
   const user = await userRepository.findById(userId);
   if (!user) return { statusCode: 404, body: { msg: 'المستخدم غير موجود', code: 'USER_NOT_FOUND' } };
   return { statusCode: 200, body: toAuthUser(user) };
 };
 
-
-// ─── resendOtpLogic ───────────────────────────────────────────────
-exports.resendOtpLogic = async ({ email }: EmailInput) => {
+export const resendOtpLogic = async ({ email }: EmailInput) => {
   if (!email) return { statusCode: 400, body: { msg: 'البريد الإلكتروني مطلوب' } };
 
 
@@ -228,9 +188,7 @@ exports.resendOtpLogic = async ({ email }: EmailInput) => {
   return GENERIC_OK;
 };
 
-
-// ─── registerLogic ────────────────────────────────────────────────
-exports.registerLogic = async ({ name, email, password, phone }: RegistrationInput) => {
+export const registerLogic = async ({ name, email, password, phone }: RegistrationInput) => {
   const settings          = await SystemSettings.getCached();
   const otpExpiryMinutes  = settings?.otpExpiryMinutes          ?? 10;
   const defaultQuota      = settings?.defaultUserQuota          ?? 2;
@@ -304,9 +262,7 @@ exports.registerLogic = async ({ name, email, password, phone }: RegistrationInp
   return GENERIC_REGISTER_RESPONSE;
 };
 
-
-// ─── verifyEmailLogic ─────────────────────────────────────────────
-exports.verifyEmailLogic = async ({ email, otp }: VerificationInput) => {
+export const verifyEmailLogic = async ({ email, otp }: VerificationInput) => {
   const settings    = await SystemSettings.getCached();
   const maxAttempts = settings?.maxOtpAttempts ?? 5;
 
@@ -339,7 +295,7 @@ exports.verifyEmailLogic = async ({ email, otp }: VerificationInput) => {
   }
 
 
-  const mutableUser = user.toObject ? user.toObject() : { ...user };
+  const mutableUser = { ...user };
   await _upgradeStudentTrust(mutableUser, settings);
 
   const verifiedUser = await userRepository.atomicVerifyAndComplete(user._id, user.verificationOtp, {
@@ -388,9 +344,7 @@ exports.verifyEmailLogic = async ({ email, otp }: VerificationInput) => {
   };
 };
 
-
-// ─── loginLogic ───────────────────────────────────────────────────
-exports.loginLogic = async ({ email, password }: LoginInput) => {
+export const loginLogic = async ({ email, password }: LoginInput) => {
   const user = await userRepository.findByEmailWithPassword(email);
 
   const isMatch = await bcrypt.compare(
@@ -504,9 +458,7 @@ exports.loginLogic = async ({ email, password }: LoginInput) => {
   };
 };
 
-
-// ─── refreshLogic ─────────────────────────────────────────────────
-exports.refreshLogic = async (
+export const refreshLogic = async (
   rawRefreshToken: string | null | undefined,
   clientIp = 'unknown'
 ) => {
@@ -660,17 +612,13 @@ exports.refreshLogic = async (
   };
 };
 
-
-// ─── logoutLogic ──────────────────────────────────────────────────
-exports.logoutLogic = async (userId: EntityId) => {
+export const logoutLogic = async (userId: EntityId) => {
   await userRepository.invalidateUserSession(userId);
   sessionCache.invalidate(userId);
   return { statusCode: 200, body: { msg: 'تم تسجيل الخروج بنجاح 👋' } };
 };
 
-
-// ─── forgotPasswordLogic ──────────────────────────────────────────
-exports.forgotPasswordLogic = async ({ email }: EmailInput) => {
+export const forgotPasswordLogic = async ({ email }: EmailInput) => {
   const GENERIC = { statusCode: 200, body: { msg: 'إذا كان الإيميل مسجَّلاً، ستصلك رسالة لإعادة تعيين كلمة المرور 📧' } };
   const user    = await userRepository.findByEmail(email);
   if (!user || !user.isVerified || user.isBanned || user.isFrozen) return GENERIC;
@@ -697,9 +645,7 @@ exports.forgotPasswordLogic = async ({ email }: EmailInput) => {
   return GENERIC;
 };
 
-
-// ─── resetPasswordLogic ───────────────────────────────────────────
-exports.resetPasswordLogic = async (token: string, newPassword: string) => {
+export const resetPasswordLogic = async (token: string, newPassword: string) => {
   if (!/^[a-f\d]{64}$/i.test(token ?? '') || !newPassword) {
     return { statusCode: 400, body: { msg: 'التوكن وكلمة المرور الجديدة مطلوبان' } };
   }
@@ -718,9 +664,7 @@ exports.resetPasswordLogic = async (token: string, newPassword: string) => {
   return { statusCode: 200, body: { msg: 'تم تغيير كلمة المرور بنجاح ✅ — أعد تسجيل الدخول' } };
 };
 
-
-// ─── updateMeLogic ────────────────────────────────────────────────
-exports.updateMeLogic = async (
+export const updateMeLogic = async (
   userId: EntityId,
   updates: ProfileUpdates,
   fileBuffer?: Buffer,
@@ -825,8 +769,9 @@ exports.updateMeLogic = async (
     && currentUser.avatarPublicId
     && currentUser.avatarPublicId !== newAvatarPublicId
   ) {
+    const previousAvatarPublicId = currentUser.avatarPublicId;
     setImmediate(() => {
-      cloudinary.uploader.destroy(currentUser.avatarPublicId)
+      cloudinary.uploader.destroy(previousAvatarPublicId)
         .catch((error: unknown) => console.warn(
           '[Avatar Cleanup]',
           getErrorMessage(error)
@@ -839,9 +784,7 @@ exports.updateMeLogic = async (
   return { statusCode: 200, body: { msg: 'تم تحديث الملف الشخصي بنجاح ✅', user: toAuthUser(updated) } };
 };
 
-
-// ─── updatePasswordLogic ──────────────────────────────────────────
-exports.updatePasswordLogic = async (
+export const updatePasswordLogic = async (
   userId: EntityId,
   { currentPassword, newPassword }: PasswordUpdateInput
 ) => {
@@ -867,9 +810,7 @@ exports.updatePasswordLogic = async (
   };
 };
 
-
-// ─── getMeLogic ───────────────────────────────────────────────────
-exports.getMeLogic = async (userId: EntityId, page: number) => {
+export const getMeLogic = async (userId: EntityId, page: number) => {
   const { pageSize, skip } = await _getProfilePageParams(page);
 
 
@@ -908,9 +849,7 @@ exports.getMeLogic = async (userId: EntityId, page: number) => {
   };
 };
 
-
-// ─── getPublicProfileLogic ────────────────────────────────────────
-exports.getPublicProfileLogic = async (targetId: EntityId, page: number) => {
+export const getPublicProfileLogic = async (targetId: EntityId, page: number) => {
   const { pageSize, skip } = await _getProfilePageParams(page);
 
   const user = await userRepository.findPublicProfile(targetId);
@@ -967,3 +906,5 @@ exports.getPublicProfileLogic = async (targetId: EntityId, page: number) => {
     },
   };
 };
+
+export default { getCurrentUserLogic, resendOtpLogic, registerLogic, verifyEmailLogic, loginLogic, refreshLogic, logoutLogic, forgotPasswordLogic, resetPasswordLogic, updateMeLogic, updatePasswordLogic, getMeLogic, getPublicProfileLogic };

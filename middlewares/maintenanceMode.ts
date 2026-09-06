@@ -1,10 +1,7 @@
-const SystemSettings = require('../models/SystemSettings');
-const AppError = require('../utils/AppError');
+import SystemSettings from '../models/SystemSettings.js';
+import AppError from '../utils/AppError.js';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
-const {
-  getBearerToken,
-  resolveAccessIdentity,
-} = require('./auth');
+import { getBearerToken, resolveAccessIdentity } from './auth.js';
 
 const ALLOWED_PATH_PREFIXES = Object.freeze([
   '/auth',
@@ -52,9 +49,11 @@ const createMaintenanceMode = ({
   } catch (error) {
     return next(error);
   }
-};
+};const maintenanceMode = createMaintenanceMode();
+export default maintenanceMode;
 
-module.exports = createMaintenanceMode();
-module.exports.ALLOWED_PATH_PREFIXES = ALLOWED_PATH_PREFIXES;
-module.exports.createMaintenanceMode = createMaintenanceMode;
-module.exports.isAllowedPath = isAllowedPath;
+export { ALLOWED_PATH_PREFIXES };
+
+export { createMaintenanceMode };
+
+export { isAllowedPath };

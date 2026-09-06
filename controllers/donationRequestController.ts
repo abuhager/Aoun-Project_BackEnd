@@ -1,8 +1,8 @@
-// controllers/donationRequestController.js
-const drService    = require('../services/donationRequestService');
-import asyncHandler = require('../utils/asyncHandler');
+import drService from '../services/donationRequestService.js';
+import type { OfferInput, RequestCreateInput } from '../services/donationRequestService.js';
+import asyncHandler from '../utils/asyncHandler.js';
 
-exports.getRequests = asyncHandler(async (req, res) => {
+export const getRequests = asyncHandler(async (req, res) => {
   const result = await drService.getDonationRequestsLogic(
     req.query,
     req.user?.id ?? null
@@ -10,22 +10,22 @@ exports.getRequests = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
-exports.getMyRequests = asyncHandler(async (req, res) => {
+export const getMyRequests = asyncHandler(async (req, res) => {
   const result = await drService.getMyRequestsLogic(req.user!.id);
   res.json(result);
 });
 
-exports.createRequest = asyncHandler(async (req, res) => {
-  const result = await drService.createRequestLogic(req.body, req.user!.id);
+export const createRequest = asyncHandler(async (req, res) => {
+  const result = await drService.createRequestLogic(req.body as RequestCreateInput, req.user!.id);
   res.status(201).json(result);
 });
 
-exports.cancelRequest = asyncHandler(async (req, res) => {
+export const cancelRequest = asyncHandler(async (req, res) => {
   const result = await drService.cancelRequestLogic(req.params.id, req.user!.id);
   res.json(result);
 });
 
-exports.getRequestById = asyncHandler(async (req, res) => {
+export const getRequestById = asyncHandler(async (req, res) => {
   const request = await drService.getRequestByIdLogic(
     req.params.id,
     req.user?.id ?? null,
@@ -34,26 +34,22 @@ exports.getRequestById = asyncHandler(async (req, res) => {
   res.json({ request });
 });
 
-
-// المتبرع يقدم عرضاً
-exports.submitOffer = asyncHandler(async (req, res) => {
+export const submitOffer = asyncHandler(async (req, res) => {
   const result = await drService.submitOfferLogic(
     req.params.id,
     req.user!.id,
-    req.body,
-    req.file ?? null
+    req.body as OfferInput,
+    req.file ?? undefined
   );
   res.status(201).json(result);
 });
 
-// صاحب الطلب يشوف العروض
-exports.getOffers = asyncHandler(async (req, res) => {
+export const getOffers = asyncHandler(async (req, res) => {
   const result = await drService.getOffersLogic(req.params.id, req.user!.id);
   res.json(result);
 });
 
-// صاحب الطلب يختار عرضاً
-exports.acceptOffer = asyncHandler(async (req, res) => {
+export const acceptOffer = asyncHandler(async (req, res) => {
   const result = await drService.acceptOfferLogic(
     req.params.id,
     req.params.offerId,
@@ -62,7 +58,7 @@ exports.acceptOffer = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
-exports.rejectOffer = asyncHandler(async (req, res) => {
+export const rejectOffer = asyncHandler(async (req, res) => {
   const result = await drService.rejectOfferLogic(
     req.params.id,
     req.params.offerId,
@@ -71,7 +67,7 @@ exports.rejectOffer = asyncHandler(async (req, res) => {
   res.json(result);
 });
 
-exports.withdrawOffer = asyncHandler(async (req, res) => {
+export const withdrawOffer = asyncHandler(async (req, res) => {
   const result = await drService.withdrawOfferLogic(
     req.params.id,
     req.params.offerId,
@@ -79,3 +75,5 @@ exports.withdrawOffer = asyncHandler(async (req, res) => {
   );
   res.json(result);
 });
+
+export default { getRequests, getMyRequests, createRequest, cancelRequest, getRequestById, submitOffer, getOffers, acceptOffer, rejectOffer, withdrawOffer };

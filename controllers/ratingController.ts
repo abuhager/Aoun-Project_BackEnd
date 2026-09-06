@@ -1,14 +1,13 @@
-// controllers/ratingController.js
-const ratingService = require('../services/ratingService');
-const ratingDto = require('../dtos/ratingDto');
-import asyncHandler = require('../utils/asyncHandler');
+import ratingService from '../services/ratingService.js';
+import ratingDto from '../dtos/ratingDto.js';
+import asyncHandler from '../utils/asyncHandler.js';
 
-exports.submitRating = asyncHandler(async (req, res) => {
+export const submitRating = asyncHandler(async (req, res) => {
   const rating = await ratingService.submitRating({
-    itemId: req.body.itemId,
+    itemId: String(req.body.itemId),
     raterId: req.user!.id,
-    score: req.body.score,
-    comment: req.body.comment,
+    score: Number(req.body.score),
+    comment: typeof req.body.comment === 'string' ? req.body.comment : undefined,
   });
 
   return res.status(201).json({
@@ -17,7 +16,7 @@ exports.submitRating = asyncHandler(async (req, res) => {
   });
 });
 
-exports.getUserRatings = asyncHandler(async (req, res) => {
+export const getUserRatings = asyncHandler(async (req, res) => {
   const ratings = await ratingService.getUserRatings(req.params.id);
 
   return res.status(200).json({
@@ -25,11 +24,13 @@ exports.getUserRatings = asyncHandler(async (req, res) => {
   });
 });
 
-exports.getPendingRating = asyncHandler(async (req, res) => {
-  const userId = req.user!.id || req.user!._id;
+export const getPendingRating = asyncHandler(async (req, res) => {
+  const userId = String(req.user!.id ?? req.user!._id);
   const { pendingRating } = await ratingService.getPendingRating(userId);
 
   return res.status(200).json(
     ratingDto.toPendingRatingResponse(pendingRating)
   );
 });
+
+export default { submitRating, getUserRatings, getPendingRating };

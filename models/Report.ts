@@ -1,7 +1,6 @@
-// models/Report.js
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
-const REPORT_STATUSES = Object.freeze([
+export const REPORT_STATUSES = Object.freeze([
   'pending',
   'reviewed',
   'dismissed',
@@ -48,7 +47,12 @@ reportSchema.index(
   }
 );
 
-const Report = mongoose.model('Report', reportSchema);
+type ReportDocument = mongoose.InferSchemaType<typeof reportSchema>;
+type ReportModel = mongoose.Model<ReportDocument> & {
+  REPORT_STATUSES: typeof REPORT_STATUSES;
+};
+
+const Report = mongoose.model('Report', reportSchema) as ReportModel;
 Report.REPORT_STATUSES = REPORT_STATUSES;
 
-module.exports = Report;
+export default Report;

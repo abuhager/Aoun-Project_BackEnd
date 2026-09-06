@@ -1,8 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const AppError = require('../utils/AppError');
-const asyncHandler = require('../utils/asyncHandler');
+const AppError = require('../utils/AppError').default;
+const asyncHandler = require('../utils/asyncHandler').default;
 const {
   INTERNAL_ERROR_MESSAGE,
   buildErrorResponse,

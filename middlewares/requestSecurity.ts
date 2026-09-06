@@ -1,5 +1,6 @@
-const AppError = require('../utils/AppError');
-const { isOriginAllowed } = require('../config/cors');
+import AppError from '../utils/AppError.js';
+import { isOriginAllowed } from '../config/cors.js';
+import type { NextFunction, Request, Response } from 'express';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const ALLOWED_FETCH_SITES = new Set(['same-origin', 'same-site', 'none']);
@@ -58,8 +59,8 @@ const requireTrustedBrowserRequest = (req: Request, _res: Response, next: NextFu
   return next();
 };
 
-module.exports = {
+export { requireTrustedBrowserRequest, setPrivateNoStore };
+export default {
   requireTrustedBrowserRequest,
   setPrivateNoStore,
 };
-import type { NextFunction, Request, Response } from 'express';

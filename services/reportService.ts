@@ -1,11 +1,10 @@
-// services/reportService.js
-const reportRepository = require('../repositories/reportRepository');
-const userRepository   = require('../repositories/userRepository');
-const AppError         = require('../utils/AppError');
-const SystemSettings   = require('../models/SystemSettings');
-const { DEFAULT_REPORT_REASONS } = require('../dtos/reportDto');
-import type { EntityId } from './serviceTypes';
-import { hasErrorCode } from './serviceTypes';
+import reportRepository from '../repositories/reportRepository.js';
+import userRepository from '../repositories/userRepository.js';
+import AppError from '../utils/AppError.js';
+import SystemSettings from '../models/SystemSettings.js';
+import { DEFAULT_REPORT_REASONS } from '../dtos/reportDto.js';
+import type { EntityId } from './serviceTypes.js';
+import { hasErrorCode } from './serviceTypes.js';
 
 type ReportContext = {
   itemId?: EntityId | null;
@@ -13,7 +12,7 @@ type ReportContext = {
   reportedUserId: EntityId;
 };
 
-type CreateReportInput = {
+export type CreateReportInput = {
   reportedUserId: EntityId;
   itemId?: EntityId | null;
   reason: string;
@@ -52,8 +51,7 @@ const assertValidItemContext = async ({ itemId, reporterId, reportedUserId }: Re
   }
 };
 
-// ─── إنشاء بلاغ ───────────────────────────────────────────────
-exports.createReport = async (
+export const createReport = async (
   reporterId: EntityId,
   { reportedUserId, itemId, reason, details }: CreateReportInput
 ) => {
@@ -121,8 +119,7 @@ exports.createReport = async (
   }
 };
 
-// ─── استئناف / طعن ────────────────────────────────────────────
-exports.submitAppeal = async (
+export const submitAppeal = async (
   reportId: EntityId,
   userId: EntityId,
   { appealText }: { appealText: string }
@@ -161,3 +158,5 @@ exports.submitAppeal = async (
 
   return updated;
 };
+
+export default { createReport, submitAppeal };

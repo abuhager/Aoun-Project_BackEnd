@@ -10,15 +10,15 @@ process.env.CLOUDINARY_CLOUD_NAME = 'test-cloud';
 process.env.CLOUDINARY_API_KEY = 'test-key';
 process.env.CLOUDINARY_API_SECRET = 'test-secret';
 
-const validateBody = require('../middlewares/validateBody');
-const hubDto = require('../dtos/hubDto');
-const hubService = require('../services/hubService');
-const hubRepository = require('../repositories/hubRepository');
-const itemRepository = require('../repositories/itemRepository');
-const donationOfferRepository = require('../repositories/donationOfferRepository');
-const adminRepository = require('../repositories/adminRepository');
-const SafeHub = require('../models/SafeHub');
-const AdminLog = require('../models/AdminLog');
+const validateBody = require('../middlewares/validateBody').default;
+const hubDto = require('../dtos/hubDto').default;
+const hubService = require('../services/hubService').default;
+const hubRepository = require('../repositories/hubRepository').default;
+const itemRepository = require('../repositories/itemRepository').default;
+const donationOfferRepository = require('../repositories/donationOfferRepository').default;
+const adminRepository = require('../repositories/adminRepository').default;
+const SafeHub = require('../models/SafeHub').default;
+const AdminLog = require('../models/AdminLog').default;
 
 const HUB_ID = '507f1f77bcf86cd799439011';
 const ADMIN_ID = '507f1f77bcf86cd799439012';

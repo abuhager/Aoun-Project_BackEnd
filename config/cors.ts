@@ -80,4 +80,5 @@ const corsConfig = {
   parseAllowedOrigins,
 };
 
-export = corsConfig;
+export { corsOrigin, createCorsError, getAllowedOrigins, isOriginAllowed, parseAllowedOrigins };
+export default corsConfig;

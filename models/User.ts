@@ -1,5 +1,4 @@
-// models/User.js
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const JORDAN_PHONE_REGEX = /^\+9627[789]\d{7}$/;
 
@@ -87,6 +86,5 @@ userSchema.index(
     partialFilterExpression:   { isVerified: false },
     name:                      'ttl_unverified_users',
   }
-);
-
-module.exports = mongoose.model('User', userSchema);
+);const User = mongoose.model('User', userSchema);
+export default User;

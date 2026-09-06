@@ -37,7 +37,9 @@ test('مصادر Backend التشغيلية TypeScript وتُبنى إلى dist 
   assert.match(packageJson.scripts.verify, /typecheck/);
   assert.match(packageJson.scripts.verify, /build/);
   assert.equal(tsconfig.compilerOptions.outDir, 'dist');
-  assert.equal(tsconfig.compilerOptions.module, 'Node16');
+  assert.equal(packageJson.type, 'module');
+  assert.equal(tsconfig.compilerOptions.module, 'NodeNext');
+  assert.equal(tsconfig.compilerOptions.moduleResolution, 'NodeNext');
   await Promise.all([
     readFile(path.join(projectRoot, 'app.ts'), 'utf8'),
     readFile(path.join(projectRoot, 'server.ts'), 'utf8'),
@@ -89,8 +91,10 @@ test('طبقة TypeScript الصارمة تفحص كامل Backend التشغي�
   assert.equal(packageJson.scripts.typecheck, 'tsc --noEmit');
   assert.doesNotMatch(packageJson.scripts.verify, /typecheck:strict/);
   assert.match(asyncHandler, /RequestHandler/);
-  assert.match(asyncHandler, /export = asyncHandler/);
-  assert.match(adminController, /import asyncHandler = require/);
+  assert.match(asyncHandler, /export default asyncHandler/);
+  assert.match(adminController, /import asyncHandler from/);
+  assert.doesNotMatch(asyncHandler, /\brequire\s*\(|module\.exports|export\s*=/);
+  assert.doesNotMatch(adminController, /\brequire\s*\(|module\.exports|import\s+\w+\s*=\s*require/);
   assert.match(dtoTypes, /UnknownRecord/);
   assert.match(dtoTypes, /toPlainRecord = \(value: unknown\)/);
   assert.match(itemDto, /rawItem: unknown/);
@@ -102,4 +106,29 @@ test('طبقة TypeScript الصارمة تفحص كامل Backend التشغي�
   assert.match(serviceTypes, /getErrorMessage = \(error: unknown/);
   assert.match(donationRequestService, /body: RequestCreateInput/);
   assert.match(donationRequestService, /file\?: UploadedFile/);
+});
+
+test('مصدر Backend يستخدم ES import/export بلا CommonJS', async () => {
+  const nestedFiles = await Promise.all(
+    runtimeDirectories.map(async (directory) => (
+      (await readdir(path.join(projectRoot, directory), { recursive: true }))
+        .map(String)
+        .filter((file) => file.endsWith('.ts'))
+        .map((file) => path.join(projectRoot, directory, file))
+    ))
+  );
+  const sourceFiles = [
+    path.join(projectRoot, 'app.ts'),
+    path.join(projectRoot, 'server.ts'),
+    ...nestedFiles.flat(),
+  ];
+
+  for (const sourceFile of sourceFiles) {
+    const source = await readFile(sourceFile, 'utf8');
+    assert.doesNotMatch(
+      source,
+      /\brequire\s*\(|\bmodule\.exports\b|\bexports\.|\bexport\s*=|\bimport\s+\w+\s*=\s*require/,
+      `${path.relative(projectRoot, sourceFile)} ما زال يحتوي CommonJS`
+    );
+  }
 });

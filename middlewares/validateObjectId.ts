@@ -1,6 +1,4 @@
-// middlewares/validateObjectId.js
-// ✅ يُستخدَم في جميع الـ routes التي تأخذ :id أو أي param من DB
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 import type { NextFunction, Request, Response } from 'express';
 
 /**
@@ -11,7 +9,8 @@ const validateObjectId = (...params: string[]) =>
   (req: Request, res: Response, next: NextFunction) => {
     for (const param of params) {
       const value = req.params[param];
-      if (value && !mongoose.Types.ObjectId.isValid(value)) {
+      const normalizedValue = Array.isArray(value) ? value[0] : value;
+      if (normalizedValue && !mongoose.Types.ObjectId.isValid(normalizedValue)) {
         const message = `المعرّف "${param}" غير صحيح`;
         return res.status(400).json({
           status:    'fail',
@@ -26,4 +25,4 @@ const validateObjectId = (...params: string[]) =>
     next();
   };
 
-module.exports = validateObjectId;
+export default validateObjectId;

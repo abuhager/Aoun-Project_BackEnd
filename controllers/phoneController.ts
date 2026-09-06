@@ -1,22 +1,4 @@
-// controllers/phoneController.js
-// المسؤولية: استقبال طلبات التحقق من الهاتف عبر Firebase Phone Auth
-// ✅ تم استبدال Twilio بـ Firebase
-//
-// ─── الـ Endpoints المتاحة ────────────────────────────────────
-// POST /api/phone/verify-token  ← الجديد (Firebase idToken)
-//
-// ─── الـ Endpoints المحذوفة ───────────────────────────────────
-// POST /api/phone/send-otp    ← محذوف (كان لـ Twilio)
-// POST /api/phone/verify-otp  ← محذوف (كان لـ Twilio)
-//
-// ─── آلية عمل Frontend الجديدة ───────────────────────────────
-// 1. أضف Firebase Client SDK للـ Frontend
-// 2. استخدم signInWithPhoneNumber(auth, phone, recaptchaVerifier)
-// 3. بعد تأكيد المستخدم للرمز: result.confirm(otp)
-// 4. احصل على idToken: await result.user.getIdToken()
-// 5. أرسل idToken لـ POST /api/phone/verify-token
-
-const { verifyPhoneWithFirebase } = require('../services/phoneService');
+import { verifyPhoneWithFirebase } from '../services/phoneService.js';
 import type { Request, Response } from 'express';
 
 type ControllerError = {
@@ -29,9 +11,7 @@ const normalizeControllerError = (error: unknown): ControllerError => (
   typeof error === 'object' && error !== null ? error : {}
 );
 
-// ─── POST /api/phone/verify-token ────────────────────────────
-// Body: { idToken: string }  ← صادر من Firebase Client SDK
-exports.verifyToken = async (req: Request, res: Response) => {
+export const verifyToken = async (req: Request, res: Response) => {
   try {
     const { idToken } = req.body;
 
@@ -77,17 +57,18 @@ exports.verifyToken = async (req: Request, res: Response) => {
   }
 };
 
-// ─── Deprecated: send-otp و verify-otp (كانا لـ Twilio) ──────
-exports.sendOtp = (_req: Request, res: Response) =>
+export const sendOtp = (_req: Request, res: Response) =>
   res.status(410).json({
     msg:  'هذا الـ endpoint محذوف — الرجاء استخدام Firebase Phone Auth في الـ Frontend ثم أرسل idToken لـ /api/phone/verify-token',
     code: 'ENDPOINT_REMOVED',
     docs: 'https://firebase.google.com/docs/auth/web/phone-auth',
   });
 
-exports.verifyOtp = (_req: Request, res: Response) =>
+export const verifyOtp = (_req: Request, res: Response) =>
   res.status(410).json({
     msg:  'هذا الـ endpoint محذوف — الرجاء استخدام Firebase Phone Auth في الـ Frontend ثم أرسل idToken لـ /api/phone/verify-token',
     code: 'ENDPOINT_REMOVED',
     docs: 'https://firebase.google.com/docs/auth/web/phone-auth',
   });
+
+export default { verifyToken, sendOtp, verifyOtp };

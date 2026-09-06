@@ -1,10 +1,12 @@
-require('dotenv').config();
-
-const http = require('http');
-const mongoose = require('mongoose');
-
-const { validateEnvironment } = require('./config/env');
-const { connectRedis, closeRedis } = require('./middlewares/rateLimiter');
+import 'dotenv/config';
+import http from 'http';
+import mongoose from 'mongoose';
+import { validateEnvironment } from './config/env.js';
+import { connectRedis, closeRedis } from './middlewares/rateLimiter.js';
+import app from './app.js';
+import connectDB from './config/db.js';
+import { initCronJobs, stopCronJobs } from './jobs/cronJobs.js';
+import { initSocket, resetIO } from './socket/index.js';
 
 const runtime: {
   app: import('express').Express | null;
@@ -20,13 +22,11 @@ let shutdownPromise: Promise<void> | null = null;
 let processHandlersRegistered = false;
 
 const closeResources = async () => {
-  const { stopCronJobs } = require('./jobs/cronJobs');
   await stopCronJobs();
 
   const activeIo = runtime.io;
   const activeServer = runtime.server;
   if (activeIo) {
-    const { resetIO } = require('./socket');
     await new Promise<void>((resolve) => activeIo.close(() => resolve()));
     runtime.io = null;
     resetIO();
@@ -94,11 +94,6 @@ const registerProcessHandlers = () => {
 
 const startServer = async () => {
   const { port, nodeEnv } = validateEnvironment();
-  const app = require('./app');
-  const connectDB = require('./config/db');
-  const { initCronJobs } = require('./jobs/cronJobs');
-  const { initSocket } = require('./socket');
-
   const server = http.createServer(app);
   const io = initSocket(server);
   runtime.app = app;
@@ -129,7 +124,8 @@ const startServer = async () => {
   return { ...runtime };
 };
 
-if (require.main === module) {
+const isDirectExecution = /(?:^|[\\/])server\.(?:ts|js)$/.test(process.argv[1] ?? '');
+if (isDirectExecution) {
   registerProcessHandlers();
   startServer().catch(async (error) => {
     console.error('[Startup] فشل تشغيل الخادم:', error);
@@ -137,7 +133,8 @@ if (require.main === module) {
   });
 }
 
-module.exports = {
+export { closeResources, gracefulShutdown, registerProcessHandlers, runtime, shutdownAndExit, startServer };
+export default {
   closeResources,
   gracefulShutdown,
   registerProcessHandlers,

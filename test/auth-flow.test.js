@@ -15,15 +15,15 @@ process.env.CLOUDINARY_CLOUD_NAME = 'test-cloud';
 process.env.CLOUDINARY_API_KEY = 'test-key';
 process.env.CLOUDINARY_API_SECRET = 'test-secret';
 
-const validateBody = require('../middlewares/validateBody');
-const tokenUtils = require('../utils/tokenUtils');
-const sessionCache = require('../utils/sessionCache');
-const userRepository = require('../repositories/userRepository');
-const authMiddleware = require('../middlewares/auth');
-const authService = require('../services/authService');
-const emailService = require('../services/emailService');
-const SystemSettings = require('../models/SystemSettings');
-const User = require('../models/User');
+const validateBody = require('../middlewares/validateBody').default;
+const tokenUtils = require('../utils/tokenUtils').default;
+const sessionCache = require('../utils/sessionCache').default;
+const userRepository = require('../repositories/userRepository').default;
+const authMiddleware = require('../middlewares/auth').default;
+const authService = require('../services/authService').default;
+const emailService = require('../services/emailService').default;
+const SystemSettings = require('../models/SystemSettings').default;
+const User = require('../models/User').default;
 const { escapeHtml, getClientOrigin } = require('../services/emailService');
 const {
   isPhoneVerificationEnabled,

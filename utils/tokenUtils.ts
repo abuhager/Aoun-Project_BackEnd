@@ -1,14 +1,9 @@
-// utils/tokenUtils.js
-// ✅ FIX [SEC-02]        : parseExpireToMs تزامن maxAge مع JWT_REFRESH_EXPIRE
-// ✅ FIX [ARCH-CTRL-01]  : SESSION_ACTIVE_OPTIONS + CLEAR_SESSION_ACTIVE_OPTIONS
-//                          نُقلتا من authController إلى هنا — كل Cookie logic في ملف واحد
-
-const jwt           = require('jsonwebtoken');
-const crypto        = require('crypto');
+import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import type { CookieOptions } from 'express';
 import type { JwtPayload, SignOptions } from 'jsonwebtoken';
-const { hashToken } = require('./cryptoUtils');
-const { parseDurationMs } = require('../config/env');
+import { hashToken } from './cryptoUtils.js';
+import { parseDurationMs } from '../config/env.js';
 
 const JWT_SECRET         = process.env.JWT_SECRET;
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
@@ -166,7 +161,12 @@ const VERIFY_OPTIONS: import('jsonwebtoken').VerifyOptions = {
 
 const verifyToken = (token: string, secret: string): AounTokenPayload => {
   const decoded = jwt.verify(token, secret, VERIFY_OPTIONS);
-  if (typeof decoded === 'string' || !decoded.user) {
+  if (
+    typeof decoded === 'string'
+    || !('user' in decoded)
+    || typeof decoded.user !== 'object'
+    || decoded.user === null
+  ) {
     throw new Error('JWT payload is missing user identity');
   }
   return decoded as AounTokenPayload;
@@ -177,7 +177,8 @@ const verifyAccessToken = (token: string): AounTokenPayload =>
 const verifyRefreshToken = (token: string): AounTokenPayload =>
   verifyToken(token, JWT_REFRESH_SECRET as string);
 
-module.exports = {
+export { generateAccessToken, generateRefreshToken, verifyAccessToken, verifyRefreshToken, REFRESH_COOKIE_NAME, LEGACY_REFRESH_COOKIE_NAME, REFRESH_COOKIE_OPTIONS, CLEAR_REFRESH_COOKIE_OPTIONS, LEGACY_CLEAR_REFRESH_COOKIE_OPTIONS, SESSION_ACTIVE_OPTIONS, CLEAR_SESSION_ACTIVE_OPTIONS, buildCookieConfiguration, parseExpireToMs };
+export default {
   generateAccessToken,
   generateRefreshToken,
   verifyAccessToken,

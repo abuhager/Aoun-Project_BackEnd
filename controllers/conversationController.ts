@@ -1,10 +1,9 @@
-const conversationService = require('../services/conversationService');
-import type { Request } from 'express';
-import catchAsync = require('../utils/asyncHandler');
+import conversationService from '../services/conversationService.js';
+import catchAsync, { type AounRequest } from '../utils/asyncHandler.js';
 
-const currentUserId = (req: Request) => req.user?.id || req.user?._id?.toString();
+const currentUserId = (req: AounRequest): string => String(req.user?.id ?? req.user?._id);
 
-exports.listConversations = catchAsync(async (req, res) => {
+export const listConversations = catchAsync(async (req, res) => {
   const conversations = await conversationService.listConversationsLogic(currentUserId(req));
 
   res.status(200).json({
@@ -14,24 +13,26 @@ exports.listConversations = catchAsync(async (req, res) => {
   });
 });
 
-exports.getUnreadCount = catchAsync(async (req, res) => {
+export const getUnreadCount = catchAsync(async (req, res) => {
   const data = await conversationService.getUnreadCountLogic(currentUserId(req));
   res.status(200).json({ status: 'success', data });
 });
 
-exports.openConversation = catchAsync(async (req, res) => {
+export const openConversation = catchAsync(async (req, res) => {
   const data = await conversationService.openConversationLogic({
-    itemId: req.body.itemId,
+    itemId: String(req.body.itemId),
     userId: currentUserId(req),
     // donorId is accepted temporarily for clients that have not yet moved to targetUserId.
-    targetUserId: req.body.targetUserId || req.body.donorId || null,
+    targetUserId: req.body.targetUserId || req.body.donorId
+      ? String(req.body.targetUserId ?? req.body.donorId)
+      : null,
     io: req.app.get('io'),
   });
 
   res.status(data.isNew ? 201 : 200).json({ status: 'success', data });
 });
 
-exports.getMessages = catchAsync(async (req, res) => {
+export const getMessages = catchAsync(async (req, res) => {
   const data = await conversationService.getMessagesLogic({
     conversationId: req.params.conversationId,
     userId: currentUserId(req),
@@ -41,7 +42,7 @@ exports.getMessages = catchAsync(async (req, res) => {
   res.status(200).json({ status: 'success', ...data });
 });
 
-exports.markConversationRead = catchAsync(async (req, res) => {
+export const markConversationRead = catchAsync(async (req, res) => {
   const data = await conversationService.markConversationReadLogic({
     conversationId: req.params.conversationId,
     userId: currentUserId(req),
@@ -50,3 +51,5 @@ exports.markConversationRead = catchAsync(async (req, res) => {
 
   res.status(200).json({ status: 'success', ...data });
 });
+
+export default { listConversations, getUnreadCount, openConversation, getMessages, markConversationRead };

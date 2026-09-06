@@ -1,13 +1,12 @@
-// repositories/adminRepository.js
-const User     = require('../models/User');
-const Item     = require('../models/Item');
-const Report   = require('../models/Report');
-const AdminLog = require('../models/AdminLog');
+import User from '../models/User.js';
+import Item from '../models/Item.js';
+import Report from '../models/Report.js';
+import AdminLog from '../models/AdminLog.js';
 import type {
   EntityId,
   PaginationOptions,
   RepositoryRecord,
-} from './repositoryTypes';
+} from './repositoryTypes.js';
 
 type UserListOptions = {
   page?: number;
@@ -18,9 +17,9 @@ type UserListOptions = {
 
 type AdminActionPayload = {
   adminId: EntityId;
-  action: string;
+  action: 'PROMOTE' | 'DEMOTE' | 'BAN' | 'UNBAN' | 'REPORT_ACTION' | 'ITEM_HIDE' | 'HUB_MANAGE' | 'SETTINGS_UPDATE';
   targetId?: EntityId | null;
-  targetModel?: string | null;
+  targetModel?: 'User' | 'Item' | 'Report' | 'SafeHub' | null;
   reason?: string | null;
   meta?: RepositoryRecord | null;
   targetName?: string | null;
@@ -52,8 +51,7 @@ const buildUserFilter = ({ search, banned = '' }: UserListOptions = {}) => {
   return filter;
 };
 
-// ── المستخدمون ────────────────────────────────────────────────
-exports.findAllUsers = ({
+export const findAllUsers = ({
   page = 1,
   limit = 20,
   search,
@@ -72,34 +70,33 @@ exports.findAllUsers = ({
     .lean();
 };
 
-exports.countUsers = ({ search, banned = '' }: UserListOptions = {}) => {
+export const countUsers = ({ search, banned = '' }: UserListOptions = {}) => {
   const filter = buildUserFilter({ search, banned });
   return User.countDocuments(filter);
 };
 
-exports.banUser = (userId: EntityId, reason: string, bannedBy: EntityId) =>
+export const banUser = (userId: EntityId, reason: string | null, bannedBy: EntityId) =>
   User.findByIdAndUpdate(
     userId,
     { $set: { isBanned: true, banReason: reason, bannedBy } },
     { returnDocument: 'after' }
   );
 
-exports.unbanUser = (userId: EntityId) =>
+export const unbanUser = (userId: EntityId) =>
   User.findByIdAndUpdate(
     userId,
     { $set: { isBanned: false }, $unset: { banReason: '', bannedBy: '' } },
     { returnDocument: 'after' }
   );
 
-exports.adjustTrustScore = (userId: EntityId, delta: number) =>
+export const adjustTrustScore = (userId: EntityId, delta: number) =>
   User.findByIdAndUpdate(
     userId,
     { $inc: { trustScore: delta } },
     { returnDocument: 'after' }
   );
 
-// ── الأغراض ───────────────────────────────────────────────────
-exports.findAllItems = ({ page = 1, limit = 20 }: PaginationOptions = {}) =>
+export const findAllItems = ({ page = 1, limit = 20 }: PaginationOptions = {}) =>
   Item.find()
     .select('title category status imageUrl donor createdAt')
     .populate('donor', 'name email')
@@ -108,10 +105,9 @@ exports.findAllItems = ({ page = 1, limit = 20 }: PaginationOptions = {}) =>
     .limit(limit)
     .lean();
 
-exports.countItems = () => Item.countDocuments();
+export const countItems = () => Item.countDocuments();
 
-// ── البلاغات ──────────────────────────────────────────────────
-exports.resolvePendingReport = (
+export const resolvePendingReport = (
   reportId: EntityId,
   adminId: EntityId,
   status: string,
@@ -130,11 +126,7 @@ exports.resolvePendingReport = (
     { returnDocument: 'after' }
   );
 
-// ✅ FIX BUG-03: حُذفت findPendingReports و buildPendingFilter (Dead Code)
-// الدالة الوحيدة المستخدمة هي findPendingReportsWithCounts
-
-// ── السجلات ───────────────────────────────────────────────────
-exports.logAdminAction = ({
+export const logAdminAction = ({
   adminId, action, targetId, targetModel,
   reason, meta, targetName, adminNote,
 }: AdminActionPayload) =>
@@ -143,7 +135,7 @@ exports.logAdminAction = ({
     reason, meta, targetName, adminNote,
   });
 
-exports.findAdminLogs = ({ page = 1, limit = 20 }: PaginationOptions = {}) =>
+export const findAdminLogs = ({ page = 1, limit = 20 }: PaginationOptions = {}) =>
   AdminLog.find()
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)
@@ -152,8 +144,7 @@ exports.findAdminLogs = ({ page = 1, limit = 20 }: PaginationOptions = {}) =>
     .populate('targetId', 'name email title')
     .lean();
 
-// ── الإحصائيات (Dashboard) ────────────────────────────────────
-exports.getDashboardStats = () =>
+export const getDashboardStats = () =>
   Promise.all([
     User.countDocuments(),
     User.countDocuments({ isBanned: true }),
@@ -164,8 +155,7 @@ exports.getDashboardStats = () =>
     totalUsers, bannedUsers, totalItems, deliveredItems, pendingReports,
   }));
 
-// ── البلاغات مع العدادات التراكمية ───────────────────────────
-exports.findPendingReportsWithCounts = async ({
+export const findPendingReportsWithCounts = async ({
   page   = 1,
   limit  = 10,
   status = null, // ✅ FIX BUG-06: null = كل الحالات بدون فلتر
@@ -275,3 +265,5 @@ exports.findPendingReportsWithCounts = async ({
   ]);
   return { reports, total };
 };
+
+export default { findAllUsers, countUsers, banUser, unbanUser, adjustTrustScore, findAllItems, countItems, resolvePendingReport, logAdminAction, findAdminLogs, getDashboardStats, findPendingReportsWithCounts };

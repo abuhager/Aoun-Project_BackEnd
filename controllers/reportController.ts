@@ -1,9 +1,10 @@
-const reportService  = require('../services/reportService');
-import asyncHandler = require('../utils/asyncHandler');
-const { toReportResponse } = require('../dtos/reportDto');
+import reportService from '../services/reportService.js';
+import type { CreateReportInput } from '../services/reportService.js';
+import asyncHandler from '../utils/asyncHandler.js';
+import { toReportResponse } from '../dtos/reportDto.js';
 
-exports.createReport = asyncHandler(async (req, res) => {
-  const report = await reportService.createReport(req.user!.id, req.body);
+export const createReport = asyncHandler(async (req, res) => {
+  const report = await reportService.createReport(req.user!.id, req.body as CreateReportInput);
 
   return res.status(201).json({
     msg: 'تم إرسال البلاغ ✅',
@@ -11,11 +12,11 @@ exports.createReport = asyncHandler(async (req, res) => {
   });
 });
 
-exports.submitAppeal = asyncHandler(async (req, res) => {
+export const submitAppeal = asyncHandler(async (req, res) => {
   const report = await reportService.submitAppeal(
     req.params.id,
     req.user!.id,
-    req.body
+    req.body as { appealText: string }
   );
 
   return res.status(200).json({
@@ -23,3 +24,5 @@ exports.submitAppeal = asyncHandler(async (req, res) => {
     report: toReportResponse(report),
   });
 });
+
+export default { createReport, submitAppeal };

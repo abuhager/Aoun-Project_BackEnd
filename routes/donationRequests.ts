@@ -1,15 +1,12 @@
-const express  = require('express');
-const router   = express.Router();
+import express from 'express';
+import { requireAuth, optionalAuth } from '../middlewares/auth.js';
+import validateObjectId from '../middlewares/validateObjectId.js';
+import validateBody from '../middlewares/validateBody.js';
+import drController from '../controllers/donationRequestController.js';
+import { upload, verifyImageBuffer } from '../middlewares/upload.js';
+import { donationActionLimiter, uploadLimiter } from '../middlewares/rateLimiter.js';
 
-const { requireAuth, optionalAuth } = require('../middlewares/auth');
-const validateObjectId = require('../middlewares/validateObjectId');
-const validateBody     = require('../middlewares/validateBody');
-const drController     = require('../controllers/donationRequestController');
-const { upload, verifyImageBuffer } = require('../middlewares/upload');
-const {
-  donationActionLimiter,
-  uploadLimiter,
-} = require('../middlewares/rateLimiter');
+const router   = express.Router();
 
 // ── قراءة ────────────────────────────────────────────────────
 router.get('/',   optionalAuth, drController.getRequests);
@@ -88,4 +85,4 @@ router.patch(
   drController.withdrawOffer
 );
 
-module.exports = router;
+export default router;

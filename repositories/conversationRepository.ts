@@ -1,9 +1,8 @@
-const mongoose = require('mongoose');
-
-const Conversation = require('../models/Conversation');
-const Message = require('../models/Message');
-const Notification = require('../models/Notification');
-import type { EntityId, RepositoryRecord } from './repositoryTypes';
+import mongoose from 'mongoose';
+import Conversation from '../models/Conversation.js';
+import Message from '../models/Message.js';
+import Notification from '../models/Notification.js';
+import type { EntityId, RepositoryRecord } from './repositoryTypes.js';
 
 const POPULATE_ITEM = 'title imageUrl status donor bookedBy';
 const POPULATE_USER = 'name avatar';
@@ -50,13 +49,13 @@ const isDuplicateKeyError = (error: unknown): boolean => (
   && error.code === 11000
 );
 
-exports.DEFAULT_MESSAGE_PAGE_SIZE = DEFAULT_MESSAGE_PAGE_SIZE;
+export { DEFAULT_MESSAGE_PAGE_SIZE };
 
-exports.findConversationByPair = async ({ itemId, owner, requester }: ConversationPair) => (
+export const findConversationByPair = async ({ itemId, owner, requester }: ConversationPair) => (
   populateConversation(Conversation.findOne({ item: itemId, owner, requester })).lean()
 );
 
-exports.findOrCreateConversation = async ({ itemId, owner, requester }: ConversationPair) => {
+export const findOrCreateConversation = async ({ itemId, owner, requester }: ConversationPair) => {
   const participants = [owner.toString(), requester.toString()].sort();
 
   return populateConversation(Conversation.findOneAndUpdate(
@@ -75,22 +74,22 @@ exports.findOrCreateConversation = async ({ itemId, owner, requester }: Conversa
   )).lean();
 };
 
-exports.findConversationById = async (conversationId: EntityId) => (
+export const findConversationById = async (conversationId: EntityId) => (
   populateConversation(Conversation.findById(conversationId)).lean()
 );
 
-exports.findUserConversations = async (userId: EntityId) => (
+export const findUserConversations = async (userId: EntityId) => (
   populateConversation(Conversation.find({ participants: toObjectId(userId) }))
     .sort({ lastMessageAt: -1, updatedAt: -1 })
     .lean()
 );
 
-exports.countUnreadForUser = async (userId: EntityId) => {
+export const countUnreadForUser = async (userId: EntityId) => {
   const actualUserId = toObjectId(userId);
-  const conversationIds = await Conversation.distinct(
+  const conversationIds = (await Conversation.distinct(
     '_id',
     { participants: actualUserId }
-  );
+  )) as Array<string | mongoose.Types.ObjectId>;
 
   if (!conversationIds.length) return 0;
 
@@ -101,7 +100,7 @@ exports.countUnreadForUser = async (userId: EntityId) => {
   });
 };
 
-exports.isParticipant = (conversation: RepositoryRecord | null, userId: EntityId) => (
+export const isParticipant = (conversation: RepositoryRecord | null, userId: EntityId) => (
   (Array.isArray(conversation?.participants) ? conversation.participants : []).some(
     (participant: unknown) => {
     const record = typeof participant === 'object' && participant !== null
@@ -112,7 +111,7 @@ exports.isParticipant = (conversation: RepositoryRecord | null, userId: EntityId
   })
 );
 
-exports.createMessage = async ({
+export const createMessage = async ({
   conversationId,
   senderId,
   text,
@@ -159,7 +158,7 @@ exports.createMessage = async ({
   return { message: populatedMessage, created: true };
 };
 
-exports.findMessagesPage = async (
+export const findMessagesPage = async (
   conversationId: EntityId,
   { page = 1, limit = DEFAULT_MESSAGE_PAGE_SIZE }: MessagePageOptions = {}
 ) => {
@@ -185,7 +184,7 @@ exports.findMessagesPage = async (
   };
 };
 
-exports.markMessagesRead = async (conversationId: EntityId, userId: EntityId) => {
+export const markMessagesRead = async (conversationId: EntityId, userId: EntityId) => {
   const result = await Message.updateMany(
     { conversation: conversationId, sender: { $ne: toObjectId(userId) }, read: false },
     { $set: { read: true } }
@@ -193,7 +192,7 @@ exports.markMessagesRead = async (conversationId: EntityId, userId: EntityId) =>
   return result.modifiedCount || 0;
 };
 
-exports.markMessageNotificationsRead = async (
+export const markMessageNotificationsRead = async (
   conversationId: EntityId,
   userId: EntityId
 ) => {
@@ -209,7 +208,7 @@ exports.markMessageNotificationsRead = async (
   return result.modifiedCount || 0;
 };
 
-exports.countUnreadForUserBatch = async (
+export const countUnreadForUserBatch = async (
   conversationIds: EntityId[],
   userId: EntityId
 ) => {
@@ -231,3 +230,5 @@ exports.countUnreadForUserBatch = async (
     return map;
   }, {} as Record<string, number>);
 };
+
+export default { DEFAULT_MESSAGE_PAGE_SIZE, findConversationByPair, findOrCreateConversation, findConversationById, findUserConversations, countUnreadForUser, isParticipant, createMessage, findMessagesPage, markMessagesRead, markMessageNotificationsRead, countUnreadForUserBatch };

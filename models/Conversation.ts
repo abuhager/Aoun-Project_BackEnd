@@ -1,4 +1,4 @@
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
 
 /**
  * NOTE on unreadCount:
@@ -49,6 +49,5 @@ const conversationSchema = new mongoose.Schema(
 );
 
 conversationSchema.index({ item: 1, owner: 1, requester: 1 }, { unique: true });
-conversationSchema.index({ participants: 1, updatedAt: -1 });
-
-module.exports = mongoose.model("Conversation", conversationSchema);
+conversationSchema.index({ participants: 1, updatedAt: -1 });const Conversation = mongoose.model("Conversation", conversationSchema);
+export default Conversation;

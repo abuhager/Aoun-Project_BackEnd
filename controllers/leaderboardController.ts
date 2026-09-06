@@ -1,13 +1,14 @@
-// controllers/leaderboardController.js
-const leaderboardService = require('../services/leaderboardService');
-import asyncHandler = require('../utils/asyncHandler');
+import leaderboardService from '../services/leaderboardService.js';
+import asyncHandler from '../utils/asyncHandler.js';
 
-exports.getLeaderboard = asyncHandler(async (_req, res) => {
+export const getLeaderboard = asyncHandler(async (_req, res) => {
   const leaderboard = await leaderboardService.getLeaderboard();
   return res.json({ leaderboard });
 });
 
-exports.getUserRank = asyncHandler(async (req, res) => {
+export const getUserRank = asyncHandler(async (req, res) => {
   const rank = await leaderboardService.getUserRank(req.user!.id);
   return res.json(rank);
 });
+
+export default { getLeaderboard, getUserRank };

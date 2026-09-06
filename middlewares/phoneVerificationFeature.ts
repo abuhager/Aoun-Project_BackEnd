@@ -1,3 +1,5 @@
+import type { NextFunction, Request, Response } from 'express';
+
 const DISABLED_RESPONSE = Object.freeze({
   msg: 'التحقق من الهاتف متوقف مؤقتاً',
   code: 'PHONE_VERIFICATION_DISABLED',
@@ -11,9 +13,9 @@ const requirePhoneVerificationEnabled = (_req: Request, res: Response, next: Nex
   return res.status(503).json(DISABLED_RESPONSE);
 };
 
-module.exports = {
+export { DISABLED_RESPONSE, isPhoneVerificationEnabled, requirePhoneVerificationEnabled };
+export default {
   DISABLED_RESPONSE,
   isPhoneVerificationEnabled,
   requirePhoneVerificationEnabled,
 };
-import type { NextFunction, Request, Response } from 'express';

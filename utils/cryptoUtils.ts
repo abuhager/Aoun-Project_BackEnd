@@ -12,4 +12,5 @@ const cryptoUtils = {
   hashToken,
 };
 
-export = cryptoUtils;
+export { hashToken };
+export default cryptoUtils;

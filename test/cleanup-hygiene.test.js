@@ -4,7 +4,7 @@ const { access, readFile } = require('node:fs/promises');
 const path = require('node:path');
 
 const projectRoot = path.resolve(__dirname, '..');
-const escapeRegex = require('../utils/escapeRegex');
+const escapeRegex = require('../utils/escapeRegex').default;
 
 test('تنظيف البحث يستخدم utility مشتركة تحد الطول وتهرب RegExp', () => {
   assert.equal(escapeRegex('a+b?(c)'), 'a\\+b\\?\\(c\\)');

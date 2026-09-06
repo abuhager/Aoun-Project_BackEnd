@@ -1,9 +1,10 @@
-const express          = require('express');
+import express from 'express';
+import { requireAuth, requireAdmin } from '../middlewares/auth.js';
+import validateObjectId from '../middlewares/validateObjectId.js';
+import validateBody from '../middlewares/validateBody.js';
+import adminController from '../controllers/adminController.js';
+
 const router           = express.Router();
-const { requireAuth, requireAdmin } = require('../middlewares/auth');
-const validateObjectId = require('../middlewares/validateObjectId');
-const validateBody     = require('../middlewares/validateBody'); // ✅ جديد
-const adminController  = require('../controllers/adminController');
 
 router.use(requireAuth, requireAdmin);
 
@@ -28,4 +29,4 @@ router.post('/reports/:id/resolve', validateObjectId('id'), validateBody('resolv
 // ─── Audit Log ────────────────────────────────────────────────
 router.get('/logs', adminController.listAuditLogs);
 
-module.exports = router;
+export default router;

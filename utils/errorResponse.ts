@@ -1,4 +1,4 @@
-import AppError = require('./AppError');
+import AppError from './AppError.js';
 
 const INTERNAL_ERROR_MESSAGE =
   'حدث خطأ داخلي في الخادم. يرجى المحاولة لاحقاً.';
@@ -77,4 +77,5 @@ const errorResponse = {
   buildErrorResponse,
 };
 
-export = errorResponse;
+export { INTERNAL_ERROR_MESSAGE, buildErrorResponse };
+export default errorResponse;

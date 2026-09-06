@@ -5,11 +5,11 @@ const path = require('node:path');
 
 process.env.NODE_ENV = 'test';
 
-const Item = require('../models/Item');
-const Message = require('../models/Message');
-const repo = require('../repositories/conversationRepository');
-const conversationService = require('../services/conversationService');
-const conversationController = require('../controllers/conversationController');
+const Item = require('../models/Item').default;
+const Message = require('../models/Message').default;
+const repo = require('../repositories/conversationRepository').default;
+const conversationService = require('../services/conversationService').default;
+const conversationController = require('../controllers/conversationController').default;
 const {
   assertParticipant,
   canSendInConversation,
@@ -160,8 +160,8 @@ test('عداد Navbar يجلب رقماً خفيفاً دون تحميل DTOs ا
     'utf8'
   );
   const countSection = repositorySource.slice(
-    repositorySource.indexOf('exports.countUnreadForUser'),
-    repositorySource.indexOf('exports.isParticipant')
+    repositorySource.indexOf('export const countUnreadForUser'),
+    repositorySource.indexOf('export const isParticipant')
   );
   assert.match(countSection, /Conversation\.distinct\(/);
   assert.match(countSection, /Message\.countDocuments\(/);

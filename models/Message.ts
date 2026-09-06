@@ -1,4 +1,4 @@
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
 
 const messageSchema = new mongoose.Schema(
   {
@@ -47,6 +47,5 @@ messageSchema.index(
     unique: true,
     partialFilterExpression: { clientMessageId: { $type: "string" } },
   }
-);
-
-module.exports = mongoose.model("Message", messageSchema);
+);const Message = mongoose.model("Message", messageSchema);
+export default Message;

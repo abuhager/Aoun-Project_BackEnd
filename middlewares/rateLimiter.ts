@@ -1,11 +1,10 @@
-const { createHash } = require('crypto');
-const { rateLimit, ipKeyGenerator }: typeof import('express-rate-limit') = require('express-rate-limit');
-const { RedisStore }: typeof import('rate-limit-redis') = require('rate-limit-redis');
-const { createClient }: typeof import('redis') = require('redis');
+import { createHash } from 'crypto';
+import { rateLimit, ipKeyGenerator } from 'express-rate-limit';
+import { RedisStore } from 'rate-limit-redis';
+import { createClient } from 'redis';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import type { RateLimitRequestHandler } from 'express-rate-limit';
-
-const { parsePositiveInteger } = require('../config/env');
+import { parsePositiveInteger } from '../config/env.js';
 
 type RedisClient = ReturnType<typeof createClient>;
 type LimiterKeyType = 'email' | 'token' | 'user';
@@ -193,24 +192,40 @@ const getRateLimiterStatus = () => ({
   redisReady,
 });
 
-module.exports = {
+export const globalLimiter = delegate('globalLimiter');
+export const loginLimiter = delegate('loginLimiter');
+export const registerLimiter = delegate('registerLimiter');
+export const forgotPasswordLimiter = delegate('forgotPasswordLimiter');
+export const resetPasswordLimiter = delegate('resetPasswordLimiter');
+export const refreshLimiter = delegate('refreshLimiter');
+export const publicLimiter = delegate('publicLimiter');
+export const phoneVerifyLimiter = delegate('phoneVerifyLimiter');
+export const actionLimiter = delegate('actionLimiter');
+export const donationActionLimiter = delegate('donationActionLimiter');
+export const otpLimiter = delegate('otpLimiter');
+export const resendOtpLimiter = delegate('resendOtpLimiter');
+export const uploadLimiter = delegate('uploadLimiter');
+export const meLimiter = delegate('meLimiter');
+
+export { connectRedis, closeRedis, getRateLimiterStatus };
+export default {
   connectRedis,
   closeRedis,
   getRateLimiterStatus,
-  globalLimiter: delegate('globalLimiter'),
-  loginLimiter: delegate('loginLimiter'),
-  registerLimiter: delegate('registerLimiter'),
-  forgotPasswordLimiter: delegate('forgotPasswordLimiter'),
-  resetPasswordLimiter: delegate('resetPasswordLimiter'),
-  refreshLimiter: delegate('refreshLimiter'),
-  publicLimiter: delegate('publicLimiter'),
-  phoneVerifyLimiter: delegate('phoneVerifyLimiter'),
-  actionLimiter: delegate('actionLimiter'),
-  donationActionLimiter: delegate('donationActionLimiter'),
-  otpLimiter: delegate('otpLimiter'),
-  resendOtpLimiter: delegate('resendOtpLimiter'),
-  uploadLimiter: delegate('uploadLimiter'),
-  meLimiter: delegate('meLimiter'),
+  globalLimiter,
+  loginLimiter,
+  registerLimiter,
+  forgotPasswordLimiter,
+  resetPasswordLimiter,
+  refreshLimiter,
+  publicLimiter,
+  phoneVerifyLimiter,
+  actionLimiter,
+  donationActionLimiter,
+  otpLimiter,
+  resendOtpLimiter,
+  uploadLimiter,
+  meLimiter,
   _private: {
     emailKeyGenerator,
     tokenKeyGenerator,

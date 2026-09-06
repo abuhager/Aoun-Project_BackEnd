@@ -1,10 +1,9 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 import type { NextFunction, Request, Response } from 'express';
-
-const AppError = require('../utils/AppError');
-const { verifyAccessToken } = require('../utils/tokenUtils');
-const sessionCache = require('../utils/sessionCache');
-const userRepository = require('../repositories/userRepository');
+import AppError from '../utils/AppError.js';
+import { verifyAccessToken } from '../utils/tokenUtils.js';
+import sessionCache from '../utils/sessionCache.js';
+import userRepository from '../repositories/userRepository.js';
 
 const ROLES = Object.freeze({
   USER: 'user',
@@ -83,7 +82,7 @@ const resolveAccessIdentity = async (token: string): Promise<AuthState> => {
 
   if (
     state.sessionIssuedAt
-    && Number.isFinite(decoded.iat)
+    && typeof decoded.iat === 'number'
     && decoded.iat < Math.floor(new Date(state.sessionIssuedAt).getTime() / 1000)
   ) {
     sessionCache.invalidate(userId);
@@ -97,7 +96,7 @@ const resolveAccessIdentity = async (token: string): Promise<AuthState> => {
   return state;
 };
 
-exports.requireAuth = async (req: Request, res: Response, next: NextFunction) => {
+export const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
   setAuthenticatedResponseHeaders(res);
   const token = getBearerToken(req.headers.authorization);
   if (!token) {
@@ -118,7 +117,7 @@ exports.requireAuth = async (req: Request, res: Response, next: NextFunction) =>
   }
 };
 
-exports.requireAdmin = (req: Request, _res: Response, next: NextFunction) => {
+export const requireAdmin = (req: Request, _res: Response, next: NextFunction) => {
   if (!req.user) {
     return next(new AppError('غير مصرح — يجب تسجيل الدخول أولاً 🔒', 401, 'UNAUTHORIZED'));
   }
@@ -128,7 +127,7 @@ exports.requireAdmin = (req: Request, _res: Response, next: NextFunction) => {
   return next();
 };
 
-exports.requireSuperAdmin = (req: Request, _res: Response, next: NextFunction) => {
+export const requireSuperAdmin = (req: Request, _res: Response, next: NextFunction) => {
   if (!req.user) {
     return next(new AppError('غير مصرح — يجب تسجيل الدخول أولاً 🔒', 401, 'UNAUTHORIZED'));
   }
@@ -142,7 +141,7 @@ exports.requireSuperAdmin = (req: Request, _res: Response, next: NextFunction) =
   return next();
 };
 
-exports.requireLevel2 = (req: Request, _res: Response, next: NextFunction) => {
+export const requireLevel2 = (req: Request, _res: Response, next: NextFunction) => {
   if (!req.user) {
     return next(new AppError('غير مصرح — يجب تسجيل الدخول أولاً 🔒', 401, 'UNAUTHORIZED'));
   }
@@ -156,7 +155,7 @@ exports.requireLevel2 = (req: Request, _res: Response, next: NextFunction) => {
   return next();
 };
 
-exports.optionalAuth = async (req: Request, res: Response, next: NextFunction) => {
+export const optionalAuth = async (req: Request, res: Response, next: NextFunction) => {
   const token = getBearerToken(req.headers.authorization);
   if (!token) {
     req.user = null;
@@ -172,8 +171,14 @@ exports.optionalAuth = async (req: Request, res: Response, next: NextFunction) =
   return next();
 };
 
-exports.ROLES = ROLES;
-exports.getBearerToken = getBearerToken;
-exports.loadAuthState = loadAuthState;
-exports.resolveAccessIdentity = resolveAccessIdentity;
-exports.setAuthenticatedResponseHeaders = setAuthenticatedResponseHeaders;
+export { ROLES };
+
+export { getBearerToken };
+
+export { loadAuthState };
+
+export { resolveAccessIdentity };
+
+export { setAuthenticatedResponseHeaders };
+
+export default { requireAuth, requireAdmin, requireSuperAdmin, requireLevel2, optionalAuth, ROLES, getBearerToken, loadAuthState, resolveAccessIdentity, setAuthenticatedResponseHeaders };

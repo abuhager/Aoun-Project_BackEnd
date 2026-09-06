@@ -1,9 +1,8 @@
-const mongoose = require('mongoose');
-import type { AounSocket, SocketNext, SocketOperationError } from './socketTypes';
-import { asSocketError } from './socketTypes';
-
-const { verifyAccessToken } = require('../utils/tokenUtils');
-const { resolveAccessIdentity } = require('../middlewares/auth');
+import mongoose from 'mongoose';
+import type { AounSocket, SocketNext, SocketOperationError } from './socketTypes.js';
+import { asSocketError } from './socketTypes.js';
+import { verifyAccessToken } from '../utils/tokenUtils.js';
+import { resolveAccessIdentity } from '../middlewares/auth.js';
 
 const createSocketAuthError = (
   message: string,
@@ -71,7 +70,8 @@ const socketAuthMiddleware = async (socket: AounSocket, next: SocketNext) => {
   }
 };
 
-module.exports = {
+export { createSocketAuthError, socketAuthMiddleware, verifySocketToken };
+export default {
   createSocketAuthError,
   socketAuthMiddleware,
   verifySocketToken,

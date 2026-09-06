@@ -1,10 +1,10 @@
-const mongoose                = require('mongoose');
-const hubRepository           = require('../repositories/hubRepository');
-const itemRepository          = require('../repositories/itemRepository');
-const donationOfferRepository = require('../repositories/donationOfferRepository');
-const adminRepository         = require('../repositories/adminRepository');
-const hubDto                  = require('../dtos/hubDto');
-import type { EntityId, ServicePayload } from './serviceTypes';
+import mongoose from 'mongoose';
+import hubRepository from '../repositories/hubRepository.js';
+import itemRepository from '../repositories/itemRepository.js';
+import donationOfferRepository from '../repositories/donationOfferRepository.js';
+import adminRepository from '../repositories/adminRepository.js';
+import hubDto from '../dtos/hubDto.js';
+import type { EntityId, ServicePayload } from './serviceTypes.js';
 
 type HubActionTarget = {
   _id: EntityId;
@@ -39,19 +39,17 @@ const logHubAction = (
     },
   });
 
-// Public: المراكز النشطة فقط، بما فيها السجلات القديمة غير المعطلة صراحةً.
-exports.getAllHubs = async () => {
+export const getAllHubs = async () => {
   const hubs = await hubRepository.findAllActive();
   return { statusCode: 200, body: hubs.map(hubDto.toPublicHub) };
 };
 
-// Admin: كل المراكز (نشطة + معطلة).
-exports.getAllHubsAdmin = async () => {
+export const getAllHubsAdmin = async () => {
   const hubs = await hubRepository.findAll();
   return { statusCode: 200, body: hubs.map(hubDto.toAdminHub) };
 };
 
-exports.createHub = async (body: ServicePayload, adminId: EntityId) => {
+export const createHub = async (body: ServicePayload, adminId: EntityId) => {
   const hub = await hubRepository.create({ ...body, createdBy: adminId });
 
   await logHubAction(
@@ -65,7 +63,7 @@ exports.createHub = async (body: ServicePayload, adminId: EntityId) => {
   return { statusCode: 201, body: hubDto.toAdminHub(hub) };
 };
 
-exports.updateHub = async (
+export const updateHub = async (
   hubId: EntityId,
   rawBody: ServicePayload,
   adminId: EntityId
@@ -99,7 +97,7 @@ exports.updateHub = async (
   return { statusCode: 200, body: hubDto.toAdminHub(hub) };
 };
 
-exports.deactivateHub = async (hubId: EntityId, adminId: EntityId) => {
+export const deactivateHub = async (hubId: EntityId, adminId: EntityId) => {
   if (!isValidId(hubId)) return invalidIdResponse();
 
   const existingHub = await hubRepository.findById(hubId);
@@ -154,7 +152,7 @@ exports.deactivateHub = async (hubId: EntityId, adminId: EntityId) => {
   };
 };
 
-exports.reactivateHub = async (hubId: EntityId, adminId: EntityId) => {
+export const reactivateHub = async (hubId: EntityId, adminId: EntityId) => {
   if (!isValidId(hubId)) return invalidIdResponse();
 
   const existingHub = await hubRepository.findById(hubId);
@@ -187,3 +185,5 @@ exports.reactivateHub = async (hubId: EntityId, adminId: EntityId) => {
     body: { msg: 'تم تفعيل المركز ✅', hub: hubDto.toAdminHub(hub) },
   };
 };
+
+export default { getAllHubs, getAllHubsAdmin, createHub, updateHub, deactivateHub, reactivateHub };

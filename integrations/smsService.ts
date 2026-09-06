@@ -1,18 +1,6 @@
-// integrations/smsService.js
-// المسؤولية: التحقق من رموز OTP عبر Firebase Admin SDK
-// ✅ تم استبدال Twilio بـ Firebase Phone Auth
-//    السبب: Firebase مجاني (10,000 تحقق/شهر) ويدعم الأرقام الأردنية بشكل كامل
-//
-// ─── آلية العمل الجديدة ──────────────────────────────────────
-// 1. Frontend: يستخدم Firebase Client SDK لإرسال OTP مباشرة للمستخدم
-// 2. Frontend: بعد إدخال المستخدم للرمز، يحصل على idToken من Firebase
-// 3. Frontend: يرسل idToken للـ Backend عبر /api/phone/verify-token
-// 4. Backend (هنا): يتحقق من idToken باستخدام Firebase Admin SDK
-//    ويستخرج رقم الهاتف المؤكد منه مباشرة
-
-const { initializeApp, getApps, cert } = require('firebase-admin/app');
-const { getAuth }                       = require('firebase-admin/auth');
-const AppError                          = require('../utils/AppError');
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
+import AppError from '../utils/AppError.js';
 
 // ─── تهيئة Firebase Admin (مرة واحدة فقط) ───────────────────
 const initFirebase = () => {
@@ -33,10 +21,7 @@ const initFirebase = () => {
   });
 };
 
-// ─── التحقق من idToken وإرجاع رقم الهاتف ─────────────────────
-// idToken: يأتي من Firebase Client SDK بعد تأكيد OTP
-// يُرجع: رقم الهاتف بصيغة E.164 (مثل +96279xxxxxxx)
-exports.verifyFirebasePhoneToken = async (idToken: string): Promise<string> => {
+export const verifyFirebasePhoneToken = async (idToken: string): Promise<string> => {
   initFirebase();
 
   let decoded;
@@ -69,3 +54,5 @@ exports.verifyFirebasePhoneToken = async (idToken: string): Promise<string> => {
 
   return decoded.phone_number; // مثال: "+96279xxxxxxx"
 };
+
+export default { verifyFirebasePhoneToken };

@@ -1,22 +1,22 @@
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const cookieParser = require('cookie-parser');
-const mongoose = require('mongoose');
-const { randomUUID } = require('crypto');
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
+import mongoose from 'mongoose';
+import { randomUUID } from 'crypto';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
-
-const { corsOrigin } = require('./config/cors');
-const { globalLimiter, publicLimiter } = require('./middlewares/rateLimiter');
-const maintenanceMode = require('./middlewares/maintenanceMode');
-const errorHandler = require('./middlewares/errorHandler');
-const AppError = require('./utils/AppError');
+import { corsOrigin } from './config/cors.js';
+import { globalLimiter, publicLimiter } from './middlewares/rateLimiter.js';
+import maintenanceMode from './middlewares/maintenanceMode.js';
+import errorHandler from './middlewares/errorHandler.js';
+import AppError from './utils/AppError.js';
+import apiRoutes from './routes/index.js';
+import { getCronStatus } from './jobs/cronJobs.js';
 
 const app = express();
 
 const getBackgroundJobsHealth = () => {
   try {
-    const { getCronStatus } = require('./jobs/cronJobs');
     return Object.fromEntries(
       Object.entries(getCronStatus() as Record<string, {
         lastStatus: string;
@@ -164,7 +164,7 @@ app.get(['/health', '/health/ready'], publicLimiter, (_req: Request, res: Respon
   });
 });
 
-app.use('/api', require('./routes'));
+app.use('/api', apiRoutes);
 
 app.use((_req: Request, _res: Response, next: NextFunction) => {
   next(AppError.notFound(
@@ -175,4 +175,4 @@ app.use((_req: Request, _res: Response, next: NextFunction) => {
 
 app.use(errorHandler);
 
-module.exports = app;
+export default app;

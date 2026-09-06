@@ -1,7 +1,7 @@
 // تحقق شكل الطلبات موحّد في middlewares/validateBody.js.
-import { asRecord, toPlainRecord } from './dtoTypes';
+import { asRecord, toPlainRecord } from './dtoTypes.js';
 
-exports.toPublicOffer = (rawOffer: unknown) => {
+export const toPublicOffer = (rawOffer: unknown) => {
   const offer = toPlainRecord(rawOffer);
   if (!offer) return null;
   const donor = asRecord(offer.donor);
@@ -30,3 +30,5 @@ exports.toPublicOffer = (rawOffer: unknown) => {
   } : null,
   });
 };
+
+export default { toPublicOffer };

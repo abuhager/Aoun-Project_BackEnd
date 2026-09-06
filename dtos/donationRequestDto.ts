@@ -1,8 +1,8 @@
 // تحقق شكل الطلبات موحّد في middlewares/validateBody.js،
 // والتصنيفات والمواقع الديناميكية تتحقق منها donationRequestService.
-import { asRecord, toPlainRecord } from './dtoTypes';
+import { asRecord, toPlainRecord } from './dtoTypes.js';
 
-exports.toPublicRequest = (
+export const toPublicRequest = (
   rawRequest: unknown,
   options: { includeFulfilledItem?: boolean } = {}
 ) => {
@@ -51,3 +51,5 @@ exports.toPublicRequest = (
   } : null,
   });
 };
+
+export default { toPublicRequest };

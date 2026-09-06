@@ -67,4 +67,5 @@ const stats = (): { size: number; ttl_ms: number; entries: string[] } => ({
 
 const sessionCache = { get, set, invalidate, stats };
 
-export = sessionCache;
+export { get, set, invalidate, stats };
+export default sessionCache;

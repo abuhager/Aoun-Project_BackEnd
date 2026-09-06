@@ -1,12 +1,8 @@
-// middlewares/upload.js ✅ مصحّح — فحص Magic Bytes
-const multer = require('multer');
+import multer from 'multer';
 import type { NextFunction, Request, Response } from 'express';
 import type { FileFilterCallback } from 'multer';
-const AppError = require('../utils/AppError');
-const {
-  ALLOWED_IMAGE_TYPES,
-  MAX_IMAGE_SIZE,
-} = require('../utils/imageValidation');
+import AppError from '../utils/AppError.js';
+import { ALLOWED_IMAGE_TYPES, MAX_IMAGE_SIZE } from '../utils/imageValidation.js';
 
 /**
  * يتحقق من Magic Bytes الفعلية للملف
@@ -103,7 +99,8 @@ const verifyImageBuffer = (req: Request, _res: Response, next: NextFunction) => 
   return next();
 };
 
-module.exports = {
+export { fileFilter, upload, verifyImageBuffer, verifyMagicBytes };
+export default {
   fileFilter,
   upload,
   verifyImageBuffer,

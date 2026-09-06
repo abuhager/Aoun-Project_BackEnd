@@ -1,10 +1,8 @@
-const { SOCKET_EVENTS, userRoom } = require('./contracts');
-import type { AounSocketServer } from './socketTypes';
+import { SOCKET_EVENTS, userRoom } from './contracts.js';
+import type { AounSocketServer } from './socketTypes.js';
+import { getIOOrNull } from './registry.js';
 
-const getSocketServer = (): AounSocketServer | null => {
-  const { getIOOrNull } = require('./index');
-  return getIOOrNull();
-};
+const getSocketServer = (): AounSocketServer | null => getIOOrNull();
 
 const emitToUser = (userId: unknown, event: string, payload?: unknown): boolean => {
   if (!userId) return false;
@@ -42,7 +40,8 @@ const disconnectUserSockets = async (
   return sockets.length;
 };
 
-module.exports = {
+export { disconnectUserSockets, emitToAll, emitToUser };
+export default {
   disconnectUserSockets,
   emitToAll,
   emitToUser,

@@ -108,7 +108,8 @@ const buildGamificationProfile = (
   };
 };
 
-module.exports = {
+export { DEFAULT_LEVELS, calcLevel, calcProgress, buildGamificationProfile, normalizeScore, DEFAULT_LEVELS as LEVELS };
+export default {
   DEFAULT_LEVELS,
   calcLevel,
   calcProgress,

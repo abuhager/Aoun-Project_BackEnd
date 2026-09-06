@@ -1,7 +1,6 @@
-// models/Notification.js
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
-const NOTIFICATION_TYPES = Object.freeze([
+export const NOTIFICATION_TYPES = Object.freeze([
   'item_booked',
   'booking_cancelled',
   'booking_transferred',
@@ -27,7 +26,7 @@ const NOTIFICATION_TYPES = Object.freeze([
   'offer_withdrawn',
 ]);
 
-const isInternalActionPath = (value: unknown): boolean => value == null || (
+export const isInternalActionPath = (value: unknown): boolean => value == null || (
   typeof value === 'string'
   && value.startsWith('/')
   && !value.startsWith('//')
@@ -85,9 +84,15 @@ const notificationSchema = new mongoose.Schema({
 notificationSchema.index({ user: 1, isRead: 1, createdAt: -1 });
 notificationSchema.index({ createdAt: 1 }, { expireAfterSeconds: 90 * 24 * 60 * 60 });
 
-const Notification = mongoose.model('Notification', notificationSchema);
+type NotificationDocument = mongoose.InferSchemaType<typeof notificationSchema>;
+type NotificationModel = mongoose.Model<NotificationDocument> & {
+  NOTIFICATION_TYPES: typeof NOTIFICATION_TYPES;
+  isInternalActionPath: typeof isInternalActionPath;
+};
+
+const Notification = mongoose.model('Notification', notificationSchema) as NotificationModel;
 
 Notification.NOTIFICATION_TYPES = NOTIFICATION_TYPES;
 Notification.isInternalActionPath = isInternalActionPath;
 
-module.exports = Notification;
+export default Notification;

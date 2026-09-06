@@ -1,4 +1,4 @@
-import { asRecord, toId, toIsoDate, toPlainRecord } from './dtoTypes';
+import { asRecord, toId, toIsoDate, toPlainRecord } from './dtoTypes.js';
 
 const toPlainObject = toPlainRecord;
 const toDate = toIsoDate;
@@ -18,7 +18,7 @@ const toPersonReference = (value: unknown) => {
   };
 };
 
-exports.toAdminUser = (rawUser: unknown) => {
+export const toAdminUser = (rawUser: unknown) => {
   const user = toPlainObject(rawUser);
   if (!user) return null;
 
@@ -44,7 +44,7 @@ exports.toAdminUser = (rawUser: unknown) => {
   };
 };
 
-exports.toAdminItem = (rawItem: unknown) => {
+export const toAdminItem = (rawItem: unknown) => {
   const item = toPlainObject(rawItem);
   if (!item) return null;
 
@@ -65,7 +65,7 @@ exports.toAdminItem = (rawItem: unknown) => {
   };
 };
 
-exports.toAdminAuditLog = (rawLog: unknown) => {
+export const toAdminAuditLog = (rawLog: unknown) => {
   const log = toPlainObject(rawLog);
   if (!log) return null;
 
@@ -84,4 +84,6 @@ exports.toAdminAuditLog = (rawLog: unknown) => {
   };
 };
 
-exports._private = { toDate, toId, toPersonReference };
+export const _private = { toDate, toId, toPersonReference };
+
+export default { toAdminUser, toAdminItem, toAdminAuditLog, _private };

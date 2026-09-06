@@ -1,5 +1,4 @@
-﻿// utils/uploadToCloudinary.js
-const cloudinary = require('../config/cloudinary');
+import cloudinary from '../config/cloudinary.js';
 import type { UploadApiErrorResponse, UploadApiResponse } from 'cloudinary';
 
 const uploadToCloudinary = (buffer: Buffer, folder = 'aoun-items') =>
@@ -19,4 +18,5 @@ const uploadToCloudinary = (buffer: Buffer, folder = 'aoun-items') =>
 const deleteFromCloudinary = (publicId: string) =>
   cloudinary.uploader.destroy(publicId);
 
-module.exports = { uploadToCloudinary, deleteFromCloudinary };
+export { uploadToCloudinary, deleteFromCloudinary };
+export default { uploadToCloudinary, deleteFromCloudinary };

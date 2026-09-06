@@ -1,25 +1,22 @@
-const mongoose = require('mongoose');
-
-const SystemSettings = require('../models/SystemSettings');
-const User = require('../models/User');
-const Item = require('../models/Item');
-const SafeHub = require('../models/SafeHub');
-const DonationRequest = require('../models/DonationRequest');
-const DonationOffer = require('../models/DonationOffer');
-const donationRequestRepository = require('../repositories/donationRequestRepository');
-const donationOfferRepository = require('../repositories/donationOfferRepository');
-const { toPublicRequest } = require('../dtos/donationRequestDto');
-const { toPublicOffer } = require('../dtos/donationOfferDto');
-const AppError = require('../utils/AppError');
-const { uploadToCloudinary, deleteFromCloudinary } = require('../utils/uploadToCloudinary');
-const { validateImageFile } = require('../utils/imageValidation');
-const notifyUser = require('../utils/notifyUser');
-const {
-  isPhoneVerificationEnabled,
-} = require('../middlewares/phoneVerificationFeature');
+import mongoose from 'mongoose';
+import SystemSettings from '../models/SystemSettings.js';
+import User from '../models/User.js';
+import Item from '../models/Item.js';
+import SafeHub from '../models/SafeHub.js';
+import DonationRequest from '../models/DonationRequest.js';
+import DonationOffer from '../models/DonationOffer.js';
+import donationRequestRepository from '../repositories/donationRequestRepository.js';
+import donationOfferRepository from '../repositories/donationOfferRepository.js';
+import { toPublicRequest } from '../dtos/donationRequestDto.js';
+import { toPublicOffer } from '../dtos/donationOfferDto.js';
+import AppError from '../utils/AppError.js';
+import { uploadToCloudinary, deleteFromCloudinary } from '../utils/uploadToCloudinary.js';
+import { validateImageFile } from '../utils/imageValidation.js';
+import notifyUser from '../utils/notifyUser.js';
+import { isPhoneVerificationEnabled } from '../middlewares/phoneVerificationFeature.js';
 import type { ClientSession } from 'mongoose';
-import type { EntityId, UploadedFile } from './serviceTypes';
-import { getErrorDetails, getErrorMessage, hasErrorCode } from './serviceTypes';
+import type { EntityId, UploadedFile } from './serviceTypes.js';
+import { getErrorDetails, getErrorMessage, hasErrorCode } from './serviceTypes.js';
 
 const DEFAULT_REQUEST_LIMIT = 1;
 const DEFAULT_REQUEST_EXPIRY_DAYS = 30;
@@ -74,14 +71,14 @@ type OfferLike = {
   createdAt?: string | Date;
   [key: string]: unknown;
 };
-type RequestCreateInput = {
+export type RequestCreateInput = {
   title: string;
   description?: string;
   category: string;
   location: string;
   urgency?: 'low' | 'medium' | 'high';
 };
-type OfferInput = {
+export type OfferInput = {
   safeHub?: EntityId;
   condition: string;
   description?: string;
@@ -153,9 +150,11 @@ const cleanupOfferImages = async (offers: OfferLike[], label: string) => {
   if (!images.length) return;
 
   const results = await Promise.allSettled(images.map(async (offer) => {
-    await deleteFromCloudinary(offer.cloudinaryId);
+    const cloudinaryId = offer.cloudinaryId;
+    if (!cloudinaryId) return;
+    await deleteFromCloudinary(cloudinaryId);
     await DonationOffer.updateOne(
-      { _id: offer._id, cloudinaryId: offer.cloudinaryId },
+      { _id: offer._id, cloudinaryId },
       { $set: { imageUrl: null, cloudinaryId: null } }
     );
   }));
@@ -278,7 +277,7 @@ const expireSingleRequest = async (requestId: EntityId, now = new Date()) => {
   return request;
 };
 
-exports.createRequestLogic = async (body: RequestCreateInput, userId: EntityId) => {
+export const createRequestLogic = async (body: RequestCreateInput, userId: EntityId) => {
   const [user, settings] = await Promise.all([
     User.findById(userId).select('trustLevel isVerified').lean(),
     SystemSettings.getCached(),
@@ -339,11 +338,11 @@ exports.createRequestLogic = async (body: RequestCreateInput, userId: EntityId) 
 
   return {
     msg: 'تم نشر طلبك بنجاح 🎉',
-    request: toEffectivePublicRequest(request),
+    request: toEffectivePublicRequest(request as unknown as RequestLike),
   };
 };
 
-exports.getDonationRequestsLogic = async (
+export const getDonationRequestsLogic = async (
   query: DonationRequestQuery,
   userId: EntityId | null = null
 ) => {
@@ -402,7 +401,7 @@ exports.getDonationRequestsLogic = async (
   };
 };
 
-exports.cancelRequestLogic = async (requestId: EntityId, userId: EntityId) => {
+export const cancelRequestLogic = async (requestId: EntityId, userId: EntityId) => {
   const session = await mongoose.startSession();
   let request;
   let cancelledOffers = [];
@@ -469,7 +468,7 @@ exports.cancelRequestLogic = async (requestId: EntityId, userId: EntityId) => {
   return { msg: 'تم إلغاء الطلب ✅' };
 };
 
-exports.getMyRequestsLogic = async (userId: EntityId) => {
+export const getMyRequestsLogic = async (userId: EntityId) => {
   const currentMonth = new Date().toISOString().slice(0, 7);
   const [requests, settings, usedThisMonth] = await Promise.all([
     donationRequestRepository.findUserRequests(userId),
@@ -490,7 +489,7 @@ exports.getMyRequestsLogic = async (userId: EntityId) => {
   };
 };
 
-exports.submitOfferLogic = async (
+export const submitOfferLogic = async (
   requestId: EntityId,
   donorId: EntityId,
   body: OfferInput,
@@ -625,7 +624,7 @@ exports.submitOfferLogic = async (
   }
 };
 
-exports.getOffersLogic = async (requestId: EntityId, userId: EntityId) => {
+export const getOffersLogic = async (requestId: EntityId, userId: EntityId) => {
   const request = await DonationRequest.findById(requestId)
     .select('requester status expiresAt')
     .lean();
@@ -647,7 +646,7 @@ exports.getOffersLogic = async (requestId: EntityId, userId: EntityId) => {
   return { offers: offers.map(toPublicOffer) };
 };
 
-exports.acceptOfferLogic = async (
+export const acceptOfferLogic = async (
   requestId: EntityId,
   offerId: EntityId,
   userId: EntityId
@@ -822,7 +821,7 @@ exports.acceptOfferLogic = async (
           offerId: offer._id.toString(),
         },
       }),
-      notifyRejectedOffers(rejectedOffers, request, 'another_offer'),
+      notifyRejectedOffers(rejectedOffers, request as unknown as RequestLike, 'another_offer'),
     ]);
   });
 
@@ -832,7 +831,7 @@ exports.acceptOfferLogic = async (
   };
 };
 
-exports.rejectOfferLogic = async (
+export const rejectOfferLogic = async (
   requestId: EntityId,
   offerId: EntityId,
   userId: EntityId
@@ -889,7 +888,7 @@ exports.rejectOfferLogic = async (
   return { msg: 'تم رفض العرض' };
 };
 
-exports.withdrawOfferLogic = async (
+export const withdrawOfferLogic = async (
   requestId: EntityId,
   offerId: EntityId,
   donorId: EntityId
@@ -945,7 +944,7 @@ exports.withdrawOfferLogic = async (
   return { msg: 'تم سحب العرض بنجاح' };
 };
 
-exports.getRequestByIdLogic = async (
+export const getRequestByIdLogic = async (
   requestId: EntityId,
   viewerId: EntityId | null = null,
   viewerRole = 'user'
@@ -957,6 +956,7 @@ exports.getRequestByIdLogic = async (
   if (isPastExpiry(request)) {
     await expireSingleRequest(requestId);
     request = await donationRequestRepository.findRequestByIdWithItem(requestId);
+    if (!request) throw new AppError('الطلب غير موجود', 404, 'REQUEST_NOT_FOUND');
   }
 
   const isOwner = idsEqual(request.requester, viewerId);
@@ -969,7 +969,7 @@ exports.getRequestByIdLogic = async (
   );
 
   return {
-    ...toEffectivePublicRequest(request, {
+    ...toEffectivePublicRequest(request as unknown as RequestLike, {
       includeFulfilledItem: canViewFulfilledItem,
     }),
     viewerOffer: viewerOffer ? {
@@ -980,13 +980,15 @@ exports.getRequestByIdLogic = async (
   };
 };
 
-exports.expireDonationRequestsLogic = async (
+export const expireDonationRequestsLogic = async (
   now = new Date(),
   options: { requester?: unknown; limit?: number } = {}
 ) => {
   const expiredIds = await donationRequestRepository.findExpiredActiveIds({
     now,
-    requester: options.requester ?? null,
+    requester: typeof options.requester === 'string' || options.requester instanceof mongoose.Types.ObjectId
+      ? options.requester
+      : null,
     limit: Math.min(Math.max(Number(options.limit) || 200, 1), 1000),
   });
 
@@ -999,10 +1001,12 @@ exports.expireDonationRequestsLogic = async (
   return { expiredCount };
 };
 
-exports._private = {
+export const _private = {
   cleanupOfferImages,
   expireSingleRequest,
   isAdminRole,
   isPastExpiry,
   toEffectivePublicRequest,
 };
+
+export default { createRequestLogic, getDonationRequestsLogic, cancelRequestLogic, getMyRequestsLogic, submitOfferLogic, getOffersLogic, acceptOfferLogic, rejectOfferLogic, withdrawOfferLogic, getRequestByIdLogic, expireDonationRequestsLogic, _private };

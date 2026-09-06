@@ -1,26 +1,9 @@
-// controllers/authController.js
-// ✅ FIX [SEC-03]       : SESSION_ACTIVE_OPTIONS.maxAge ديناميكي من env
-// ✅ FIX [FLOW14]       : resetPassword يستقبل token داخل JSON body لا URL
-// ✅ FIX [PERF-CTRL-01] : parsePage مع حد أقصى + حماية من skip سالب
-// ✅ FIX [DUP-CTRL-01]  : parsePage دالة مشتركة تحذف التكرار
-// ✅ FIX [ARCH-CTRL-01] : SESSION_ACTIVE_OPTIONS مستورد من tokenUtils — لا تعريف محلي
-// ✅ FIX [LOGIC-CTRL-01]: phone validation بـ regex قبل تمريره للـ Service
-
-const authService = require('../services/authService');
+import authService from '../services/authService.js';
+import type { LoginInput, RegistrationInput, VerificationInput } from '../services/authService.js';
 import type { Request, Response } from 'express';
-import asyncHandler = require('../utils/asyncHandler');
-
-const {
-  REFRESH_COOKIE_NAME,
-  LEGACY_REFRESH_COOKIE_NAME,
-  REFRESH_COOKIE_OPTIONS,
-  CLEAR_REFRESH_COOKIE_OPTIONS,
-  LEGACY_CLEAR_REFRESH_COOKIE_OPTIONS,
-  SESSION_ACTIVE_OPTIONS,        // ✅ [ARCH-CTRL-01] مستورد من tokenUtils
-  CLEAR_SESSION_ACTIVE_OPTIONS,  // ✅ [ARCH-CTRL-01] مستورد من tokenUtils
-} = require('../utils/tokenUtils');
-
-const { isValidJordanPhone } = require('../utils/phoneUtils');
+import asyncHandler from '../utils/asyncHandler.js';
+import { REFRESH_COOKIE_NAME, LEGACY_REFRESH_COOKIE_NAME, REFRESH_COOKIE_OPTIONS, CLEAR_REFRESH_COOKIE_OPTIONS, LEGACY_CLEAR_REFRESH_COOKIE_OPTIONS, SESSION_ACTIVE_OPTIONS, CLEAR_SESSION_ACTIVE_OPTIONS } from '../utils/tokenUtils.js';
+import { isValidJordanPhone } from '../utils/phoneUtils.js';
 
 // ✅ [PERF-CTRL-01] + [DUP-CTRL-01] دالة مشتركة لتحليل رقم الصفحة بأمان
 // تمنع: page سالب، page=0، page=NaN، page عالٍ جداً
@@ -57,15 +40,13 @@ const readRefreshCookie = (req: Request): string | null => (
   ?? null
 );
 
-// ─── 1. التسجيل ────────────────────────────────────────────────
-exports.register = asyncHandler(async (req, res) => {
-  const result = await authService.registerLogic(req.body);
+export const register = asyncHandler(async (req, res) => {
+  const result = await authService.registerLogic(req.body as RegistrationInput);
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 2. تأكيد الإيميل ─────────────────────────────────────────
-exports.verifyEmail = asyncHandler(async (req, res) => {
-  const result = await authService.verifyEmailLogic(req.body);
+export const verifyEmail = asyncHandler(async (req, res) => {
+  const result = await authService.verifyEmailLogic(req.body as VerificationInput);
 
   if (result.statusCode === 200 && result.refreshToken) {
     setSessionCookies(res, result.refreshToken);
@@ -74,15 +55,13 @@ exports.verifyEmail = asyncHandler(async (req, res) => {
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 2b. إعادة إرسال OTP ──────────────────────────────────────
-exports.resendOtp = asyncHandler(async (req, res) => {
-  const result = await authService.resendOtpLogic({ email: req.body.email });
+export const resendOtp = asyncHandler(async (req, res) => {
+  const result = await authService.resendOtpLogic({ email: String(req.body.email) });
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 3. تسجيل الدخول ──────────────────────────────────────────
-exports.login = asyncHandler(async (req, res) => {
-  const result = await authService.loginLogic(req.body);
+export const login = asyncHandler(async (req, res) => {
+  const result = await authService.loginLogic(req.body as LoginInput);
 
   if (result.statusCode === 200 && result.refreshToken) {
     setSessionCookies(res, result.refreshToken);
@@ -91,45 +70,39 @@ exports.login = asyncHandler(async (req, res) => {
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 4. بروفايل المستخدم الخاص ────────────────────────────────
-exports.getUserProfile = asyncHandler(async (req, res) => {
+export const getUserProfile = asyncHandler(async (req, res) => {
   // ✅ [PERF-CTRL-01] parsePage تمنع skip سالب أو عالٍ جداً
   const page   = parsePage(req.query.page);
   const result = await authService.getMeLogic(req.user!.id, page);
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 5. GET /me ───────────────────────────────────────────────
-exports.getMe = asyncHandler(async (req, res) => {
+export const getMe = asyncHandler(async (req, res) => {
   const result = await authService.getCurrentUserLogic(req.user!.id);
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 6. بروفايل عام ───────────────────────────────────────────
-exports.getPublicProfile = asyncHandler(async (req, res) => {
+export const getPublicProfile = asyncHandler(async (req, res) => {
   // ✅ [PERF-CTRL-01] نفس الحماية على الـ public profile
   const page   = parsePage(req.query.page);
   const result = await authService.getPublicProfileLogic(req.params.id, page);
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 7. نسيت كلمة المرور ──────────────────────────────────────
-exports.forgotPassword = asyncHandler(async (req, res) => {
-  const result = await authService.forgotPasswordLogic({ email: req.body.email });
+export const forgotPassword = asyncHandler(async (req, res) => {
+  const result = await authService.forgotPasswordLogic({ email: String(req.body.email) });
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 8. إعادة تعيين كلمة المرور ───────────────────────────────
-exports.resetPassword = asyncHandler(async (req, res) => {
+export const resetPassword = asyncHandler(async (req, res) => {
   const result = await authService.resetPasswordLogic(
-    req.body.token,
-    req.body.password
+    String(req.body.token),
+    String(req.body.password)
   );
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 9. تجديد الـ Token ───────────────────────────────────────
-exports.refreshToken = asyncHandler(async (req, res) => {
+export const refreshToken = asyncHandler(async (req, res) => {
   const clientIp = req.ip ?? req.socket?.remoteAddress ?? 'unknown';
 
   const result = await authService.refreshLogic(
@@ -148,23 +121,24 @@ exports.refreshToken = asyncHandler(async (req, res) => {
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 10. تسجيل الخروج ─────────────────────────────────────────
-exports.logout = asyncHandler(async (req, res) => {
+export const logout = asyncHandler(async (req, res) => {
   const result = await authService.logoutLogic(req.user!.id);
   clearSessionCookies(res);
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 11. تعديل البروفايل ──────────────────────────────────────
-exports.updateMe = asyncHandler(async (req, res) => {
+export const updateMe = asyncHandler(async (req, res) => {
   const updates: { name?: string; phone?: string } = {};
 
-  if (req.body?.name?.trim()) {
-    updates.name = req.body.name.trim();
+  const rawName = req.body.name;
+  const rawPhone = req.body.phone;
+
+  if (typeof rawName === 'string' && rawName.trim()) {
+    updates.name = rawName.trim();
   }
 
-  if (req.body?.phone?.trim()) {
-    const phone = req.body.phone.trim();
+  if (typeof rawPhone === 'string' && rawPhone.trim()) {
+    const phone = rawPhone.trim();
     // ✅ [LOGIC-CTRL-01] التحقق من صيغة الهاتف الأردني قبل تمريره للـ Service
     // يمنع إدخال أرقام مشوهة أو دولية غير مدعومة تصل إلى DB
     if (!isValidJordanPhone(phone)) {
@@ -193,11 +167,10 @@ exports.updateMe = asyncHandler(async (req, res) => {
   return res.status(result.statusCode).json(result.body);
 });
 
-// ─── 12. تغيير كلمة المرور ────────────────────────────────────
-exports.updatePassword = asyncHandler(async (req, res) => {
+export const updatePassword = asyncHandler(async (req, res) => {
   const result = await authService.updatePasswordLogic(req.user!.id, {
-    currentPassword: req.body.currentPassword,
-    newPassword:     req.body.newPassword,
+    currentPassword: String(req.body.currentPassword),
+    newPassword:     String(req.body.newPassword),
   });
 
   if (result.statusCode === 200) {
@@ -207,8 +180,10 @@ exports.updatePassword = asyncHandler(async (req, res) => {
   return res.status(result.statusCode).json(result.body);
 });
 
-exports._private = {
+export const _private = {
   clearSessionCookies,
   readRefreshCookie,
   setSessionCookies,
 };
+
+export default { register, verifyEmail, resendOtp, login, getUserProfile, getMe, getPublicProfile, forgotPassword, resetPassword, refreshToken, logout, updateMe, updatePassword, _private };

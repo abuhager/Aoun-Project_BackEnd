@@ -12,13 +12,13 @@ process.env.CLOUDINARY_CLOUD_NAME = 'test-cloud';
 process.env.CLOUDINARY_API_KEY = 'test-key';
 process.env.CLOUDINARY_API_SECRET = 'test-secret';
 
-const authService = require('../services/authService');
-const leaderboardService = require('../services/leaderboardService');
-const profileRepository = require('../repositories/profileRepository');
-const userRepository = require('../repositories/userRepository');
-const SystemSettings = require('../models/SystemSettings');
-const User = require('../models/User');
-const validateBody = require('../middlewares/validateBody');
+const authService = require('../services/authService').default;
+const leaderboardService = require('../services/leaderboardService').default;
+const profileRepository = require('../repositories/profileRepository').default;
+const userRepository = require('../repositories/userRepository').default;
+const SystemSettings = require('../models/SystemSettings').default;
+const User = require('../models/User').default;
+const validateBody = require('../middlewares/validateBody').default;
 const { buildGamificationProfile } = require('../utils/gamification');
 
 const runValidation = (schemaName, body) => new Promise((resolve) => {

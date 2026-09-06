@@ -1,53 +1,58 @@
-// controllers/adminController.js
-const adminService = require('../services/adminService');
-import asyncHandler = require('../utils/asyncHandler');
-const AppError     = require('../utils/AppError');
-const adminDto     = require('../dtos/adminDto');
+import adminService from '../services/adminService.js';
+import type { AdminRole } from '../services/adminService.js';
+import asyncHandler from '../utils/asyncHandler.js';
+import AppError from '../utils/AppError.js';
+import adminDto from '../dtos/adminDto.js';
 
 // ─── مساعد: تنظيف النصوص ──────────────────────────────────────
 const cleanString = (str: unknown) => (typeof str === 'string' ? str.trim() : '');
+const currentAdminRole = (role: Express.AuthenticatedUser['role']): AdminRole => {
+  if (role === 'admin' || role === 'super_admin') return role;
+  throw new AppError('صلاحية الإدارة مطلوبة', 403, 'ADMIN_REQUIRED');
+};
 
-// ─── Users ────────────────────────────────────────────────────
-exports.promoteUser = asyncHandler(async (req, res) => {
+export const promoteUser = asyncHandler(async (req, res) => {
   const reason    = cleanString(req.body.reason);
   const adminNote = cleanString(req.body.adminNote);
 
   const user = await adminService.promoteToLevel2(
     req.params.id,
     req.user!.id,
-    req.user!.role,
+    currentAdminRole(req.user!.role),
     reason,
     adminNote
   );
+  if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
   return res.status(200).json({
     msg: `تمت ترقية ${user.name} ✅`,
     user: adminDto.toAdminUser(user),
   });
 });
 
-exports.demoteUser = asyncHandler(async (req, res) => {
+export const demoteUser = asyncHandler(async (req, res) => {
   const reason    = cleanString(req.body.reason);
   const adminNote = cleanString(req.body.adminNote);
 
   const user = await adminService.demoteToLevel1(
     req.params.id,
     req.user!.id,
-    req.user!.role,
+    currentAdminRole(req.user!.role),
     reason,
     adminNote
   );
+  if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
   return res.status(200).json({
     msg: `تم خفض ${user.name}`,
     user: adminDto.toAdminUser(user),
   });
 });
 
-exports.listUsers = asyncHandler(async (req, res) => {
+export const listUsers = asyncHandler(async (req, res) => {
   const result = await adminService.listUsers(req.query);
   res.json(result);
 });
 
-exports.banUser = asyncHandler(async (req, res) => {
+export const banUser = asyncHandler(async (req, res) => {
   const targetUserId = req.params.id;
 
   const reason    = cleanString(req.body.reason);
@@ -56,7 +61,7 @@ exports.banUser = asyncHandler(async (req, res) => {
   const user = await adminService.banUser(
     targetUserId,
     req.user!.id,
-    req.user!.role,
+    currentAdminRole(req.user!.role),
     reason,
     adminNote
   );
@@ -67,12 +72,12 @@ exports.banUser = asyncHandler(async (req, res) => {
   });
 });
 
-exports.unbanUser = asyncHandler(async (req, res) => {
+export const unbanUser = asyncHandler(async (req, res) => {
   const adminNote = cleanString(req.body?.adminNote);
   const user = await adminService.unbanUser(
     req.params.id,
     req.user!.id,
-    req.user!.role,
+    currentAdminRole(req.user!.role),
     adminNote
   );
   res.json({
@@ -81,20 +86,18 @@ exports.unbanUser = asyncHandler(async (req, res) => {
   });
 });
 
-// ─── Items ────────────────────────────────────────────────────
-exports.listItems = asyncHandler(async (req, res) => {
+export const listItems = asyncHandler(async (req, res) => {
   const result = await adminService.listItems(req.query);
   res.json(result);
 });
 
-exports.deleteItem = asyncHandler(async (req, res) => {
+export const deleteItem = asyncHandler(async (req, res) => {
   const adminNote = cleanString(req.body.adminNote);
   await adminService.deleteItem(req.params.id, req.user!.id, adminNote);
   res.json({ msg: 'تم حذف الغرض ✅' });
 });
 
-// ─── Reports ──────────────────────────────────────────────────
-exports.listReports = asyncHandler(async (req, res) => {
+export const listReports = asyncHandler(async (req, res) => {
   const { page = 1 } = req.query;
   const status = typeof req.query.status === 'string' ? req.query.status : '';
 
@@ -103,11 +106,14 @@ exports.listReports = asyncHandler(async (req, res) => {
     throw new AppError('فلتر حالة البلاغ غير صالح', 422, 'INVALID_REPORT_STATUS');
   }
 
-  const result = await adminService.listReports({ page, status: status || null });
+  const result = await adminService.listReports({
+    page: Number(page) || 1,
+    status: status || null,
+  });
   res.json(result);
 });
 
-exports.resolveReport = asyncHandler(async (req, res) => {
+export const resolveReport = asyncHandler(async (req, res) => {
   // ✅ FIX BUG-01: قراءة "status" بدلاً من "action" ليطابق Frontend payload
   const status    = cleanString(req.body.status);
   const adminNote = cleanString(req.body.adminNote);
@@ -119,7 +125,7 @@ exports.resolveReport = asyncHandler(async (req, res) => {
   const report = await adminService.resolveReport(
     req.params.id,
     req.user!.id,
-    req.user!.role,
+    currentAdminRole(req.user!.role),
     status,
     adminNote
   );
@@ -127,14 +133,14 @@ exports.resolveReport = asyncHandler(async (req, res) => {
   res.json({ msg: 'تم معالجة البلاغ ✅', report });
 });
 
-// ─── Audit Log ────────────────────────────────────────────────
-exports.listAuditLogs = asyncHandler(async (req, res) => {
+export const listAuditLogs = asyncHandler(async (req, res) => {
   const result = await adminService.listAuditLogs(req.query);
   res.json(result);
 });
 
-// ─── Stats ────────────────────────────────────────────────────
-exports.getStats = asyncHandler(async (_req, res) => {
+export const getStats = asyncHandler(async (_req, res) => {
   const stats = await adminService.getStats();
   res.json(stats);
 });
+
+export default { promoteUser, demoteUser, listUsers, banUser, unbanUser, listItems, deleteItem, listReports, resolveReport, listAuditLogs, getStats };

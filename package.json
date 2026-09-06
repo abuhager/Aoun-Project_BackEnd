@@ -18,7 +18,7 @@
   "keywords": [],
   "author": "Adham Abu Hager",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "dependencies": {
     "axios": "^1.16.1",
     "bcryptjs": "^3.0.3",

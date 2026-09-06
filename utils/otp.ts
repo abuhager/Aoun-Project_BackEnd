@@ -64,4 +64,5 @@ const otpUtils = {
   verifyOtp,
 };
 
-export = otpUtils;
+export { generateOtp, getOtpPepper, hashOtp, legacyHashOtp, safeHexEqual, verifyOtp };
+export default otpUtils;

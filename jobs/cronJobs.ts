@@ -1,24 +1,16 @@
-// jobs/cronJobs.js
-// ✅ DC-08 FIX (Flow10): يوم تصفير الكوتا ديناميكي من settings.quotaResetDayOfMonth
-// ✅ DC-09 FIX (Flow10): مهلة انتهاء الحجز من settings.bookingExpiryHours
-// ✅ NJ-18 FIX (Flow11): إضافة Cron لإرسال إشعار تذكير قبل انتهاء الحجز بساعة
-// ✅ NJ-19 FIX (Flow11): تسجيل سجل مركزي لحالة كل Cron Job
-// ✅ NJ-20 FIX (Flow11): processExpiredItem تُرسل إشعار notifyUser للمستخدم المحظوظ
-
-const cron: typeof import('node-cron') = require('node-cron');
+import cron from 'node-cron';
 import type { ScheduledTask } from 'node-cron';
-const User       = require('../models/User');
-const Item       = require('../models/Item');
-const SystemSettings  = require('../models/SystemSettings');
-const { settingsEvents } = require('../models/SystemSettings');
-const { fireSendEmail }  = require('../utils/sendEmail');
-const { escapeHtml }     = require('../services/emailService');
-const notifyUser         = require('../utils/notifyUser');  // ✅ NJ-20
-const { SOCKET_EVENTS }  = require('../socket/contracts');
-const { emitToUser }     = require('../socket/emitter');
-const {
-  expireDonationRequestsLogic,
-} = require('../services/donationRequestService');
+import User from '../models/User.js';
+import Item from '../models/Item.js';
+import SystemSettings from '../models/SystemSettings.js';
+import { settingsEvents } from '../models/SystemSettings.js';
+import { fireSendEmail } from '../utils/sendEmail.js';
+import { escapeHtml } from '../services/emailService.js';
+import notifyUser from '../utils/notifyUser.js';
+import { SOCKET_EVENTS } from '../socket/contracts.js';
+import { emitToUser } from '../socket/emitter.js';
+import { expireDonationRequestsLogic } from '../services/donationRequestService.js';
+import type { Types } from 'mongoose';
 
 // ══════════════════════════════════════════════════════════════
 // ✅ NJ-19: سجل حالة Cron Jobs — يُساعد في Debugging
@@ -38,12 +30,12 @@ type CronStatusEntry = {
   lastError?: string | null;
 };
 type CronStatusSnapshot = Record<string, CronStatusEntry & { scheduled: boolean }>;
-type IdLike = { toString(): string };
+type IdLike = string | Types.ObjectId;
 type WaitlistEntry = { user?: IdLike | null };
 type BookingItem = {
   _id: IdLike;
   donor: IdLike;
-  bookedBy: IdLike;
+  bookedBy?: IdLike | null;
   title: string;
   linkedRequestId?: unknown;
   bookedAt?: Date;
@@ -173,7 +165,7 @@ async function findEligibleWaitlistCandidate(
   const skippedUserIds: IdLike[] = [];
   const excludedUserIds = new Set(
     [item.donor, item.bookedBy, ...(item.cancelledBy ?? [])]
-      .filter(Boolean)
+      .filter((id): id is IdLike => id != null)
       .map((id) => id.toString())
   );
 
@@ -441,13 +433,13 @@ const initCronJobs = (): Promise<CronStatusSnapshot> => {
             .sort({ bookedAt: 1 })
             .limit(MAX_BOOKING_JOB_BATCH)
             .select('_id bookedBy waitlist cancelledBy donor title linkedRequestId')
-            .lean();
+            .lean() as unknown as BookingItem[];
 
           if (!expiredItems.length) return;
 
           console.log(`[Cron] 🔍 حجوزات منتهية: ${expiredItems.length}`);
           const results = await Promise.allSettled(
-            expiredItems.map((item: BookingItem) => processExpiredItem(item, settings))
+            expiredItems.map((item) => processExpiredItem(item, settings))
           );
           const failed = results.filter(
             (result) => result.status === 'rejected'
@@ -507,7 +499,10 @@ const initCronJobs = (): Promise<CronStatusSnapshot> => {
             .sort({ bookedAt: 1 })
             .limit(MAX_BOOKING_JOB_BATCH)
             .populate('bookedBy', 'name email')
-            .lean();
+            .lean() as unknown as Array<BookingItem & {
+              bookedBy: WaitlistCandidate;
+              bookedAt: Date;
+            }>;
 
           if (!soonExpiring.length) return;
 
@@ -516,19 +511,16 @@ const initCronJobs = (): Promise<CronStatusSnapshot> => {
           );
 
           const reminderResults = await Promise.allSettled(
-            soonExpiring.map(async (item: BookingItem & {
-              bookedBy: WaitlistCandidate;
-              bookedAt: Date;
-            }) => {
+            soonExpiring.map(async (item) => {
               if (!item.bookedBy?._id) return;
 
               const bookingFilter = {
                 _id: item._id,
-                status: 'محجوز',
+                status: 'محجوز' as const,
                 bookedBy: item.bookedBy._id,
                 bookedAt: item.bookedAt,
                 linkedRequestId: null,
-                reminderSent: { $ne: true },
+                reminderSent: { $ne: true as const },
               };
               const claim = await Item.updateOne(
                 bookingFilter,
@@ -546,7 +538,7 @@ const initCronJobs = (): Promise<CronStatusSnapshot> => {
                 });
               } catch (error: unknown) {
                 await Item.updateOne(
-                  { ...bookingFilter, reminderSent: true },
+                  { ...bookingFilter, reminderSent: true as const },
                   { $set: { reminderSent: false } }
                 );
                 console.warn('[Cron] فشل إشعار التذكير:', getErrorMessage(error));
@@ -595,7 +587,8 @@ const initCronJobs = (): Promise<CronStatusSnapshot> => {
   return initializationPromise;
 };
 
-module.exports = {
+export { getCronStatus, initCronJobs, runSafe, stopCronJobs };
+export default {
   getCronStatus,
   initCronJobs,
   runSafe,

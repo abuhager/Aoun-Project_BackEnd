@@ -1,3 +1,5 @@
+import { toId, toPlainRecord } from './dtoTypes.js';
+
 const DEFAULT_REPORT_REASONS = Object.freeze([
   'لم يُسلّم الغرض',
   'معلومات مضللة',
@@ -5,12 +7,10 @@ const DEFAULT_REPORT_REASONS = Object.freeze([
   'غرض مختلف عن الوصف',
   'أخرى',
 ]);
-import { toId, toPlainRecord } from './dtoTypes';
 
-exports.DEFAULT_REPORT_REASONS = DEFAULT_REPORT_REASONS;
+export { DEFAULT_REPORT_REASONS };
 
-// ✅ BUG-01: إضافة resolvedBy و appealDeadline لـ toReportResponse
-exports.toReportResponse = (rawReport: unknown) => {
+export const toReportResponse = (rawReport: unknown) => {
   const report = toPlainRecord(rawReport);
   if (!report) return null;
 
@@ -32,3 +32,5 @@ exports.toReportResponse = (rawReport: unknown) => {
   updatedAt:      report.updatedAt,
   });
 };
+
+export default { DEFAULT_REPORT_REASONS, toReportResponse };

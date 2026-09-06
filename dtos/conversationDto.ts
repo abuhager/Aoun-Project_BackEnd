@@ -1,6 +1,6 @@
-import { asRecord, toId, toPlainRecord } from './dtoTypes';
+import { asRecord, toId, toPlainRecord } from './dtoTypes.js';
 
-exports.toConversationListItem = (rawConversation: unknown, unreadCount = 0) => {
+export const toConversationListItem = (rawConversation: unknown, unreadCount = 0) => {
   const conversation = toPlainRecord(rawConversation);
   if (!conversation) return null;
 
@@ -52,7 +52,7 @@ exports.toConversationListItem = (rawConversation: unknown, unreadCount = 0) => 
   };
 };
 
-exports.toMessageDto = (rawMessage: unknown, conversationId: unknown) => {
+export const toMessageDto = (rawMessage: unknown, conversationId: unknown) => {
   const message = toPlainRecord(rawMessage);
   if (!message) return null;
   const sender = asRecord(message.sender);
@@ -71,8 +71,10 @@ exports.toMessageDto = (rawMessage: unknown, conversationId: unknown) => {
   });
 };
 
-exports.toMessagesResponse = (messages: unknown, conversationId: unknown) => ({
+export const toMessagesResponse = (messages: unknown, conversationId: unknown) => ({
   messages: Array.isArray(messages)
-    ? messages.map((message: unknown) => exports.toMessageDto(message, conversationId))
+    ? messages.map((message: unknown) => toMessageDto(message, conversationId))
     : [],
 });
+
+export default { toConversationListItem, toMessageDto, toMessagesResponse };

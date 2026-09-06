@@ -1,11 +1,13 @@
-const Notification = require('../models/Notification');
-const User = require('../models/User');
-const AppError = require('./AppError');
-const SystemSettings = require('../models/SystemSettings');
-const { toNotificationDto } = require('../dtos/notificationDto');
-const { escapeHtml, getClientOrigin } = require('../services/emailService');
-const { SOCKET_EVENTS } = require('../socket/contracts');
-const { emitToUser } = require('../socket/emitter');
+import Notification from '../models/Notification.js';
+import User from '../models/User.js';
+import AppError from './AppError.js';
+import SystemSettings from '../models/SystemSettings.js';
+import { toNotificationDto } from '../dtos/notificationDto.js';
+import { escapeHtml, getClientOrigin } from '../services/emailService.js';
+import { SOCKET_EVENTS } from '../socket/contracts.js';
+import { emitToUser } from '../socket/emitter.js';
+import mongoose from 'mongoose';
+import sendEmail from './sendEmail.js';
 
 type NotificationPayload = {
   type?: string;
@@ -125,11 +127,22 @@ const toAbsoluteClientUrl = (actionUrl: string | null): string | null => {
   }
 };
 
+const normalizeEntityId = (value: unknown, field: string): string | null => {
+  if (value == null || value === '') return null;
+  const candidate = typeof value === 'object' && value !== null && '_id' in value
+    ? (value as NotificationTarget)._id
+    : value;
+  if (!mongoose.isObjectIdOrHexString(candidate)) {
+    throw new AppError(`${field} غير صالح`, 400, 'INVALID_NOTIFICATION_REFERENCE');
+  }
+  return String(candidate);
+};
+
 async function notifyUser(userId: unknown, payload: NotificationPayload = {}) {
   const target = userId && typeof userId === 'object'
     ? userId as NotificationTarget
     : null;
-  const actualUserId = target?._id ?? userId;
+  const actualUserId = normalizeEntityId(target?._id ?? userId, 'userId');
 
   if (!actualUserId) {
     throw new AppError('userId مطلوب لإرسال الإشعار', 400, 'USER_ID_REQUIRED');
@@ -157,8 +170,8 @@ async function notifyUser(userId: unknown, payload: NotificationPayload = {}) {
     type: payload.type,
     title,
     body,
-    itemId: payload.itemId ?? null,
-    conversationId: payload.conversationId ?? null,
+    itemId: normalizeEntityId(payload.itemId, 'itemId'),
+    conversationId: normalizeEntityId(payload.conversationId, 'conversationId'),
     actionUrl,
     metadata,
   });
@@ -197,9 +210,7 @@ async function notifyUser(userId: unknown, payload: NotificationPayload = {}) {
         const safeActionUrl = absoluteActionUrl
           ? escapeHtml(absoluteActionUrl)
           : null;
-        const { fireSendEmail } = require('./sendEmail');
-
-        fireSendEmail({
+        sendEmail.fireSendEmail({
           email: resolvedEmail,
           subject: title,
           message: `
@@ -247,4 +258,4 @@ notifyUser.CRITICAL_TYPES = CRITICAL_NOTIFICATION_TYPES;
 notifyUser.normalizeActionUrl = normalizeActionUrl;
 notifyUser.normalizeMetadata = normalizeMetadata;
 
-module.exports = notifyUser;
+export default notifyUser;

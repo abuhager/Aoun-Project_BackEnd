@@ -19,7 +19,7 @@ const { verifySocketToken } = require('../socket/auth');
 const { generateAccessToken } = require('../utils/tokenUtils');
 const { buildMongoOptions } = require('../config/db');
 const { indexDefinitionsEquivalent } = require('../utils/ensureIndexes');
-const app = require('../app');
+const app = require('../app').default;
 
 let server;
 let baseUrl;

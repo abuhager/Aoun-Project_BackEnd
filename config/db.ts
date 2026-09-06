@@ -1,6 +1,6 @@
-const mongoose = require('mongoose');
-
-const { parsePositiveInteger } = require('./env');
+import mongoose from 'mongoose';
+import { parsePositiveInteger } from './env.js';
+import ensureIndexes from '../utils/ensureIndexes.js';
 
 const buildMongoOptions = () => {
   const isProduction = process.env.NODE_ENV === 'production';
@@ -25,8 +25,10 @@ const buildMongoOptions = () => {
 
 const connectDB = async () => {
   const isProduction = process.env.NODE_ENV === 'production';
+  const mongoUri = process.env.MONGO_URI;
+  if (!mongoUri) throw new Error('MONGO_URI غير مضبوط');
 
-  await mongoose.connect(process.env.MONGO_URI, buildMongoOptions());
+  await mongoose.connect(mongoUri, buildMongoOptions());
 
   console.log('[MongoDB] متصل بنجاح');
 
@@ -35,7 +37,6 @@ const connectDB = async () => {
 
   if (shouldSyncIndexes) {
     try {
-      const ensureIndexes = require('../utils/ensureIndexes');
       await ensureIndexes();
       console.log('[MongoDB] تم التحقق من الفهارس');
     } catch (error) {
@@ -55,5 +56,6 @@ const connectDB = async () => {
   });
 };
 
-module.exports = connectDB;
-module.exports.buildMongoOptions = buildMongoOptions;
+export default connectDB;
+
+export { buildMongoOptions };

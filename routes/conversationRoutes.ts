@@ -1,8 +1,8 @@
-const express = require("express");
-const auth = require("../middlewares/auth");
-const controller = require("../controllers/conversationController");
-const validateBody = require('../middlewares/validateBody');
-const validateObjectId = require('../middlewares/validateObjectId');
+import express from "express";
+import auth from "../middlewares/auth.js";
+import controller from "../controllers/conversationController.js";
+import validateBody from '../middlewares/validateBody.js';
+import validateObjectId from '../middlewares/validateObjectId.js';
 
 const router = express.Router();
 
@@ -27,4 +27,4 @@ router
   .all(validateObjectId('conversationId'))
   .put(controller.markConversationRead);
 
-module.exports = router;
+export default router;

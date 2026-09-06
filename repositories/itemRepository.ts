@@ -1,52 +1,45 @@
-// repositories/itemRepository.js — ✅ PATCHED [ARCH-02]
-
-const Item   = require('../models/Item');
-const Report = require('../models/Report');
+import Item from '../models/Item.js';
+import Report from '../models/Report.js';
 import type {
   DeletableDocument,
   EntityId,
   RepositoryRecord,
-} from './repositoryTypes';
+} from './repositoryTypes.js';
 
 // ✅ ARCH-02: projection واحدة مُعرَّفة هنا فقط
 const ITEM_DETAILS_PROJECTION = '-__v';
 
-// ─── جلب غرض للقراءة العامة (تحديث ARCH-02) ───────────────────
-exports.findItemDetails = (itemId: EntityId) =>
+export const findItemDetails = (itemId: EntityId) =>
   Item.findById(itemId)
     .populate('donor',      'name avatar phone trustScore isVerifiedStudent trustLevel')
     .populate('safeHub',    'name address city workingHours coordinates') // تم إضافة coordinates
     .populate('bookedBy',   'name avatar phone email')
     .select(ITEM_DETAILS_PROJECTION);
 
-// ─── دوال إضافية من [ARCH-02] ───────────────────────────────
-exports.findByIdLean = (itemId: EntityId) =>
+export const findByIdLean = (itemId: EntityId) =>
   Item.findById(itemId).lean();
 
-exports.countActiveByDonor = (donorId: EntityId) =>
+export const countActiveByDonor = (donorId: EntityId) =>
   Item.countDocuments({ donor: donorId, status: { $in: ['متاح', 'محجوز'] } });
 
-exports.countActiveByHub = (hubId: EntityId) =>
+export const countActiveByHub = (hubId: EntityId) =>
   Item.countDocuments({
     safeHub: hubId,
     status: { $in: ['متاح', 'محجوز'] },
   });
 
-exports.countActiveBookingsByUser = (userId: EntityId) =>
+export const countActiveBookingsByUser = (userId: EntityId) =>
   Item.countDocuments({ bookedBy: userId, status: 'محجوز' });
 
-// ─── جلب غرض للعمليات (حجز/إلغاء/تسليم) ─────────────────────
-exports.findItemForAction = (itemId: EntityId) =>
+export const findItemForAction = (itemId: EntityId) =>
   Item.findById(itemId)
     .populate('safeHub', 'name address city workingHours');
 
-// ─── جلب غرض للتعديل ─────────────────────────────────────────
-exports.findItemForUpdate = (itemId: EntityId, userId: EntityId) =>
+export const findItemForUpdate = (itemId: EntityId, userId: EntityId) =>
   Item.findOne({ _id: itemId, donor: userId })
     .populate('safeHub', 'name address city workingHours');
 
-// ─── حذف غرض ─────────────────────────────────────────────────
-exports.deleteItemById = (item: DeletableDocument) => item.deleteOne();
+export const deleteItemById = (item: DeletableDocument) => item.deleteOne();
 
 // ─── helper: يربط reportId بكل item ──────────────────────────
 async function attachReportIds(
@@ -83,8 +76,7 @@ async function attachReportIds(
   }));
 }
 
-// ─── تبرعاتي كمتبرع ──────────────────────────────────────────
-exports.findDonationsByUser = async (userId: EntityId) => {
+export const findDonationsByUser = async (userId: EntityId) => {
   const items = await Item.find({ donor: userId })
     .populate('bookedBy', 'name avatar phone email trustScore isVerifiedStudent')
     .populate('safeHub',  'name city')
@@ -95,8 +87,7 @@ exports.findDonationsByUser = async (userId: EntityId) => {
   return attachReportIds(items, userId);
 };
 
-// ─── طلبات الاستلام ───────────────────────────────────────────
-exports.findReceivedByUser = async (userId: EntityId) => {
+export const findReceivedByUser = async (userId: EntityId) => {
   const items = await Item.find({ bookedBy: userId })
     .populate('donor',   'name avatar phone trustScore isVerifiedStudent')
     .populate('safeHub', 'name address city workingHours')
@@ -106,3 +97,5 @@ exports.findReceivedByUser = async (userId: EntityId) => {
   // userId كـ filter — البلاغ على المستلم تحديداً
   return attachReportIds(items, userId);
 };
+
+export default { findItemDetails, findByIdLean, countActiveByDonor, countActiveByHub, countActiveBookingsByUser, findItemForAction, findItemForUpdate, deleteItemById, findDonationsByUser, findReceivedByUser };

@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const donationOfferSchema = new mongoose.Schema(
   {
@@ -42,6 +42,5 @@ const donationOfferSchema = new mongoose.Schema(
     },
   },
   { timestamps: true, autoIndex: false }
-);
-
-module.exports = mongoose.model('DonationOffer', donationOfferSchema);
+);const DonationOffer = mongoose.model('DonationOffer', donationOfferSchema);
+export default DonationOffer;

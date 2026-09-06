@@ -1,7 +1,6 @@
-// services/leaderboardService.js
-const userRepository = require('../repositories/userRepository');
-const { buildGamificationProfile } = require('../utils/gamification');
-import type { EntityId } from './serviceTypes';
+import userRepository from '../repositories/userRepository.js';
+import { buildGamificationProfile } from '../utils/gamification.js';
+import type { EntityId } from './serviceTypes.js';
 
 type LeaderboardUser = {
   _id: EntityId;
@@ -13,7 +12,7 @@ type LeaderboardUser = {
 
 const LEADERBOARD_LIMIT = 20;
 
-exports.getLeaderboard = async () => {
+export const getLeaderboard = async () => {
   const users = await userRepository.findLeaderboardUsers(LEADERBOARD_LIMIT);
 
   return users.map((u: LeaderboardUser, index: number) => ({
@@ -25,7 +24,7 @@ exports.getLeaderboard = async () => {
   }));
 };
 
-exports.getUserRank = async (userId: EntityId) => {
+export const getUserRank = async (userId: EntityId) => {
   const user = await userRepository.findLeaderboardUser(userId);
 
   if (!user) {
@@ -43,3 +42,5 @@ exports.getUserRank = async (userId: EntityId) => {
     ...buildGamificationProfile(user.trustScore, user.totalDonations),
   };
 };
+
+export default { getLeaderboard, getUserRank };

@@ -1,6 +1,4 @@
-// models/Rating.js
-// ✅ Phase 4: رفع التقييم لـ 10 نقاط + حماية من التقييم قبل الاستلام
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const ratingSchema = new mongoose.Schema({
   item:     { type: mongoose.Schema.Types.ObjectId, ref: 'Item', required: true },
@@ -17,6 +15,5 @@ const ratingSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 // ✅ تقييم واحد فقط لكل غرض — لا تكرار
-ratingSchema.index({ item: 1, rater: 1 }, { unique: true });
-
-module.exports = mongoose.model('Rating', ratingSchema);
+ratingSchema.index({ item: 1, rater: 1 }, { unique: true });const Rating = mongoose.model('Rating', ratingSchema);
+export default Rating;

@@ -56,4 +56,11 @@ const phoneUtils = {
   normalizeJordanPhone,
 };
 
-export = phoneUtils;
+export {
+  GENERAL_PHONE_REGEX,
+  JORDAN_PHONE_REGEX,
+  isValidGeneralPhone,
+  isValidJordanPhone,
+  normalizeJordanPhone,
+};
+export default phoneUtils;

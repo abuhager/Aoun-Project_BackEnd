@@ -14,4 +14,4 @@ const escapeRegex = (str: unknown, maxLen = 100): string => {
     .replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // هرّب كل أحرف RegExp الخاصة
 };
 
-export = escapeRegex;
+export default escapeRegex;

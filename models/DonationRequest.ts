@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const donationRequestSchema = new mongoose.Schema({
   requester: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -27,6 +27,5 @@ const donationRequestSchema = new mongoose.Schema({
 
 donationRequestSchema.index({ requester: 1, month: 1 });
 donationRequestSchema.index({ status: 1, expiresAt: 1 });
-donationRequestSchema.index({ category: 1, status: 1, createdAt: -1 });
-
-module.exports = mongoose.model('DonationRequest', donationRequestSchema);
+donationRequestSchema.index({ category: 1, status: 1, createdAt: -1 });const DonationRequest = mongoose.model('DonationRequest', donationRequestSchema);
+export default DonationRequest;

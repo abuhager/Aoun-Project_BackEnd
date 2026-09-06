@@ -1,18 +1,9 @@
-// repositories/userRepository.js
-// ✅ FIX [DUP-PROF-02]  : phone + phoneVerified في findById
-// ✅ FIX [PERF-PROF-02] : findPublicProfile تُعيد lean() مباشرة
-// ✅ FIX [SEC-REPO-01]  : isFrozen أُضيف لـ findById — بدونه buildSafeUser يُرجع undefined
-// ✅ FIX [SEC-REPO-02]  : findByIdWithRefreshToken تجلب isFrozen+isVerified+isBanned
-//                         لتمكين refreshLogic من فحص حالة الحساب كاملاً
-// ✅ FIX [DUP-REPO-01]  : ثوابت BASE_USER_FIELDS/USER_FIELDS/ADMIN_FIELDS
-//                         تحذف تكرار .select() strings الطويلة
-
-const User = require('../models/User');
+import User from '../models/User.js';
 import type {
   EntityId,
   PersistedDocument,
   RepositoryPayload,
-} from './repositoryTypes';
+} from './repositoryTypes.js';
 
 type LeaderboardUser = {
   _id: EntityId;
@@ -40,9 +31,7 @@ const leaderboardEligibility = () => ({
   ...activeAccountEligibility(),
 });
 
-// ─── قراءة ───────────────────────────────────────────────────
-
-exports.findByEmail = (
+export const findByEmail = (
   email: string,
   options: { selectOtp?: boolean } = {}
 ) => {
@@ -53,28 +42,25 @@ exports.findByEmail = (
   return query;
 };
 
-exports.findByEmailWithPassword = (email: string) =>
+export const findByEmailWithPassword = (email: string) =>
   User.findOne({ email }).select(
     '+password +verificationOtpExpiry +otpAttempts +sessionVersion'
   );
 
-exports.createUser = (data: RepositoryPayload) => User.create(data);
+export const createUser = (data: RepositoryPayload) => User.create(data);
 
-exports.saveUser = (user: PersistedDocument) => user.save();
+export const saveUser = (user: PersistedDocument) => user.save();
 
-// ✅ [SEC-REPO-01] + [DUP-REPO-01]: isFrozen مُضاف عبر BASE_USER_FIELDS
-exports.findById = (id: EntityId) =>
+export const findById = (id: EntityId) =>
   User.findById(id).select(USER_FIELDS);
 
-// ✅ [SEC-REPO-02] isFrozen + isVerified + isBanned مطلوبة في refreshLogic
-// بدون هذه الحقول: مستخدم مجمَّد أو غير مُفعَّل يستطيع تجديد التوكن
-exports.findByIdWithRefreshToken = (id: EntityId) =>
+export const findByIdWithRefreshToken = (id: EntityId) =>
   User.findById(id).select(
     '+refreshToken +previousRefreshToken +previousRefreshTokenExpire ' +
     '+sessionVersion +sessionIssuedAt'
   );
 
-exports.findAuthStateById = (id: EntityId) =>
+export const findAuthStateById = (id: EntityId) =>
   User.findById(id)
     .select(
       'name role trustLevel phoneVerified isVerified isBanned isFrozen ' +
@@ -82,16 +68,16 @@ exports.findAuthStateById = (id: EntityId) =>
     )
     .lean();
 
-exports.findByResetToken = (hashedToken: string) =>
+export const findByResetToken = (hashedToken: string) =>
   User.findOne({
     resetPasswordToken:  hashedToken,
     resetPasswordExpire: { $gt: Date.now() },
   }).select('+password');
 
-exports.updateUser = (id: EntityId, update: RepositoryPayload) =>
+export const updateUser = (id: EntityId, update: RepositoryPayload) =>
   User.findByIdAndUpdate(id, update, { returnDocument: 'after' });
 
-exports.beginUserSession = (id: EntityId) =>
+export const beginUserSession = (id: EntityId) =>
   User.findByIdAndUpdate(
     id,
     {
@@ -106,7 +92,7 @@ exports.beginUserSession = (id: EntityId) =>
     { returnDocument: 'after' }
   ).select('+sessionVersion');
 
-exports.storeRefreshToken = (
+export const storeRefreshToken = (
   id: EntityId,
   sessionVersion: number,
   refreshHash: string
@@ -117,7 +103,7 @@ exports.storeRefreshToken = (
     { returnDocument: 'after' }
   ).select('+sessionVersion');
 
-exports.rotateRefreshToken = (
+export const rotateRefreshToken = (
   userId: EntityId,
   sessionVersion: number,
   oldHash: string,
@@ -138,15 +124,13 @@ exports.rotateRefreshToken = (
     { returnDocument: 'after' }
   ).select('+sessionVersion');
 
-exports.findByIdWithSession = (id: EntityId) =>
+export const findByIdWithSession = (id: EntityId) =>
   User.findById(id).select('+refreshToken +sessionVersion +sessionIssuedAt');
 
-// ✅ [DUP-REPO-01] ADMIN_FIELDS تُضيف reportedBy فوق BASE_USER_FIELDS
-exports.findByIdForAdmin = (id: EntityId) =>
+export const findByIdForAdmin = (id: EntityId) =>
   User.findById(id).select(ADMIN_FIELDS);
 
-// ✅ FIX [ARCH-PROF-02]: setTrustLevelAndQuota تقبل quota معاً
-exports.setTrustLevelAndQuota = (id: EntityId, level: number, quota: number) =>
+export const setTrustLevelAndQuota = (id: EntityId, level: number, quota: number) =>
   User.findByIdAndUpdate(
     id,
     { trustLevel: level, quota, promotedByAdmin: true },
@@ -157,23 +141,21 @@ exports.setTrustLevelAndQuota = (id: EntityId, level: number, quota: number) =>
     'createdAt updatedAt'
   );
 
-exports.setTrustLevel = (id: EntityId, level: number) =>
+export const setTrustLevel = (id: EntityId, level: number) =>
   User.findByIdAndUpdate(id, { trustLevel: level }, { returnDocument: 'after' })
     .select('name email trustLevel isVerifiedStudent phoneVerified isBanned');
 
-exports.findByIdWithPassword = (id: EntityId) =>
+export const findByIdWithPassword = (id: EntityId) =>
   User.findById(id).select('+password');
 
-exports.findProfileUpdateState = (id: EntityId) =>
+export const findProfileUpdateState = (id: EntityId) =>
   User.findById(id)
     .select(
       'phone phoneVerified trustLevel isVerifiedStudent promotedByAdmin avatar +avatarPublicId'
     )
     .lean();
 
-// ─── دوال verifyEmailLogic ────────────────────────────────────
-
-exports.findAndIncrementOtpAttempts = (email: string, maxAttempts = 5) =>
+export const findAndIncrementOtpAttempts = (email: string, maxAttempts = 5) =>
   User.findOneAndUpdate(
     {
       email,
@@ -190,10 +172,10 @@ exports.findAndIncrementOtpAttempts = (email: string, maxAttempts = 5) =>
     }
   ).lean();
 
-exports.findEmailStatus = (email: string) =>
+export const findEmailStatus = (email: string) =>
   User.findOne({ email }).select('isVerified otpAttempts').lean();
 
-exports.atomicVerifyAndComplete = (
+export const atomicVerifyAndComplete = (
   userId: EntityId,
   currentOtpHash: string,
   updateData: RepositoryPayload
@@ -204,7 +186,7 @@ exports.atomicVerifyAndComplete = (
     { returnDocument: 'after' }
   ).select('+sessionVersion');
 
-exports.resetOtpAttemptsAfterLock = (email: string) =>
+export const resetOtpAttemptsAfterLock = (email: string) =>
   User.updateOne(
     { email },
     {
@@ -213,15 +195,14 @@ exports.resetOtpAttemptsAfterLock = (email: string) =>
     }
   );
 
-// ─── فحص تكرار رقم الهاتف ────────────────────────────────────
-exports.findByPhoneExcluding = (phone: string, excludeUserId: EntityId) =>
+export const findByPhoneExcluding = (phone: string, excludeUserId: EntityId) =>
   User.findOne({
     phone,
     phoneVerified: true,
     _id: { $ne: excludeUserId },
   }).select('_id').lean();
 
-exports.consumeResetToken = (hashedToken: string, hashedPassword: string) =>
+export const consumeResetToken = (hashedToken: string, hashedPassword: string) =>
   User.findOneAndUpdate(
     {
       resetPasswordToken: hashedToken,
@@ -241,7 +222,7 @@ exports.consumeResetToken = (hashedToken: string, hashedPassword: string) =>
     { returnDocument: 'after' }
   ).select('_id +sessionVersion');
 
-exports.changePassword = (userId: EntityId, hashedPassword: string) =>
+export const changePassword = (userId: EntityId, hashedPassword: string) =>
   User.findByIdAndUpdate(
     userId,
     {
@@ -256,8 +237,7 @@ exports.changePassword = (userId: EntityId, hashedPassword: string) =>
     { returnDocument: 'after' }
   ).select('_id +sessionVersion');
 
-// ─── إلغاء صلاحية الجلسة ─────────────────────────────────────
-exports.invalidateUserSession = (userId: EntityId) =>
+export const invalidateUserSession = (userId: EntityId) =>
   User.findByIdAndUpdate(userId, {
     $inc: { sessionVersion: 1 },
     $set: { sessionIssuedAt: new Date() },
@@ -268,8 +248,7 @@ exports.invalidateUserSession = (userId: EntityId) =>
     },
   });
 
-// ✅ FIX [PERF-PROF-02]: lean() مباشرة — لا يجوز استدعاء .select().lean() فوقها
-exports.findPublicProfile = (id: EntityId) =>
+export const findPublicProfile = (id: EntityId) =>
   User.findOne({
     _id: id,
     ...activeAccountEligibility(),
@@ -280,19 +259,19 @@ exports.findPublicProfile = (id: EntityId) =>
     )
     .lean();
 
-exports.findLeaderboardUsers = (limit: number) =>
+export const findLeaderboardUsers = (limit: number) =>
   User.find(leaderboardEligibility())
     .select('name avatar trustScore totalDonations')
     .sort({ trustScore: -1, totalDonations: -1, _id: 1 })
     .limit(limit)
     .lean();
 
-exports.findLeaderboardUser = (userId: EntityId) =>
+export const findLeaderboardUser = (userId: EntityId) =>
   User.findOne({ _id: userId, ...leaderboardEligibility() })
     .select('trustScore totalDonations')
     .lean();
 
-exports.countLeaderboardUsersAhead = (user: LeaderboardUser) =>
+export const countLeaderboardUsersAhead = (user: LeaderboardUser) =>
   User.countDocuments({
     ...leaderboardEligibility(),
     $or: [
@@ -308,3 +287,5 @@ exports.countLeaderboardUsersAhead = (user: LeaderboardUser) =>
       },
     ],
   });
+
+export default { findByEmail, findByEmailWithPassword, createUser, saveUser, findById, findByIdWithRefreshToken, findAuthStateById, findByResetToken, updateUser, beginUserSession, storeRefreshToken, rotateRefreshToken, findByIdWithSession, findByIdForAdmin, setTrustLevelAndQuota, setTrustLevel, findByIdWithPassword, findProfileUpdateState, findAndIncrementOtpAttempts, findEmailStatus, atomicVerifyAndComplete, resetOtpAttemptsAfterLock, findByPhoneExcluding, consumeResetToken, changePassword, invalidateUserSession, findPublicProfile, findLeaderboardUsers, findLeaderboardUser, countLeaderboardUsersAhead };

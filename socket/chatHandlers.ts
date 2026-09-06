@@ -1,21 +1,16 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 import type {
   AounSocket,
   AounSocketServer,
   SocketAck,
   SocketAckPayload,
   SocketOperationError,
-} from './socketTypes';
-import { asSocketError } from './socketTypes';
-
-const repo = require('../repositories/conversationRepository');
-const dto = require('../dtos/conversationDto');
-const notifyUser = require('../utils/notifyUser');
-const {
-  SOCKET_EVENTS,
-  conversationRoom,
-  userRoom,
-} = require('./contracts');
+} from './socketTypes.js';
+import { asSocketError } from './socketTypes.js';
+import repo from '../repositories/conversationRepository.js';
+import dto from '../dtos/conversationDto.js';
+import notifyUser from '../utils/notifyUser.js';
+import { SOCKET_EVENTS, conversationRoom, userRoom } from './contracts.js';
 
 const MAX_MESSAGE_LENGTH = 2000;
 const MESSAGE_RATE_WINDOW_MS = 10_000;
@@ -78,11 +73,13 @@ async function assertParticipant(
     throw chatError('هوية الاتصال غير صالحة', 'SOCKET_UNAUTHORIZED', 401);
   }
 
-  const conversation = await repo.findConversationById(conversationId);
+  const normalizedConversationId = String(conversationId);
+  const normalizedUserId = String(userId);
+  const conversation = await repo.findConversationById(normalizedConversationId);
   if (!conversation) {
     throw chatError('المحادثة غير موجودة', 'CHAT_NOT_FOUND', 404);
   }
-  if (!repo.isParticipant(conversation, userId)) {
+  if (!repo.isParticipant(conversation, normalizedUserId)) {
     throw chatError('غير مصرح لك بدخول هذه المحادثة', 'CHAT_FORBIDDEN', 403);
   }
 
@@ -364,7 +361,8 @@ function registerChatHandlers(io: AounSocketServer, socket: AounSocket): void {
   );
 }
 
-module.exports = {
+export { MAX_MESSAGE_LENGTH, assertParticipant, canSendInConversation, registerChatHandlers };
+export default {
   MAX_MESSAGE_LENGTH,
   assertParticipant,
   canSendInConversation,

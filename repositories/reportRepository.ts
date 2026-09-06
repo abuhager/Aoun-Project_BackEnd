@@ -1,7 +1,6 @@
-// repositories/reportRepository.js
-const Report = require('../models/Report');
-const Item   = require('../models/Item');
-import type { EntityId, RepositoryPayload } from './repositoryTypes';
+import Report from '../models/Report.js';
+import Item from '../models/Item.js';
+import type { EntityId, RepositoryPayload } from './repositoryTypes.js';
 
 type AppealUpdate = {
   reportId: EntityId;
@@ -10,24 +9,22 @@ type AppealUpdate = {
   appealedAt: Date;
 };
 
-// ── قراءة ─────────────────────────────────────────────────────
-exports.createReport = (payload: RepositoryPayload) => Report.create(payload);
+export const createReport = (payload: RepositoryPayload) => Report.create(payload);
 
-exports.findById = (reportId: EntityId) => Report.findById(reportId);
+export const findById = (reportId: EntityId) => Report.findById(reportId);
 
-exports.findContextItem = (itemId: EntityId) =>
+export const findContextItem = (itemId: EntityId) =>
   Item.findById(itemId)
     .select('donor bookedBy status')
     .lean();
 
-exports.findByIdPopulated = (reportId: EntityId) =>
+export const findByIdPopulated = (reportId: EntityId) =>
   Report.findById(reportId)
     .populate('reportedUser', 'name email isBanned role')
     .populate('reporter',     'name email')
     .populate('relatedItem',  'title');
 
-// ✅ FIX [REPORT-01]: guard صريح ضد التكرار قبل الإنشاء
-exports.findExistingPending = (
+export const findExistingPending = (
   reporterId: EntityId,
   reportedUserId: EntityId,
   itemId: EntityId | null
@@ -39,14 +36,13 @@ exports.findExistingPending = (
     status:       'pending',
   }).select('_id').lean();
 
-exports.countByReportedUser = (userId: EntityId) =>
+export const countByReportedUser = (userId: EntityId) =>
   Report.countDocuments({ reportedUser: userId });
 
-exports.countActionedByReportedUser = (userId: EntityId) =>
+export const countActionedByReportedUser = (userId: EntityId) =>
   Report.countDocuments({ reportedUser: userId, status: 'actioned' });
 
-// ── تحديث ─────────────────────────────────────────────────────
-exports.submitAppeal = ({ reportId, userId, appealText, appealedAt }: AppealUpdate) =>
+export const submitAppeal = ({ reportId, userId, appealText, appealedAt }: AppealUpdate) =>
   Report.findOneAndUpdate(
     {
       _id:          reportId,
@@ -61,3 +57,5 @@ exports.submitAppeal = ({ reportId, userId, appealText, appealedAt }: AppealUpda
     { $set: { appealText, appealedAt } },
     { returnDocument: 'after' }
   );
+
+export default { createReport, findById, findContextItem, findByIdPopulated, findExistingPending, countByReportedUser, countActionedByReportedUser, submitAppeal };

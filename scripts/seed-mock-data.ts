@@ -1,22 +1,20 @@
-if (require.main === module) require("dotenv").config();
-
-const assert = require("node:assert/strict");
-const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
-
-const User = require("../models/User");
-const Item = require("../models/Item");
-const DonationRequest = require("../models/DonationRequest");
-const DonationOffer = require("../models/DonationOffer");
-const SafeHub = require("../models/SafeHub");
-const Conversation = require("../models/Conversation");
-const Message = require("../models/Message");
-const Notification = require("../models/Notification");
-const Rating = require("../models/Rating");
-const Report = require("../models/Report");
-const AdminLog = require("../models/AdminLog");
-const SystemSettings = require("../models/SystemSettings");
-const ensureIndexes = require("../utils/ensureIndexes");
+import "dotenv/config";
+import assert from "node:assert/strict";
+import mongoose from "mongoose";
+import bcrypt from "bcryptjs";
+import User from "../models/User.js";
+import Item from "../models/Item.js";
+import DonationRequest from "../models/DonationRequest.js";
+import DonationOffer from "../models/DonationOffer.js";
+import SafeHub from "../models/SafeHub.js";
+import Conversation from "../models/Conversation.js";
+import Message from "../models/Message.js";
+import Notification from "../models/Notification.js";
+import Rating from "../models/Rating.js";
+import Report from "../models/Report.js";
+import AdminLog from "../models/AdminLog.js";
+import SystemSettings from "../models/SystemSettings.js";
+import ensureIndexes from "../utils/ensureIndexes.js";
 
 const DEMO_PASSWORD = "AounDemo2026!";
 
@@ -1202,7 +1200,8 @@ async function main(): Promise<void> {
   );
 }
 
-if (require.main === module) {
+const isDirectExecution = /(?:^|[\\/])seed-mock-data\.(?:ts|js)$/.test(process.argv[1] ?? "");
+if (isDirectExecution) {
   main()
     .catch((error) => {
       console.error(error);
@@ -1213,7 +1212,8 @@ if (require.main === module) {
     });
 }
 
-module.exports = {
+export { DEMO_PASSWORD, buildMockDataset, validateDataset, assertDatasetIntegrity, assertResetAuthorization };
+export default {
   DEMO_PASSWORD,
   buildMockDataset,
   validateDataset,

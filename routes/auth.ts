@@ -1,39 +1,14 @@
-// routes/auth.js
-// ✅ [SEC-NEW-04] meLimiter يُطبَّق قبل requireAuth — يمنع DB queries قبل Rate Limit
-// ═══════════════════════════════════════════════════════════════
-// إصلاحات الجولات السابقة المحفوظة:
-// ✅ [ARCH-01]     حذف resendLimiter الـ Inline
-// ✅ [SEC-AUTH-01] resend-otp يستخدم schema 'resendOtp'
-// ✅ [FLOW14]      reset token داخل JSON body حتى لا يظهر في API access logs
-// ✅ [SEC-05]      meLimiter على مسارات /me
-// ═══════════════════════════════════════════════════════════════
-
-const express = require('express');
+import express from 'express';
 import type { NextFunction, Request, Response } from 'express';
+import { requireAuth } from '../middlewares/auth.js';
+import authController from '../controllers/authController.js';
+import validateObjectId from '../middlewares/validateObjectId.js';
+import validateBody from '../middlewares/validateBody.js';
+import { upload, verifyImageBuffer } from '../middlewares/upload.js';
+import { requireTrustedBrowserRequest, setPrivateNoStore } from '../middlewares/requestSecurity.js';
+import { loginLimiter, registerLimiter, forgotPasswordLimiter, resetPasswordLimiter, refreshLimiter, otpLimiter, resendOtpLimiter, meLimiter, publicLimiter, uploadLimiter } from '../middlewares/rateLimiter.js';
+
 const router  = express.Router();
-
-const { requireAuth }       = require('../middlewares/auth');
-const authController        = require('../controllers/authController');
-const validateObjectId      = require('../middlewares/validateObjectId');
-const validateBody          = require('../middlewares/validateBody');
-const { upload, verifyImageBuffer } = require('../middlewares/upload');
-const {
-  requireTrustedBrowserRequest,
-  setPrivateNoStore,
-} = require('../middlewares/requestSecurity');
-
-const {
-  loginLimiter,
-  registerLimiter,
-  forgotPasswordLimiter,
-  resetPasswordLimiter,
-  refreshLimiter,
-  otpLimiter,
-  resendOtpLimiter,
-  meLimiter,
-  publicLimiter,
-  uploadLimiter,
-} = require('../middlewares/rateLimiter');
 
 router.use(setPrivateNoStore);
 
@@ -159,4 +134,4 @@ router.put('/me/password',
   authController.updatePassword
 );
 
-module.exports = router;
+export default router;

@@ -1,13 +1,9 @@
-// routes/settings.js
-const express            = require('express');
+import express from 'express';
+import { requireAuth, requireAdmin, requireSuperAdmin } from '../middlewares/auth.js';
+import validateBody from '../middlewares/validateBody.js';
+import settingsController from '../controllers/settingsController.js';
+
 const router             = express.Router();
-const {
-  requireAuth,
-  requireAdmin,
-  requireSuperAdmin, // DC-05: middleware جديد — انظر middlewares/auth.js
-} = require('../middlewares/auth');
-const validateBody       = require('../middlewares/validateBody');
-const settingsController = require('../controllers/settingsController');
 
 // ── Public — بدون auth ────────────────────────────────────────────────────────
 // يرجع categories + reportReasons فقط — آمن للجميع
@@ -34,4 +30,4 @@ router.patch(
   settingsController.updateSettings
 );
 
-module.exports = router;
+export default router;

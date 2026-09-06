@@ -1,7 +1,14 @@
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
+export type AounRequest = Request<
+  Record<string, string>,
+  unknown,
+  Record<string, unknown>,
+  Record<string, string | undefined>
+>;
+
 type AsyncRouteHandler = (
-  request: Request,
+  request: AounRequest,
   response: Response,
   next: NextFunction
 ) => unknown | Promise<unknown>;
@@ -11,7 +18,7 @@ const asyncHandler = (handler: AsyncRouteHandler): RequestHandler => (
   response,
   next
 ) => {
-  void Promise.resolve(handler(request, response, next)).catch(next);
+  void Promise.resolve(handler(request as AounRequest, response, next)).catch(next);
 };
 
-export = asyncHandler;
+export default asyncHandler;

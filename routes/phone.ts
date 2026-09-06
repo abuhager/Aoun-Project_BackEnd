@@ -1,13 +1,11 @@
-// routes/phone.js
-const express    = require('express');
+import express from 'express';
+import { requireAuth } from '../middlewares/auth.js';
+import phoneCtrl from '../controllers/phoneController.js';
+import validateBody from '../middlewares/validateBody.js';
+import { phoneVerifyLimiter } from '../middlewares/rateLimiter.js';
+import { requirePhoneVerificationEnabled } from '../middlewares/phoneVerificationFeature.js';
+
 const router     = express.Router();
-const { requireAuth } = require('../middlewares/auth');
-const phoneCtrl  = require('../controllers/phoneController');
-const validateBody = require('../middlewares/validateBody');
-const { phoneVerifyLimiter } = require('../middlewares/rateLimiter');
-const {
-  requirePhoneVerificationEnabled,
-} = require('../middlewares/phoneVerificationFeature');
 
 // ─── Firebase Phone Auth (الجديد) ────────────────────────────
 // Frontend يرسل idToken بعد تأكيد OTP عبر Firebase Client SDK
@@ -24,4 +22,4 @@ router.post(
 router.post('/send-otp',    requireAuth, phoneCtrl.sendOtp);
 router.post('/verify-otp',  requireAuth, phoneCtrl.verifyOtp);
 
-module.exports = router;
+export default router;

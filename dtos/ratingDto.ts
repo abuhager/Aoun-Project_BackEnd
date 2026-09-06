@@ -1,4 +1,4 @@
-import { asRecord, toId, toIsoDate, toPlainRecord } from './dtoTypes';
+import { asRecord, toId, toIsoDate, toPlainRecord } from './dtoTypes.js';
 
 const toPlainObject = toPlainRecord;
 const toDate = toIsoDate;
@@ -12,7 +12,7 @@ const toParticipant = (value: unknown) => {
   } : null;
 };
 
-exports.toRatingResponse = (rawRating: unknown) => {
+export const toRatingResponse = (rawRating: unknown) => {
   const rating = toPlainObject(rawRating);
   if (!rating) return null;
 
@@ -25,7 +25,7 @@ exports.toRatingResponse = (rawRating: unknown) => {
   };
 };
 
-exports.toUserRatingResponse = (rawRating: unknown) => {
+export const toUserRatingResponse = (rawRating: unknown) => {
   const rating = toPlainObject(rawRating);
   if (!rating) return null;
 
@@ -44,8 +44,7 @@ exports.toUserRatingResponse = (rawRating: unknown) => {
   };
 };
 
-/** لا نعيد سجل Item الخام؛ فقط الحقول اللازمة لنافذة التقييم. */
-exports.toPendingRatingResponse = (rawItem: unknown) => {
+export const toPendingRatingResponse = (rawItem: unknown) => {
   const item = toPlainObject(rawItem);
   if (!item) return { pendingRating: null };
 
@@ -61,4 +60,6 @@ exports.toPendingRatingResponse = (rawItem: unknown) => {
   };
 };
 
-exports._private = { toDate, toId, toParticipant };
+export const _private = { toDate, toId, toParticipant };
+
+export default { toRatingResponse, toUserRatingResponse, toPendingRatingResponse, _private };

@@ -47,7 +47,8 @@ const conversationRoom = (conversationId: MongoIdLike): string => (
   `conv_${normalizeMongoId(conversationId, 'المحادثة')}`
 );
 
-module.exports = {
+export { SOCKET_EVENTS, conversationRoom, normalizeMongoId, userRoom };
+export default {
   SOCKET_EVENTS,
   conversationRoom,
   normalizeMongoId,

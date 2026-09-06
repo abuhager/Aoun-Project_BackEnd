@@ -1,14 +1,11 @@
-const AdminLog = require('../models/AdminLog');
-const SystemSettings = require('../models/SystemSettings');
-const AppError = require('../utils/AppError');
-const { SOCKET_EVENTS } = require('../socket/contracts');
-const { emitToAll } = require('../socket/emitter');
-const {
-  EDITABLE_SETTING_FIELDS,
-  assertSettingsInvariants,
-} = require('../dtos/settingsDto');
-import type { EntityId, ServicePayload, ServiceRecord } from './serviceTypes';
-import { getErrorMessage } from './serviceTypes';
+import AdminLog from '../models/AdminLog.js';
+import SystemSettings from '../models/SystemSettings.js';
+import AppError from '../utils/AppError.js';
+import { SOCKET_EVENTS } from '../socket/contracts.js';
+import { emitToAll } from '../socket/emitter.js';
+import { EDITABLE_SETTING_FIELDS, assertSettingsInvariants } from '../dtos/settingsDto.js';
+import type { EntityId, ServicePayload, ServiceRecord } from './serviceTypes.js';
+import { getErrorMessage } from './serviceTypes.js';
 
 const PUBLIC_SETTING_FIELDS = Object.freeze([
   'categories',
@@ -73,13 +70,13 @@ const toPublicSettings = (settings: ServiceRecord | null | undefined) => {
   };
 };
 
-exports.getSettings = () => SystemSettings.getCached();
+export const getSettings = () => SystemSettings.getCached();
 
-exports.getPublicSettings = async () => (
+export const getPublicSettings = async () => (
   toPublicSettings(await SystemSettings.getCached() as ServiceRecord)
 );
 
-exports.updateSettings = async (updates: ServicePayload, actorId: EntityId) => {
+export const updateSettings = async (updates: ServicePayload, actorId: EntityId) => {
   const unknownFields = Object.keys(updates).filter((key) => !editableFieldSet.has(key));
   if (unknownFields.length > 0) {
     throw new AppError(
@@ -97,11 +94,12 @@ exports.updateSettings = async (updates: ServicePayload, actorId: EntityId) => {
   }
 
   const current = await SystemSettings.getInstance();
+  const currentRecord = current as unknown as ServiceRecord;
   const merged = { ...current, ...sanitized };
   assertSettingsInvariants(merged);
 
   const changedFields = Object.keys(sanitized).filter(
-    (key) => !valuesEqual(current[key], sanitized[key])
+    (key) => !valuesEqual(currentRecord[key], sanitized[key])
   );
   if (changedFields.length === 0) {
     return {
@@ -128,6 +126,8 @@ exports.updateSettings = async (updates: ServicePayload, actorId: EntityId) => {
     throw new AppError('تعذر العثور على إعدادات النظام', 500, 'SETTINGS_NOT_FOUND');
   }
 
+  const updatedRecord = updated as unknown as ServiceRecord;
+
   SystemSettings.invalidateCache(changedFields);
   const publicSettings = toPublicSettings(updated as ServiceRecord);
 
@@ -144,7 +144,7 @@ exports.updateSettings = async (updates: ServicePayload, actorId: EntityId) => {
       meta: {
         changedFields,
         changes: Object.fromEntries(
-          changedFields.map((key) => [key, { before: current[key], after: updated[key] }])
+          changedFields.map((key) => [key, { before: currentRecord[key], after: updatedRecord[key] }])
         ),
       },
     });
@@ -155,6 +155,10 @@ exports.updateSettings = async (updates: ServicePayload, actorId: EntityId) => {
   return { settings: updated, publicSettings, changedFields };
 };
 
-exports.PUBLIC_SETTING_FIELDS = PUBLIC_SETTING_FIELDS;
-exports.normalizeSettingValue = normalizeSettingValue;
-exports.toPublicSettings = toPublicSettings;
+export { PUBLIC_SETTING_FIELDS };
+
+export { normalizeSettingValue };
+
+export { toPublicSettings };
+
+export default { getSettings, getPublicSettings, updateSettings, PUBLIC_SETTING_FIELDS, normalizeSettingValue, toPublicSettings };

@@ -1,12 +1,11 @@
-// routes/hubs.js — ✅ PATCHED [BUG-01 | SEC-01 | SEC-02]
+import express from 'express';
+import hubCtrl from '../controllers/hubController.js';
+import validateBody from '../middlewares/validateBody.js';
+import validateObjectId from '../middlewares/validateObjectId.js';
+import { requireAuth, requireAdmin } from '../middlewares/auth.js';
+import { publicLimiter } from '../middlewares/rateLimiter.js';
 
-const express         = require('express');
 const router          = express.Router();
-const hubCtrl         = require('../controllers/hubController');
-const validateBody    = require('../middlewares/validateBody');
-const validateObjectId = require('../middlewares/validateObjectId');
-const { requireAuth, requireAdmin }     = require('../middlewares/auth');
-const { publicLimiter }                 = require('../middlewares/rateLimiter');
 
 // ── Public ──────────────────────────────────────────────────────────────────
 // ✅ SEC-02: publicLimiter يحمي DB من الإغراق
@@ -50,4 +49,4 @@ router.delete(
   hubCtrl.deactivateHub
 );
 
-module.exports = router;
+export default router;

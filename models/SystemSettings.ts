@@ -1,10 +1,7 @@
-// models/SystemSettings.js
-const mongoose      = require('mongoose');
-const EventEmitter  = require('events');
+import mongoose from 'mongoose';
+import EventEmitter from 'events';
 
 const settingsEvents = new EventEmitter();
-
-type CachedSettings = Record<string, unknown>;
 
 const normalizeStringList = (values: unknown): string[] => {
   if (!Array.isArray(values)) return [];
@@ -167,9 +164,17 @@ const systemSettingsSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+type CachedSettings = mongoose.InferSchemaType<typeof systemSettingsSchema>;
+interface SystemSettingsModel extends mongoose.Model<CachedSettings> {
+  getInstance(): Promise<CachedSettings>;
+  getCached(): Promise<CachedSettings>;
+  invalidateCache(changedFields?: string[]): void;
+}
+
 // ─── getInstance ─────────────────────────────────────────────────────────────
 systemSettingsSchema.statics.getInstance = async function () {
-  let settings = await this.findOneAndUpdate(
+  const Settings = this as unknown as SystemSettingsModel;
+  let settings = await Settings.findOneAndUpdate(
     { _id: 'global' },
     { $setOnInsert: { _id: 'global' } },
     {
@@ -180,20 +185,24 @@ systemSettingsSchema.statics.getInstance = async function () {
     }
   ).lean();
 
-  const defaults = new this({ _id: 'global' }).toObject();
+  if (!settings) throw new Error('Unable to initialize system settings');
+
+  const defaults = new Settings({ _id: 'global' }).toObject();
   const missingDefaults = Object.fromEntries(
     Object.entries(defaults).filter(([key]) => (
       !['_id', 'createdAt', 'updatedAt', '__v'].includes(key)
-      && settings[key] === undefined
+      && (settings as Record<string, unknown>)[key] === undefined
     ))
   );
 
   if (Object.keys(missingDefaults).length > 0) {
-    settings = await this.findOneAndUpdate(
+    const updatedSettings = await Settings.findOneAndUpdate(
       { _id: 'global' },
       { $set: missingDefaults },
       { returnDocument: 'after', runValidators: true }
     ).lean();
+    if (!updatedSettings) throw new Error('Unable to apply system setting defaults');
+    settings = updatedSettings;
   }
 
   return settings;
@@ -209,11 +218,12 @@ let _cachePromise: Promise<CachedSettings> | null = null;
 let _cacheGeneration = 0;
 
 systemSettingsSchema.statics.getCached = async function () {
+  const Settings = this as unknown as SystemSettingsModel;
   if (_cache && Date.now() - _cacheAt < CACHE_TTL) return _cache;
   if (_cachePromise) return _cachePromise;
 
   const generation = _cacheGeneration;
-  const pending = this.getInstance()
+  const pending = Settings.getInstance()
     .then((settings: CachedSettings) => {
       if (generation === _cacheGeneration) {
         _cache = settings;
@@ -229,7 +239,7 @@ systemSettingsSchema.statics.getCached = async function () {
   return pending;
 };
 
-systemSettingsSchema.statics.invalidateCache = function (changedFields = []) {
+systemSettingsSchema.statics.invalidateCache = function (changedFields: string[] = []) {
   _cache   = null;
   _cacheAt = 0;
   _cacheGeneration += 1;
@@ -237,7 +247,7 @@ systemSettingsSchema.statics.invalidateCache = function (changedFields = []) {
   settingsEvents.emit('invalidated', { changedFields: [...changedFields] });
 };
 
-const SystemSettings = mongoose.model('SystemSettings', systemSettingsSchema);
+const SystemSettings = mongoose.model('SystemSettings', systemSettingsSchema) as unknown as SystemSettingsModel;
 
-module.exports                = SystemSettings;
-module.exports.settingsEvents = settingsEvents;
+export { settingsEvents };
+export default SystemSettings;
