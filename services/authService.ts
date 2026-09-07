@@ -5,13 +5,15 @@ import cloudinary from '../config/cloudinary.js';
 import SystemSettings from '../models/SystemSettings.js';
 import userRepository from '../repositories/userRepository.js';
 import profileRepository from '../repositories/profileRepository.js';
-import emailService from './emailService.js';
+import outboxService from './outboxService.js';
 import sessionCache from '../utils/sessionCache.js';
 import { buildGamificationProfile } from '../utils/gamification.js';
 import { toAuthUser, toProfileActivityItem } from '../dtos/authDto.js';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/tokenUtils.js';
 import { generateOtp, hashOtp, verifyOtp } from '../utils/otp.js';
 import { hashToken } from '../utils/cryptoUtils.js';
+import runMongoTransaction from '../utils/mongoTransaction.js';
+import type { ClientSession } from 'mongoose';
 import type { EntityId, ServicePayload } from './serviceTypes.js';
 import { getErrorMessage } from './serviceTypes.js';
 
@@ -119,15 +121,15 @@ const _getProfilePageParams = async (page: number) => {
   return { pageSize, skip: (page - 1) * pageSize, settings };
 };
 
-// ✅ [DUP-NEW-01] دالة مشتركة لإصدار OTP — تُزيل التكرار من 3 أماكن
-// fire-and-forget للبريد: لا ننتظر الإرسال حتى لا نُعطّل الاستجابة
+// حفظ الـOTP وحدث البريد داخل transaction واحدة يمنع ضياع الرسالة بعد نجاح الطلب.
 const _issueVerificationOtp = async (
   userId: EntityId,
   email: string,
   name: string,
   isStudent: boolean,
   otpExpiryMinutes: number,
-  extraFields: ServicePayload = {}
+  extraFields: ServicePayload = {},
+  session?: ClientSession
 ) => {
   const rawOtp    = generateOtp();
   const otpHash   = hashOtp(rawOtp);
@@ -139,14 +141,15 @@ const _issueVerificationOtp = async (
     verificationOtpExpiry: otpExpiry,
     otpAttempts:           0,
     ...extraFields,
-  });
+  }, session);
 
-
-  emailService.sendVerificationEmail(email, rawOtp, name, isStudent, otpExpiryMinutes)
-    .catch((error: unknown) => console.error(
-      '[Mail Error] _issueVerificationOtp:',
-      getErrorMessage(error)
-    ));
+  await outboxService.enqueueVerificationEmail({
+    to: email,
+    otp: rawOtp,
+    name,
+    isStudent,
+    expiryMinutes: otpExpiryMinutes,
+  }, `verification:${String(userId)}:${otpHash}`, session);
 };
 
 export const getCurrentUserLogic = async (userId: EntityId) => {
@@ -182,7 +185,15 @@ export const resendOtpLogic = async ({ email }: EmailInput) => {
 
 
   const isStudent = user.isVerifiedStudent || (await isUniversityEmail(user.email));
-  await _issueVerificationOtp(user._id, user.email, user.name, isStudent, otpExpiryMinutes);
+  await runMongoTransaction((session) => _issueVerificationOtp(
+    user._id,
+    user.email,
+    user.name,
+    isStudent,
+    otpExpiryMinutes,
+    {},
+    session
+  ));
 
 
   return GENERIC_OK;
@@ -230,33 +241,43 @@ export const registerLogic = async ({ name, email, password, phone }: Registrati
       trustLevel:        isStudent ? studentTrustLevel : 1,
       quota:             isStudent ? (settings?.studentQuota ?? 5) : defaultQuota,
     };
-    await _issueVerificationOtp(
+    await runMongoTransaction((session) => _issueVerificationOtp(
       exists._id,
       exists.email,
       exists.name,
       isStudent,
       otpExpiryMinutes,
-      extraFields
-    );
+      extraFields,
+      session
+    ));
     return GENERIC_REGISTER_RESPONSE;
   }
 
 
   // مستخدم جديد تماماً
   const hashed  = await bcrypt.hash(password, BCRYPT_ROUNDS);
-  const newUser = await userRepository.createUser({
-    name,
-    email,
-    password:          hashed,
-    phone,
-    otpAttempts:       0,
-    isVerifiedStudent: isStudent,
-    trustLevel:        isStudent ? studentTrustLevel : 1,
-    quota:             isStudent ? (settings?.studentQuota ?? 5) : defaultQuota,
+  await runMongoTransaction(async (session) => {
+    const newUser = await userRepository.createUser({
+      name,
+      email,
+      password:          hashed,
+      phone,
+      otpAttempts:       0,
+      isVerifiedStudent: isStudent,
+      trustLevel:        isStudent ? studentTrustLevel : 1,
+      quota:             isStudent ? (settings?.studentQuota ?? 5) : defaultQuota,
+    }, session);
+
+    await _issueVerificationOtp(
+      newUser._id,
+      email,
+      name,
+      isStudent,
+      otpExpiryMinutes,
+      {},
+      session
+    );
   });
-
-
-  await _issueVerificationOtp(newUser._id, email, name, isStudent, otpExpiryMinutes);
 
 
   return GENERIC_REGISTER_RESPONSE;
@@ -397,7 +418,15 @@ export const loginLogic = async ({ email, password }: LoginInput) => {
 
 
     const isStudent = await isUniversityEmail(email);
-    await _issueVerificationOtp(user._id, email, user.name, isStudent, otpExpiryMinutes);
+    await runMongoTransaction((session) => _issueVerificationOtp(
+      user._id,
+      email,
+      user.name,
+      isStudent,
+      otpExpiryMinutes,
+      {},
+      session
+    ));
 
 
     return {
@@ -629,17 +658,19 @@ export const forgotPasswordLogic = async ({ email }: EmailInput) => {
   const hashedToken = hashToken(rawToken);
 
 
-  await userRepository.updateUser(user._id, {
-    resetPasswordToken:  hashedToken,
-    resetPasswordExpire: Date.now() + expiryMinutes * 60 * 1000,
+  await runMongoTransaction(async (session) => {
+    await userRepository.updateUser(user._id, {
+      resetPasswordToken:  hashedToken,
+      resetPasswordExpire: Date.now() + expiryMinutes * 60 * 1000,
+    }, session);
+
+    await outboxService.enqueuePasswordResetEmail({
+      to: email,
+      resetToken: rawToken,
+      name: user.name,
+      expiryMinutes,
+    }, `password-reset:${String(user._id)}:${hashedToken}`, session);
   });
-
-
-  emailService.sendPasswordResetEmail(email, rawToken, user.name, expiryMinutes)
-    .catch((error: unknown) => console.error(
-      '[Mail Error] forgotPassword:',
-      getErrorMessage(error)
-    ));
 
 
   return GENERIC;

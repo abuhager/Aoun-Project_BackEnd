@@ -9,6 +9,7 @@ import DonationRequest from '../models/DonationRequest.js';
 import Item from '../models/Item.js';
 import Message from '../models/Message.js';
 import Notification from '../models/Notification.js';
+import OutboxEvent from '../models/OutboxEvent.js';
 import Rating from '../models/Rating.js';
 import Report from '../models/Report.js';
 import SafeHub from '../models/SafeHub.js';
@@ -88,6 +89,7 @@ const indexModels = [
   Item,
   Message,
   Notification,
+  OutboxEvent,
   Rating,
   Report,
   SafeHub,

@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
-import mongoose from 'mongoose';
 import { randomUUID } from 'crypto';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { corsOrigin } from './config/cors.js';
@@ -11,32 +10,9 @@ import maintenanceMode from './middlewares/maintenanceMode.js';
 import errorHandler from './middlewares/errorHandler.js';
 import AppError from './utils/AppError.js';
 import apiRoutes from './routes/index.js';
-import { getCronStatus } from './jobs/cronJobs.js';
+import getRuntimeReadiness from './utils/runtimeHealth.js';
 
 const app = express();
-
-const getBackgroundJobsHealth = () => {
-  try {
-    return Object.fromEntries(
-      Object.entries(getCronStatus() as Record<string, {
-        lastStatus: string;
-        scheduled: boolean;
-        lastRun: string | null;
-        lastFinishedAt?: string | null;
-      }>).map(([name, job]) => [
-        name,
-        {
-          status: job.lastStatus,
-          scheduled: job.scheduled,
-          lastRun: job.lastRun,
-          lastFinishedAt: job.lastFinishedAt ?? null,
-        },
-      ])
-    );
-  } catch {
-    return {};
-  }
-};
 
 const trustProxyValue = process.env.TRUST_PROXY
   ?? (process.env.NODE_ENV === 'production' ? '1' : 'loopback');
@@ -151,14 +127,19 @@ app.get('/health/live', publicLimiter, (_req: Request, res: Response) => {
   });
 });
 
-app.get(['/health', '/health/ready'], publicLimiter, (_req: Request, res: Response) => {
-  const dbState = mongoose.connection.readyState;
-  const dbOk = dbState === 1;
+app.get(['/health', '/health/ready'], publicLimiter, async (_req: Request, res: Response) => {
+  const health = await getRuntimeReadiness();
 
-  res.status(dbOk ? 200 : 503).json({
-    status: dbOk ? 'ok' : 'degraded',
-    database: ['disconnected', 'connected', 'connecting', 'disconnecting'][dbState] ?? 'unknown',
-    backgroundJobs: getBackgroundJobsHealth(),
+  res.status(health.ready ? 200 : 503).json({
+    status: health.status,
+    database: health.database.state,
+    checks: {
+      database: health.database,
+      redis: health.redis,
+      backgroundJobs: health.backgroundJobs,
+      outboxWorker: health.outboxWorker,
+    },
+    backgroundJobs: health.backgroundJobs.jobs,
     uptime: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
   });

@@ -103,6 +103,7 @@ const startServer = async () => {
 
   await connectRedis();
   await connectDB();
+  await initCronJobs();
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -113,13 +114,7 @@ const startServer = async () => {
   });
 
   console.log(`[Startup] الخادم يعمل على المنفذ ${port} — البيئة: ${nodeEnv}`);
-
-  try {
-    await initCronJobs();
-    console.log('[Startup] تمت تهيئة Cron Jobs');
-  } catch (error) {
-    console.error('[Startup] فشلت تهيئة Cron Jobs والخادم مستمر:', error);
-  }
+  console.log('[Startup] تمت تهيئة Cron Jobs');
 
   return { ...runtime };
 };

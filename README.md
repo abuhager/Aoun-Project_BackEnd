@@ -11,7 +11,8 @@
   خادم MongoDB محليًا بوضع Standalone.
 - Cloudinary لرفع الصور.
 - Brevo للتحقق من البريد واستعادة كلمة المرور.
-- Redis لتوحيد Rate Limiting عند تشغيل أكثر من نسخة في الإنتاج.
+- Redis مُدار لتثبيت Rate Limiting وإدخاله ضمن readiness عند ضبط `REDIS_REQUIRED=true`.
+- خدمة Worker مستقلة لتسليم البريد المحفوظ في Durable Outbox.
 
 ## التشغيل المحلي
 
@@ -23,6 +24,7 @@ npm run dev
 التشغيل التطويري يستخدم `tsx` مباشرةً على ملفات TypeScript، ولا يحتاج بناء `dist` يدويًا.
 
 أنشئ `.env` محليًا واضبط MongoDB وأسرار المصادقة وOrigins المسموحة وCloudinary وBrevo. لا ترفع `.env` أو أي مفتاح أو كلمة مرور إلى Git.
+مرجع متغيرات الإنتاج غير السرية موجود في `.env.production.example`؛ استبدل كل القيم التجريبية داخل لوحة الاستضافة فقط.
 
 ## التحقق
 
@@ -102,6 +104,7 @@ npm run db:seed:mock
 
 ```text
 app.ts / server.ts       تركيب Express وتشغيل HTTP وSocket.IO
+worker.ts                تشغيل عامل Outbox المستقل
 config/                  البيئة وMongoDB وCORS وCloudinary
 controllers/             معالجة طلبات HTTP
 dtos/                    عقود الاستجابة الآمنة للخصوصية
@@ -126,10 +129,27 @@ Build Command: npm ci && npm run build
 Start Command: npm start
 ```
 
+وأضف Background Worker من نفس المستودع:
+
+```text
+Build Command: npm ci && npm run build
+Start Command: npm run worker
+```
+
+- اضبط `RUNTIME_TOPOLOGY=single` و`WEB_CONCURRENCY=1` وشغّل **نسخة Render واحدة فقط**. التوسع الأفقي ممنوع حاليًا حتى إضافة Socket.IO Redis adapter وdistributed invalidation وscheduler leadership.
+- يبدأ HTTP فقط بعد نجاح اتصال MongoDB وتهيئة Cron Jobs. فشل jobs لم يعد يسمح بخادم يبدو جاهزًا.
+- اضبط `OUTBOX_WORKER_REQUIRED=true` و`OUTBOX_ENCRYPTION_KEY` ثابتًا من 32 بايت على Web وWorker. بريد OTP واستعادة كلمة المرور والتنبيهات الإدارية الحرجة يُحفظ مشفرًا مع تغيير قاعدة البيانات داخل transaction واحدة، ثم يرسله Worker مع retry وdead-letter state.
+- `/health/ready` يفحص MongoDB وRedis وجدولة background jobs وheartbeat عامل Outbox عندما تكون مطلوبة، بينما `/health/live` يثبت فقط أن عملية Web تعمل.
 - استخدم HTTPS وأسرارًا طويلة ومنفصلة لكل بيئة.
 - اضبط Redis وCORS وCookie domains حسب النطاق المنشور.
 - فعّل نسخ MongoDB الاحتياطية ومراقبة الأخطاء قبل Pilot حقيقي.
 - راجع سياسات الخصوصية والشروط قانونيًا قبل أي تبنٍ مؤسسي واسع.
+
+خطوات النشر والفحص والاسترجاع موثقة في [Production Runbook](docs/PRODUCTION-RUNBOOK.md).
+
+### تحقق CI الحقيقي
+
+يشغّل GitHub Actions الآن MongoDB كـReplica Set وRedis حقيقيًا، ثم يطبق الفهارس ويفحصها ويثبت rollback/commit لمعاملة MongoDB و`PING/PONG` من Redis قبل نجاح `verify`. الاختبار المحلي يتخطى فحص الخدمات الخارجية افتراضيًا، ويمكن تشغيله على بيئة اختبار معزولة بضبط `RUN_RUNTIME_INTEGRATION=true`.
 
 ### ترحيل الفهارس بأمان
 

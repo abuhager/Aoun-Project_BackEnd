@@ -70,6 +70,12 @@ const secureProductionEnv = () => ({
   CLOUDINARY_API_KEY: 'key',
   CLOUDINARY_API_SECRET: 'secret',
   COOKIE_SECRET: 'c'.repeat(64),
+  RUNTIME_TOPOLOGY: 'single',
+  WEB_CONCURRENCY: '1',
+  BREVO_API_KEY: 'brevo-test-key',
+  PLATFORM_EMAIL: 'noreply@aoun.example',
+  OUTBOX_WORKER_REQUIRED: 'true',
+  OUTBOX_ENCRYPTION_KEY: 'd'.repeat(64),
 });
 
 test('بيئة production تفرض HTTPS وفصل الأسرار ومدداً محدودة', () => {
@@ -98,6 +104,48 @@ test('بيئة production تفرض HTTPS وفصل الأسرار ومدداً م
       JWT_ACCESS_EXPIRE: '2h',
     }),
     /بين دقيقة وساعة/
+  );
+});
+
+test('بوابة production ترفض البريد أو Firebase الناقص والتوسع الأفقي غير المدعوم', () => {
+  assert.throws(
+    () => validateEnvironment({
+      ...secureProductionEnv(),
+      BREVO_API_KEY: '',
+    }),
+    /BREVO_API_KEY/
+  );
+
+  assert.throws(
+    () => validateEnvironment({
+      ...secureProductionEnv(),
+      PHONE_VERIFICATION_ENABLED: 'true',
+    }),
+    /FIREBASE_PROJECT_ID/
+  );
+
+  assert.doesNotThrow(() => validateEnvironment({
+    ...secureProductionEnv(),
+    PHONE_VERIFICATION_ENABLED: 'true',
+    FIREBASE_PROJECT_ID: 'aoun-test',
+    FIREBASE_CLIENT_EMAIL: 'firebase@aoun-test.iam.gserviceaccount.com',
+    FIREBASE_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nTEST\\n-----END PRIVATE KEY-----',
+  }));
+
+  assert.throws(
+    () => validateEnvironment({
+      ...secureProductionEnv(),
+      WEB_CONCURRENCY: '2',
+    }),
+    /WEB_CONCURRENCY/
+  );
+
+  assert.throws(
+    () => validateEnvironment({
+      ...secureProductionEnv(),
+      RUNTIME_TOPOLOGY: 'distributed',
+    }),
+    /RUNTIME_TOPOLOGY=single/
   );
 });
 

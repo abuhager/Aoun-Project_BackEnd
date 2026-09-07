@@ -27,14 +27,17 @@ const getPlatformName = async () => {
 
 const sendEmail = async (options: EmailOptions) => {
   if (!process.env.BREVO_API_KEY) {
-    console.warn('[sendEmail] BREVO_API_KEY غير مضبوط — تخطي إرسال الإيميل');
-    return;
+    throw Object.assign(new Error('EMAIL_PROVIDER_NOT_CONFIGURED'), {
+      code: 'EMAIL_PROVIDER_NOT_CONFIGURED',
+    });
   }
 
   // ✅ اسم المُرسِل من DB وليس ENV
   const platformName = await getPlatformName();
   const senderName   = `منصة ${platformName} المجتمعية`;
-  const senderEmail  = process.env.PLATFORM_EMAIL ?? 'aoun.help.center@gmail.com';
+  const senderEmail  = process.env.SMTP_USER
+    ?? process.env.PLATFORM_EMAIL
+    ?? 'aoun.help.center@gmail.com';
 
   try {
     const body: BrevoEmailBody = {
@@ -64,14 +67,24 @@ const sendEmail = async (options: EmailOptions) => {
       console.error('[sendEmail] ❌ فشل إرسال الإيميل:', {
         status:  response.status,
       });
+      throw Object.assign(new Error('EMAIL_PROVIDER_REJECTED'), {
+        code: `EMAIL_HTTP_${response.status}`,
+      });
     } else {
       await response.body?.cancel();
       if (process.env.NODE_ENV !== 'production') {
         console.info('[sendEmail] ✅ أُرسل البريد بنجاح');
       }
     }
-  } catch {
+  } catch (error: unknown) {
+    const code = typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code?: unknown }).code ?? '')
+      : '';
+    if (code.startsWith('EMAIL_HTTP_')) throw error;
     console.error('[sendEmail] تعذر الاتصال بخدمة البريد');
+    throw Object.assign(new Error('EMAIL_PROVIDER_UNAVAILABLE'), {
+      code: code || 'EMAIL_PROVIDER_UNAVAILABLE',
+    });
   }
 };
 

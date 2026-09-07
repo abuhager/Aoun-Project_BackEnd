@@ -1,4 +1,5 @@
 import corsConfig from './cors.js';
+import { isValidOutboxEncryptionKey } from '../utils/outboxCrypto.js';
 
 const REQUIRED_ENV = [
   'MONGO_URI',
@@ -26,6 +27,22 @@ const DURATION_UNITS_MS = Object.freeze({
 const PLACEHOLDER_SECRET_PATTERN = /^(?:replace[-_ ]with|change[-_ ]?me|your[-_ ]|<.+>)/i;
 
 type IntegerBounds = { min?: number; max?: number };
+
+const BOOLEAN_VALUES = new Set(['true', 'false']);
+const isEnabled = (value: unknown): boolean => (
+  String(value ?? '').trim().toLowerCase() === 'true'
+);
+
+const validateOptionalBoolean = (
+  env: NodeJS.ProcessEnv,
+  key: string,
+  errors: string[]
+) => {
+  const value = env[key];
+  if (value && !BOOLEAN_VALUES.has(value.trim().toLowerCase())) {
+    errors.push(`${key} يجب أن تكون true أو false`);
+  }
+};
 
 const parsePositiveInteger = (
   value: unknown,
@@ -70,12 +87,10 @@ const validateEnvironment = (env: NodeJS.ProcessEnv = process.env): {
     errors.push('MONGO_URI يجب أن يبدأ بـ mongodb:// أو mongodb+srv://');
   }
 
-  if (
-    env.PHONE_VERIFICATION_ENABLED
-    && !['true', 'false'].includes(env.PHONE_VERIFICATION_ENABLED.trim().toLowerCase())
-  ) {
-    errors.push('PHONE_VERIFICATION_ENABLED يجب أن تكون true أو false');
-  }
+  validateOptionalBoolean(env, 'PHONE_VERIFICATION_ENABLED', errors);
+  validateOptionalBoolean(env, 'REDIS_REQUIRED', errors);
+  validateOptionalBoolean(env, 'BACKGROUND_JOBS_REQUIRED', errors);
+  validateOptionalBoolean(env, 'OUTBOX_WORKER_REQUIRED', errors);
 
   if (env.ALLOWED_ORIGINS) {
     try {
@@ -103,14 +118,11 @@ const validateEnvironment = (env: NodeJS.ProcessEnv = process.env): {
     }
   }
 
-  if (
-    env.REDIS_REQUIRED
-    && !['true', 'false'].includes(env.REDIS_REQUIRED.trim().toLowerCase())
-  ) {
-    errors.push('REDIS_REQUIRED يجب أن تكون true أو false');
-  }
-  if (env.REDIS_REQUIRED?.trim().toLowerCase() === 'true' && !env.REDIS_URL?.trim()) {
+  if (isEnabled(env.REDIS_REQUIRED) && !env.REDIS_URL?.trim()) {
     errors.push('REDIS_URL مطلوب عندما تكون REDIS_REQUIRED=true');
+  }
+  if (env.REDIS_URL && !/^rediss?:\/\//i.test(env.REDIS_URL)) {
+    errors.push('REDIS_URL يجب أن يبدأ بـ redis:// أو rediss://');
   }
 
   if (env.BCRYPT_ROUNDS) {
@@ -132,6 +144,52 @@ const validateEnvironment = (env: NodeJS.ProcessEnv = process.env): {
   }
 
   if (env.NODE_ENV === 'production') {
+    const topology = env.RUNTIME_TOPOLOGY?.trim().toLowerCase();
+    if (topology !== 'single') {
+      errors.push(
+        'RUNTIME_TOPOLOGY=single مطلوب في production حتى إضافة Socket/Cache adapter موزع'
+      );
+    }
+
+    const webConcurrency = parsePositiveInteger(env.WEB_CONCURRENCY, 1, { max: 100 });
+    if (topology === 'single' && webConcurrency > 1) {
+      errors.push('WEB_CONCURRENCY يجب أن يساوي 1 عندما تكون RUNTIME_TOPOLOGY=single');
+    }
+
+    const emailSender = env.SMTP_USER?.trim() || env.PLATFORM_EMAIL?.trim();
+    if (!env.BREVO_API_KEY?.trim()) {
+      errors.push('BREVO_API_KEY مطلوب في production لتدفقات التفعيل واستعادة كلمة المرور');
+    }
+    if (!emailSender) {
+      errors.push('SMTP_USER أو PLATFORM_EMAIL مطلوب كعنوان مرسل البريد في production');
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailSender)) {
+      errors.push('عنوان مرسل البريد SMTP_USER/PLATFORM_EMAIL غير صالح');
+    }
+    if (!env.CLIENT_URL?.trim()) {
+      errors.push('CLIENT_URL مطلوب في production لبناء روابط البريد الآمنة');
+    }
+    if (!isEnabled(env.OUTBOX_WORKER_REQUIRED)) {
+      errors.push('OUTBOX_WORKER_REQUIRED=true مطلوب في production لضمان تسليم البريد');
+    }
+    if (!isValidOutboxEncryptionKey(env.OUTBOX_ENCRYPTION_KEY)) {
+      errors.push(
+        'OUTBOX_ENCRYPTION_KEY مطلوب ويجب أن يكون 32 بايت بصيغة base64 أو 64 خانة hex'
+      );
+    }
+
+    if (isEnabled(env.PHONE_VERIFICATION_ENABLED)) {
+      const firebaseRequired = [
+        'FIREBASE_PROJECT_ID',
+        'FIREBASE_CLIENT_EMAIL',
+        'FIREBASE_PRIVATE_KEY',
+      ].filter((key) => !env[key]?.trim());
+      if (firebaseRequired.length > 0) {
+        errors.push(
+          `متغيرات Firebase مطلوبة عند تفعيل التحقق من الهاتف: ${firebaseRequired.join(', ')}`
+        );
+      }
+    }
+
     if ((env.JWT_SECRET?.length ?? 0) < 32 || isPlaceholderSecret(env.JWT_SECRET)) {
       errors.push('JWT_SECRET يجب ألا يقل عن 32 محرفاً في production');
     }
@@ -204,8 +262,16 @@ const environment = {
   isPlaceholderSecret,
   parseDurationMs,
   parsePositiveInteger,
+  isEnabled,
   validateEnvironment,
 };
 
-export { REQUIRED_ENV, isPlaceholderSecret, parseDurationMs, parsePositiveInteger, validateEnvironment };
+export {
+  REQUIRED_ENV,
+  isEnabled,
+  isPlaceholderSecret,
+  parseDurationMs,
+  parsePositiveInteger,
+  validateEnvironment,
+};
 export default environment;

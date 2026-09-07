@@ -1,13 +1,11 @@
 import Notification from '../models/Notification.js';
-import User from '../models/User.js';
 import AppError from './AppError.js';
-import SystemSettings from '../models/SystemSettings.js';
 import { toNotificationDto } from '../dtos/notificationDto.js';
-import { escapeHtml, getClientOrigin } from '../services/emailService.js';
 import { SOCKET_EVENTS } from '../socket/contracts.js';
 import { emitToUser } from '../socket/emitter.js';
 import mongoose from 'mongoose';
-import sendEmail from './sendEmail.js';
+import runMongoTransaction from './mongoTransaction.js';
+import outboxService from '../services/outboxService.js';
 
 type NotificationPayload = {
   type?: string;
@@ -28,15 +26,6 @@ type NotificationTarget = {
 
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
-
-const getPlatformName = async () => {
-  try {
-    const settings = await SystemSettings.getCached();
-    return settings?.platformName ?? 'عون';
-  } catch {
-    return 'عون';
-  }
-};
 
 const CRITICAL_NOTIFICATION_TYPES = Object.freeze([
   'admin_ban',
@@ -116,17 +105,6 @@ const normalizeMetadata = (metadata: unknown): Record<string, unknown> => {
   return metadata as Record<string, unknown>;
 };
 
-const toAbsoluteClientUrl = (actionUrl: string | null): string | null => {
-  if (!actionUrl) return null;
-  try {
-    const clientOrigin = getClientOrigin();
-    const target = new URL(actionUrl, clientOrigin);
-    return target.origin === clientOrigin ? target.toString() : null;
-  } catch {
-    return null;
-  }
-};
-
 const normalizeEntityId = (value: unknown, field: string): string | null => {
   if (value == null || value === '') return null;
   const candidate = typeof value === 'object' && value !== null && '_id' in value
@@ -150,6 +128,7 @@ async function notifyUser(userId: unknown, payload: NotificationPayload = {}) {
   if (typeof payload.type !== 'string' || !Notification.NOTIFICATION_TYPES.includes(payload.type)) {
     throw new AppError('نوع الإشعار غير صالح', 400, 'INVALID_NOTIFICATION_TYPE');
   }
+  const notificationType = payload.type;
 
   const userEmail = payload.email ?? target?.email ?? null;
   const title = normalizeRequiredText(
@@ -165,16 +144,31 @@ async function notifyUser(userId: unknown, payload: NotificationPayload = {}) {
   const actionUrl = normalizeActionUrl(payload.actionUrl);
   const metadata = normalizeMetadata(payload.metadata);
 
-  const notification = await Notification.create({
+  const notificationData = {
     user: actualUserId,
-    type: payload.type,
+    type: notificationType,
     title,
     body,
     itemId: normalizeEntityId(payload.itemId, 'itemId'),
     conversationId: normalizeEntityId(payload.conversationId, 'conversationId'),
     actionUrl,
     metadata,
-  });
+  };
+
+  const isCritical = CRITICAL_NOTIFICATION_TYPES.includes(notificationType);
+  const notification = isCritical
+    ? await runMongoTransaction(async (session) => {
+      const [created] = await Notification.create([notificationData], { session });
+      await outboxService.enqueueCriticalNotificationEmail({
+        userId: actualUserId,
+        email: userEmail,
+        title,
+        body,
+        actionUrl,
+      }, created._id, session);
+      return created;
+    })
+    : await Notification.create(notificationData);
 
   try {
     emitToUser(
@@ -184,71 +178,6 @@ async function notifyUser(userId: unknown, payload: NotificationPayload = {}) {
     );
   } catch (error: unknown) {
     console.error('[notifyUser Socket Error]:', getErrorMessage(error));
-  }
-
-  if (CRITICAL_NOTIFICATION_TYPES.includes(payload.type)) {
-    let resolvedEmail = userEmail;
-    if (!resolvedEmail) {
-      try {
-        const user = await User.findById(actualUserId).select('email').lean();
-        resolvedEmail = user?.email ?? null;
-      } catch (error: unknown) {
-        console.warn(
-          '[notifyUser] تعذر جلب بريد مستلم الإشعار:',
-          getErrorMessage(error)
-        );
-      }
-    }
-
-    if (resolvedEmail) {
-      try {
-        const platformName = await getPlatformName();
-        const safePlatformName = escapeHtml(platformName);
-        const safeTitle = escapeHtml(title);
-        const safeBody = escapeHtml(body);
-        const absoluteActionUrl = toAbsoluteClientUrl(actionUrl);
-        const safeActionUrl = absoluteActionUrl
-          ? escapeHtml(absoluteActionUrl)
-          : null;
-        sendEmail.fireSendEmail({
-          email: resolvedEmail,
-          subject: title,
-          message: `
-            <div dir="rtl" style="font-family:sans-serif;line-height:1.8;color:#191c1d;max-width:560px;margin:auto;">
-              <h2 style="color:#c0392b;margin-bottom:8px;">${safeTitle}</h2>
-              <p style="margin:0 0 16px;">${safeBody}</p>
-              ${safeActionUrl
-                ? `<a href="${safeActionUrl}"
-                      style="display:inline-block;padding:10px 20px;background:#01696f;
-                             color:#fff;border-radius:8px;text-decoration:none;font-weight:bold;">
-                       فتح منصة ${safePlatformName}
-                     </a>`
-                : ''
-              }
-              <hr style="border:none;border-top:1px solid #edeeef;margin:20px 0;" />
-              <p style="font-size:11px;color:#747775;">
-                هذا إشعار إداري رسمي من منصة ${safePlatformName}.
-              </p>
-            </div>
-          `,
-        }).catch((emailError: unknown) =>
-          console.error(
-            '[notifyUser Email Fallback] فشل الإرسال:',
-            getErrorMessage(emailError)
-          )
-        );
-      } catch (emailError: unknown) {
-        console.warn(
-          '[notifyUser] تعذر تجهيز بريد الإشعار:',
-          getErrorMessage(emailError)
-        );
-      }
-    } else {
-      console.warn(
-        `[notifyUser] إشعار حرج "${payload.type}" للمستخدم ${actualUserId}`
-        + ' — لم يُرسل بريد لعدم توفر عنوان البريد.'
-      );
-    }
   }
 
   return notification;

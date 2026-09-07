@@ -20,10 +20,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
     env:
       CI: "true"
       NODE_ENV: test
-      MONGO_URI: mongodb://127.0.0.1:27017/aoun_ci
+      MONGO_URI: mongodb://127.0.0.1:27017/aoun_ci?replicaSet=rs0
+      REDIS_URL: redis://127.0.0.1:6379
+      REDIS_REQUIRED: "true"
+      RUN_RUNTIME_INTEGRATION: "true"
       JWT_SECRET: ci-jwt-secret
       JWT_REFRESH_SECRET: ci-refresh-secret
       JWT_ACCESS_EXPIRE: 15m
@@ -38,6 +52,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Start MongoDB replica set
+        run: |
+          docker run --detach --name aoun-mongo-rs \
+            --publish 27017:27017 \
+            mongo:8.0 --replSet rs0 --bind_ip_all
+          for attempt in {1..30}; do
+            if docker exec aoun-mongo-rs mongosh --quiet --eval "db.adminCommand('ping').ok" | grep -q 1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec aoun-mongo-rs mongosh --quiet --eval \
+            "rs.initiate({_id:'rs0',members:[{_id:0,host:'127.0.0.1:27017'}]})"
+          for attempt in {1..30}; do
+            if docker exec aoun-mongo-rs mongosh --quiet --eval "rs.status().myState" | grep -q 1; then
+              break
+            fi
+            sleep 1
+          done
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -47,5 +81,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run syntax checks and tests
+      - name: Apply and verify MongoDB indexes
+        run: npm run db:indexes && npm run db:indexes:verify
+
+      - name: Run typecheck, real integration tests, unit tests and build
         run: npm run verify

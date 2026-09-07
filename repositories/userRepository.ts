@@ -48,7 +48,14 @@ export const findByEmailWithPassword = (email: string) =>
     '+password +verificationOtpExpiry +otpAttempts +sessionVersion'
   );
 
-export const createUser = (data: RepositoryPayload) => User.create(data);
+export const createUser = async (
+  data: RepositoryPayload,
+  session?: RepositorySession
+) => {
+  if (!session) return User.create(data);
+  const [user] = await User.create([data], { session });
+  return user;
+};
 
 export const saveUser = (user: PersistedDocument) => user.save();
 
@@ -75,8 +82,15 @@ export const findByResetToken = (hashedToken: string) =>
     resetPasswordExpire: { $gt: Date.now() },
   }).select('+password');
 
-export const updateUser = (id: EntityId, update: RepositoryPayload) =>
-  User.findByIdAndUpdate(id, update, { returnDocument: 'after' });
+export const updateUser = (
+  id: EntityId,
+  update: RepositoryPayload,
+  session?: RepositorySession
+) => User.findByIdAndUpdate(
+  id,
+  update,
+  { returnDocument: 'after', ...(session ? { session } : {}) }
+);
 
 export const beginUserSession = (id: EntityId) =>
   User.findByIdAndUpdate(

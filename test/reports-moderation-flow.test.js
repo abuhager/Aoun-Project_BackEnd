@@ -24,6 +24,7 @@ const reportService = require('../services/reportService').default;
 const adminService = require('../services/adminService').default;
 const validateBody = require('../middlewares/validateBody').default;
 const sendEmail = require('../utils/sendEmail').default;
+const outboxService = require('../services/outboxService').default;
 const { getIndexGroups } = require('../utils/ensureIndexes');
 
 const REPORTER_ID = '507f1f77bcf86cd799439011';
@@ -242,6 +243,7 @@ test('قرار المشرف ذري ويسجل الأثر ويبلغ صاحب ا�
     settings: SystemSettings.getCached,
     actionedCount: reportRepository.countActionedByReportedUser,
     createNotification: Notification.create,
+    enqueueCritical: outboxService.enqueueCriticalNotificationEmail,
     fireSendEmail: sendEmail.fireSendEmail,
   };
   t.after(() => {
@@ -251,6 +253,7 @@ test('قرار المشرف ذري ويسجل الأثر ويبلغ صاحب ا�
     SystemSettings.getCached = originals.settings;
     reportRepository.countActionedByReportedUser = originals.actionedCount;
     Notification.create = originals.createNotification;
+    outboxService.enqueueCriticalNotificationEmail = originals.enqueueCritical;
     sendEmail.fireSendEmail = originals.fireSendEmail;
   });
 
@@ -283,10 +286,13 @@ test('قرار المشرف ذري ويسجل الأثر ويبلغ صاحب ا�
     platformName: 'عون',
   });
   reportRepository.countActionedByReportedUser = async () => 1;
-  Notification.create = async (payload) => {
+  Notification.create = async (payloadOrArray) => {
+    const payload = Array.isArray(payloadOrArray) ? payloadOrArray[0] : payloadOrArray;
     notifications.push(payload);
-    return { ...payload, _id: REPORT_ID, isRead: false, createdAt: new Date() };
+    const created = { ...payload, _id: REPORT_ID, isRead: false, createdAt: new Date() };
+    return Array.isArray(payloadOrArray) ? [created] : created;
   };
+  outboxService.enqueueCriticalNotificationEmail = async () => undefined;
   sendEmail.fireSendEmail = async () => undefined;
 
   await adminService.resolveReport(

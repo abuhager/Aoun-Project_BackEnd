@@ -29,7 +29,12 @@ async function setup(t, responseFactory, production = false) {
     message: '<p>private-reset-token</p>',
     replyTo: 'private-reply@example.test',
   };
-  await sendEmail(options);
+  let sendError = null;
+  try {
+    await sendEmail(options);
+  } catch (error) {
+    sendError = error;
+  }
   assert.equal(calls.length, 1);
   const payload = JSON.parse(calls[0].options.body);
   assert.deepEqual(payload.to, [{ email: options.email }]);
@@ -40,24 +45,27 @@ async function setup(t, responseFactory, production = false) {
   for (const secret of [...Object.values(options), 'private-reset-token', 'test-only-api-key']) {
     assert.ok(!output.includes(secret), 'Logs must not contain recipient, subject, message or credentials');
   }
-  return { entries, output };
+  return { entries, output, sendError };
 }
 
 test('سجل فشل البريد يحتفظ بالحالة دون بيانات المستلم أو رد Brevo الخام', async (t) => {
-  const { output } = await setup(t, () => Response.json({
+  const { output, sendError } = await setup(t, () => Response.json({
     message: 'private-recipient@example.test private-subject private-reset-token',
   }, { status: 401 }));
   assert.match(output, /401/);
+  assert.equal(sendError.code, 'EMAIL_HTTP_401');
 });
 
 test('أخطاء اتصال البريد لا تسرّب رسالة الشبكة أو بيانات الاعتماد', async (t) => {
-  const { output } = await setup(t, () => {
+  const { output, sendError } = await setup(t, () => {
     throw new Error('private-recipient@example.test test-only-api-key private-reset-token');
   });
   assert.match(output, /تعذر الاتصال/);
+  assert.equal(sendError.code, 'EMAIL_PROVIDER_UNAVAILABLE');
 });
 
 test('نجاح البريد في production لا يسجل معلومات الرسالة', async (t) => {
-  const { entries } = await setup(t, () => Response.json({ messageId: 'private-message-id' }, { status: 201 }), true);
+  const { entries, sendError } = await setup(t, () => Response.json({ messageId: 'private-message-id' }, { status: 201 }), true);
   assert.deepEqual(entries, []);
+  assert.equal(sendError, null);
 });

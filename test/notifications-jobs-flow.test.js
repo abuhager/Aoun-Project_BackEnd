@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const mongoose = require('mongoose').default;
 
 process.env.NODE_ENV = 'test';
 process.env.CLIENT_URL = 'https://aoun.example';
@@ -22,6 +23,8 @@ const notificationService = require('../services/notificationService').default;
 const notifyUser = require('../utils/notifyUser').default;
 const cronJobs = require('../jobs/cronJobs').default;
 const sendEmail = require('../utils/sendEmail').default;
+const outboxService = require('../services/outboxService').default;
+const criticalNotificationEmailService = require('../services/criticalNotificationEmailService').default;
 
 const USER_ID = '507f1f77bcf86cd799439011';
 const ITEM_ID = '507f1f77bcf86cd799439012';
@@ -120,36 +123,50 @@ test('تعليم إشعار واحد لا ينجح لإشعار لا يملكه 
 test('notifyUser يوحد عقد Socket ويجلب البريد الحرج ويهرب HTML', async (t) => {
   const originals = {
     create: Notification.create,
+    startSession: mongoose.startSession,
+    enqueueCritical: outboxService.enqueueCriticalNotificationEmail,
     userFindById: User.findById,
     getCached: SystemSettings.getCached,
-    fireSendEmail: sendEmail.fireSendEmail,
+    sendEmail: sendEmail.sendEmail,
   };
   const createdPayloads = [];
+  const outboxPayloads = [];
   let emailLookupCount = 0;
   let emailPayload = null;
 
   t.after(() => {
     Notification.create = originals.create;
+    mongoose.startSession = originals.startSession;
+    outboxService.enqueueCriticalNotificationEmail = originals.enqueueCritical;
     User.findById = originals.userFindById;
     SystemSettings.getCached = originals.getCached;
-    sendEmail.fireSendEmail = originals.fireSendEmail;
+    sendEmail.sendEmail = originals.sendEmail;
   });
 
-  Notification.create = async (payload) => {
+  mongoose.startSession = async () => ({
+    withTransaction: async (work) => work(),
+    endSession: async () => {},
+  });
+  Notification.create = async (payloadOrArray) => {
+    const payload = Array.isArray(payloadOrArray) ? payloadOrArray[0] : payloadOrArray;
     createdPayloads.push(payload);
-    return {
+    const created = {
       ...payload,
       _id: NOTIFICATION_ID,
       isRead: false,
       createdAt: new Date('2026-08-24T12:00:00.000Z'),
     };
+    return Array.isArray(payloadOrArray) ? [created] : created;
+  };
+  outboxService.enqueueCriticalNotificationEmail = async (payload) => {
+    outboxPayloads.push(payload);
   };
   User.findById = () => {
     emailLookupCount += 1;
     return queryReturning({ email: 'member@example.com' });
   };
   SystemSettings.getCached = async () => ({ platformName: '<عون>' });
-  sendEmail.fireSendEmail = async (payload) => {
+  sendEmail.sendEmail = async (payload) => {
     emailPayload = payload;
   };
 
@@ -166,6 +183,7 @@ test('notifyUser يوحد عقد Socket ويجلب البريد الحرج وي�
   assert.equal(createdPayloads[0].body, 'يوجد غرض جديد');
   assert.equal(createdPayloads[0].metadata.actionUrl, undefined);
   assert.equal(emailLookupCount, 0);
+  assert.equal(outboxPayloads.length, 0);
 
   await notifyUser(USER_ID, {
     type: 'admin_warning',
@@ -173,6 +191,10 @@ test('notifyUser يوحد عقد Socket ويجلب البريد الحرج وي�
     body: '<script>alert(1)</script>',
     actionUrl: '/dashboard?tab=<warning>',
   });
+
+  assert.equal(outboxPayloads.length, 1);
+  assert.equal(outboxPayloads[0].userId, USER_ID);
+  await criticalNotificationEmailService.sendCriticalNotificationEmail(outboxPayloads[0]);
 
   assert.equal(emailLookupCount, 1);
   assert.equal(emailPayload.email, 'member@example.com');
@@ -270,7 +292,9 @@ test('عقد Flow 11 يغلق Cron بأمان ويزيل النسخة القدي
   assert.match(jobsSource, /75 \* 60 \* 1000/);
   assert.match(jobsSource, /MAX_BOOKING_JOB_BATCH/);
   assert.match(serverSource, /await stopCronJobs\(\)/);
-  assert.match(appSource, /backgroundJobs:\s*getBackgroundJobsHealth\(\)/);
+  assert.match(appSource, /getRuntimeReadiness\(\)/);
+  assert.match(appSource, /health\.backgroundJobs\.jobs/);
+  assert.match(serverSource, /await initCronJobs\(\)[\s\S]*server\.listen/);
   assert.match(adminSource, /type:\s*'admin_ban'/);
   assert.equal(
     fs.existsSync(path.join(__dirname, '../utils/cronJobs.ts')),
