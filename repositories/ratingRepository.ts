@@ -1,28 +1,54 @@
 import Rating from '../models/Rating.js';
 import Item from '../models/Item.js';
 import User from '../models/User.js';
-import type { EntityId, RepositoryPayload } from './repositoryTypes.js';
+import type {
+  EntityId,
+  RepositoryPayload,
+  RepositorySession,
+} from './repositoryTypes.js';
 
 type ExistingRatingQuery = { itemId: EntityId; raterId: EntityId };
 
-export const findItemById = (itemId: EntityId) =>
+export const findItemById = (
+  itemId: EntityId,
+  session: RepositorySession = null
+) =>
   Item.findById(itemId)
-    .select('donor bookedBy status title isRated');
+    .select('donor bookedBy status title isRated')
+    .session(session);
 
-export const findExistingRating = ({ itemId, raterId }: ExistingRatingQuery) =>
-  Rating.findOne({ item: itemId, rater: raterId });
+export const findExistingRating = (
+  { itemId, raterId }: ExistingRatingQuery,
+  session: RepositorySession = null
+) => Rating.findOne({ item: itemId, rater: raterId }).session(session);
 
-export const createRating = (payload: RepositoryPayload) =>
-  Rating.create(payload);
+export const createRating = async (
+  payload: RepositoryPayload,
+  session: RepositorySession = null
+) => {
+  if (!session) return Rating.create(payload);
+  const [rating] = await Rating.create([payload], { session });
+  return rating;
+};
 
-export const markItemRated = (itemId: EntityId) =>
-  Item.findByIdAndUpdate(itemId, { isRated: true }, { new: true });
+export const markItemRated = (
+  itemId: EntityId,
+  session: RepositorySession = null
+) => Item.findByIdAndUpdate(
+  itemId,
+  { isRated: true },
+  { returnDocument: 'after', session: session ?? undefined }
+);
 
-export const incrementUserTrustScore = (userId: EntityId, trustDelta: number) =>
+export const incrementUserTrustScore = (
+  userId: EntityId,
+  trustDelta: number,
+  session: RepositorySession = null
+) =>
   User.findByIdAndUpdate(
     userId,
     { $inc: { trustScore: trustDelta } },
-    { new: true }
+    { returnDocument: 'after', session: session ?? undefined }
   );
 
 export const findRatingsForUser = (userId: EntityId) =>

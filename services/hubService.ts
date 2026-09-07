@@ -4,7 +4,9 @@ import itemRepository from '../repositories/itemRepository.js';
 import donationOfferRepository from '../repositories/donationOfferRepository.js';
 import adminRepository from '../repositories/adminRepository.js';
 import hubDto from '../dtos/hubDto.js';
+import runMongoTransaction from '../utils/mongoTransaction.js';
 import type { EntityId, ServicePayload } from './serviceTypes.js';
+import type { ClientSession } from 'mongoose';
 
 type HubActionTarget = {
   _id: EntityId;
@@ -23,7 +25,8 @@ const logHubAction = (
   hub: HubActionTarget,
   operation: string,
   reason: string,
-  changedFields: string[] = []
+  changedFields: string[] = [],
+  session: ClientSession | null = null
 ) =>
   adminRepository.logAdminAction({
     adminId,
@@ -37,7 +40,7 @@ const logHubAction = (
       operation,
       changedFields,
     },
-  });
+  }, session);
 
 export const getAllHubs = async () => {
   const hubs = await hubRepository.findAllActive();
@@ -50,15 +53,18 @@ export const getAllHubsAdmin = async () => {
 };
 
 export const createHub = async (body: ServicePayload, adminId: EntityId) => {
-  const hub = await hubRepository.create({ ...body, createdBy: adminId });
-
-  await logHubAction(
-    adminId,
-    hub,
-    'create',
-    'إنشاء مركز تسليم جديد',
-    Object.keys(body)
-  );
+  const hub = await runMongoTransaction(async (session) => {
+    const created = await hubRepository.create({ ...body, createdBy: adminId }, session);
+    await logHubAction(
+      adminId,
+      created,
+      'create',
+      'إنشاء مركز تسليم جديد',
+      Object.keys(body),
+      session
+    );
+    return created;
+  });
 
   return { statusCode: 201, body: hubDto.toAdminHub(hub) };
 };
@@ -70,120 +76,138 @@ export const updateHub = async (
 ) => {
   if (!isValidId(hubId)) return invalidIdResponse();
 
-  const hub = await hubRepository.updateById(hubId, rawBody);
+  return runMongoTransaction(async (session) => {
+    const hub = await hubRepository.updateById(hubId, rawBody, session);
 
-  if (hub === null) {
-    const exists = await hubRepository.findById(hubId);
-    if (!exists) {
+    if (hub === null) {
+      const exists = await hubRepository.findById(hubId, session);
+      if (!exists) {
+        return {
+          statusCode: 404,
+          body: { msg: 'المركز غير موجود', code: 'HUB_NOT_FOUND' },
+        };
+      }
       return {
-        statusCode: 404,
-        body: { msg: 'المركز غير موجود', code: 'HUB_NOT_FOUND' },
+        statusCode: 400,
+        body: { msg: 'لم يتم تحديد أي حقل للتعديل', code: 'NO_HUB_FIELDS' },
       };
     }
-    return {
-      statusCode: 400,
-      body: { msg: 'لم يتم تحديد أي حقل للتعديل', code: 'NO_HUB_FIELDS' },
-    };
-  }
 
-  await logHubAction(
-    adminId,
-    hub,
-    'update',
-    'تعديل بيانات مركز التسليم',
-    Object.keys(rawBody).filter((field) => hubDto.ALLOWED_UPDATE_FIELDS.includes(field))
-  );
+    await logHubAction(
+      adminId,
+      hub,
+      'update',
+      'تعديل بيانات مركز التسليم',
+      Object.keys(rawBody).filter((field) => hubDto.ALLOWED_UPDATE_FIELDS.includes(field)),
+      session
+    );
 
-  return { statusCode: 200, body: hubDto.toAdminHub(hub) };
+    return { statusCode: 200, body: hubDto.toAdminHub(hub) };
+  });
 };
 
 export const deactivateHub = async (hubId: EntityId, adminId: EntityId) => {
   if (!isValidId(hubId)) return invalidIdResponse();
 
-  const existingHub = await hubRepository.findById(hubId);
-  if (!existingHub) {
-    return {
-      statusCode: 404,
-      body: { msg: 'المركز غير موجود', code: 'HUB_NOT_FOUND' },
-    };
-  }
+  return runMongoTransaction(async (session) => {
+    const existingHub = await hubRepository.findById(hubId, session);
+    if (!existingHub) {
+      return {
+        statusCode: 404,
+        body: { msg: 'المركز غير موجود', code: 'HUB_NOT_FOUND' },
+      };
+    }
 
-  // العملية idempotent: تكرار الطلب لا ينشئ سجلاً إدارياً وهمياً.
-  if (existingHub.isActive === false) {
+    if (existingHub.isActive === false) {
+      return {
+        statusCode: 200,
+        body: { msg: 'المركز معطّل مسبقاً', hub: hubDto.toAdminHub(existingHub) },
+      };
+    }
+
+    const activeItems = await itemRepository.countActiveByHub(hubId, session);
+    const pendingOffers = await donationOfferRepository.countPendingByHub(hubId, session);
+
+    if (activeItems > 0 || pendingOffers > 0) {
+      const blockers: string[] = [];
+      if (activeItems > 0) blockers.push(`${activeItems} غرض نشط`);
+      if (pendingOffers > 0) blockers.push(`${pendingOffers} عرض تبرع معلّق`);
+
+      return {
+        statusCode: 409,
+        body: {
+          msg: `لا يمكن تعطيل المركز — يوجد ${blockers.join(' و')} مرتبط به. أعد تعيينها أو عالجها أولاً.`,
+          code: 'HUB_HAS_ACTIVE_HANDOFFS',
+          details: { activeItems, pendingOffers },
+        },
+      };
+    }
+
+    const hub = await hubRepository.deactivateById(hubId, session);
+    if (!hub) {
+      return {
+        statusCode: 404,
+        body: { msg: 'المركز غير موجود', code: 'HUB_NOT_FOUND' },
+      };
+    }
+
+    await logHubAction(
+      adminId,
+      hub,
+      'deactivate',
+      'تعطيل مركز التسليم',
+      [],
+      session
+    );
+
     return {
       statusCode: 200,
-      body: { msg: 'المركز معطّل مسبقاً', hub: hubDto.toAdminHub(existingHub) },
+      body: { msg: 'تم تعطيل المركز ✅', hub: hubDto.toAdminHub(hub) },
     };
-  }
-
-  const [activeItems, pendingOffers] = await Promise.all([
-    itemRepository.countActiveByHub(hubId),
-    donationOfferRepository.countPendingByHub(hubId),
-  ]);
-
-  if (activeItems > 0 || pendingOffers > 0) {
-    const blockers: string[] = [];
-    if (activeItems > 0) blockers.push(`${activeItems} غرض نشط`);
-    if (pendingOffers > 0) blockers.push(`${pendingOffers} عرض تبرع معلّق`);
-
-    return {
-      statusCode: 409,
-      body: {
-        msg: `لا يمكن تعطيل المركز — يوجد ${blockers.join(' و')} مرتبط به. أعد تعيينها أو عالجها أولاً.`,
-        code: 'HUB_HAS_ACTIVE_HANDOFFS',
-        details: { activeItems, pendingOffers },
-      },
-    };
-  }
-
-  const hub = await hubRepository.deactivateById(hubId);
-  if (!hub) {
-    return {
-      statusCode: 404,
-      body: { msg: 'المركز غير موجود', code: 'HUB_NOT_FOUND' },
-    };
-  }
-
-  await logHubAction(adminId, hub, 'deactivate', 'تعطيل مركز التسليم');
-
-  return {
-    statusCode: 200,
-    body: { msg: 'تم تعطيل المركز ✅', hub: hubDto.toAdminHub(hub) },
-  };
+  });
 };
 
 export const reactivateHub = async (hubId: EntityId, adminId: EntityId) => {
   if (!isValidId(hubId)) return invalidIdResponse();
 
-  const existingHub = await hubRepository.findById(hubId);
-  if (!existingHub) {
-    return {
-      statusCode: 404,
-      body: { msg: 'المركز غير موجود', code: 'HUB_NOT_FOUND' },
-    };
-  }
+  return runMongoTransaction(async (session) => {
+    const existingHub = await hubRepository.findById(hubId, session);
+    if (!existingHub) {
+      return {
+        statusCode: 404,
+        body: { msg: 'المركز غير موجود', code: 'HUB_NOT_FOUND' },
+      };
+    }
 
-  if (existingHub.isActive !== false) {
+    if (existingHub.isActive !== false) {
+      return {
+        statusCode: 200,
+        body: { msg: 'المركز مفعّل مسبقاً', hub: hubDto.toAdminHub(existingHub) },
+      };
+    }
+
+    const hub = await hubRepository.reactivateById(hubId, session);
+    if (!hub) {
+      return {
+        statusCode: 404,
+        body: { msg: 'المركز غير موجود', code: 'HUB_NOT_FOUND' },
+      };
+    }
+
+    await logHubAction(
+      adminId,
+      hub,
+      'reactivate',
+      'إعادة تفعيل مركز التسليم',
+      [],
+      session
+    );
+
     return {
       statusCode: 200,
-      body: { msg: 'المركز مفعّل مسبقاً', hub: hubDto.toAdminHub(existingHub) },
+      body: { msg: 'تم تفعيل المركز ✅', hub: hubDto.toAdminHub(hub) },
     };
-  }
-
-  const hub = await hubRepository.reactivateById(hubId);
-  if (!hub) {
-    return {
-      statusCode: 404,
-      body: { msg: 'المركز غير موجود', code: 'HUB_NOT_FOUND' },
-    };
-  }
-
-  await logHubAction(adminId, hub, 'reactivate', 'إعادة تفعيل مركز التسليم');
-
-  return {
-    statusCode: 200,
-    body: { msg: 'تم تفعيل المركز ✅', hub: hubDto.toAdminHub(hub) },
-  };
+  });
 };
 
 export default { getAllHubs, getAllHubsAdmin, createHub, updateHub, deactivateHub, reactivateHub };

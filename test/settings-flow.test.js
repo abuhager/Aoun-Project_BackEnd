@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const mongoose = require('mongoose');
 
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'settings-test-access-secret-1234567890';
@@ -15,7 +16,7 @@ process.env.CLOUDINARY_API_SECRET = 'settings-test-secret';
 const SystemSettings = require('../models/SystemSettings').default;
 const Item = require('../models/Item').default;
 const DonationOffer = require('../models/DonationOffer').default;
-const AdminLog = require('../models/AdminLog').default;
+const adminRepository = require('../repositories/adminRepository').default;
 const settingsService = require('../services/settingsService').default;
 const adminService = require('../services/adminService').default;
 const {
@@ -28,6 +29,15 @@ const {
   isAllowedPath,
 } = require('../middlewares/maintenanceMode');
 const { SOCKET_EVENTS } = require('../socket/contracts');
+
+const originalStartSession = mongoose.startSession;
+test.before(() => {
+  mongoose.startSession = async () => ({
+    async withTransaction(work) { await work(); },
+    async endSession() {},
+  });
+});
+test.after(() => { mongoose.startSession = originalStartSession; });
 
 const readSource = (relativePath) => fs.readFileSync(
   path.join(__dirname, relativePath),
@@ -124,7 +134,7 @@ test('تحديث الإعدادات يحفظ الفروق فقط ويبطل ال
     getInstance: SystemSettings.getInstance,
     findOneAndUpdate: SystemSettings.findOneAndUpdate,
     invalidateCache: SystemSettings.invalidateCache,
-    createLog: AdminLog.create,
+    createLog: adminRepository.logAdminAction,
   };
   let databaseUpdate;
   let invalidated;
@@ -136,7 +146,7 @@ test('تحديث الإعدادات يحفظ الفروق فقط ويبطل ال
     return { lean: async () => ({ ...current, ...update.$set }) };
   };
   SystemSettings.invalidateCache = (fields) => { invalidated = fields; };
-  AdminLog.create = async (payload) => { audit = payload; return payload; };
+  adminRepository.logAdminAction = async (payload) => { audit = payload; return payload; };
 
   try {
     const result = await settingsService.updateSettings(
@@ -153,7 +163,7 @@ test('تحديث الإعدادات يحفظ الفروق فقط ويبطل ال
     SystemSettings.getInstance = originals.getInstance;
     SystemSettings.findOneAndUpdate = originals.findOneAndUpdate;
     SystemSettings.invalidateCache = originals.invalidateCache;
-    AdminLog.create = originals.createLog;
+    adminRepository.logAdminAction = originals.createLog;
   }
 });
 
@@ -232,7 +242,7 @@ test('عتبة الحظر تعتمد البلاغات المعتمدة وتطه�
   const repository = readSource('../repositories/adminRepository.ts');
   assert.match(service, /countActionedByReportedUser/);
   assert.match(service, /actionedCount >= threshold/);
-  assert.match(service, /target\.role === 'user'/);
+  assert.match(service, /reportedUser\.role === 'user'/);
   assert.match(repository, /actionedReportsAgainstUser/);
   assert.match(repository, /repeatOffenderThreshold/);
 });

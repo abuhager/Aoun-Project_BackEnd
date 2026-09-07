@@ -12,8 +12,10 @@ import sessionCache from '../utils/sessionCache.js';
 import { SOCKET_EVENTS } from '../socket/contracts.js';
 import { disconnectUserSockets, emitToUser } from '../socket/emitter.js';
 import adminDto from '../dtos/adminDto.js';
+import runMongoTransaction from '../utils/mongoTransaction.js';
 import type { EntityId, ServicePayload, ServiceRecord } from './serviceTypes.js';
 import { getErrorMessage } from './serviceTypes.js';
+import type { ClientSession } from 'mongoose';
 
 export type AdminRole = 'admin' | 'super_admin';
 type ReportResolutionStatus = 'actioned' | 'reviewed' | 'dismissed';
@@ -44,9 +46,10 @@ const asServiceRecord = (value: unknown): ServiceRecord | null => (
 const assertCanManageUser = async (
   targetId: EntityId,
   actorId: EntityId,
-  actorRole: AdminRole
+  actorRole: AdminRole,
+  session: ClientSession | null = null
 ) => {
-  const target = await userRepository.findByIdForAdmin(targetId);
+  const target = await userRepository.findByIdForAdmin(targetId, session);
   if (!target) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
   if (String(targetId) === String(actorId)) {
     throw new AppError('لا يمكنك تنفيذ هذا الإجراء على حسابك', 400, 'CANNOT_MODERATE_SELF');
@@ -64,42 +67,48 @@ const assertCanManageUser = async (
   return target;
 };
 
-const applyBanConsequences = async (userId: EntityId) => {
-  await Promise.all([
-    Item.updateMany(
-      { donor: userId, status: { $in: ['متاح', 'محجوز'] } },
-      {
-        $set: {
-          status: 'مخفي',
-          bookedBy: null,
-          bookedAt: null,
-          recipientConfirmed: false,
-          donorConfirmed: false,
-          recipientConfirmedAt: null,
-          donorConfirmedAt: null,
-        },
-      }
-    ),
-    Item.updateMany(
-      { bookedBy: userId, status: 'محجوز' },
-      {
-        $set: {
-          status: 'متاح',
-          bookedBy: null,
-          bookedAt: null,
-          recipientConfirmed: false,
-          donorConfirmed: false,
-          recipientConfirmedAt: null,
-          donorConfirmedAt: null,
-        },
-      }
-    ),
-    Item.updateMany(
-      { 'waitlist.user': userId },
-      { $pull: { waitlist: { user: userId } } }
-    ),
-  ]);
+const applyBanConsequences = async (
+  userId: EntityId,
+  session: ClientSession | null = null
+) => {
+  await Item.updateMany(
+    { donor: userId, status: { $in: ['متاح', 'محجوز'] } },
+    {
+      $set: {
+        status: 'مخفي',
+        bookedBy: null,
+        bookedAt: null,
+        recipientConfirmed: false,
+        donorConfirmed: false,
+        recipientConfirmedAt: null,
+        donorConfirmedAt: null,
+      },
+    },
+    { session: session ?? undefined }
+  );
+  await Item.updateMany(
+    { bookedBy: userId, status: 'محجوز' },
+    {
+      $set: {
+        status: 'متاح',
+        bookedBy: null,
+        bookedAt: null,
+        recipientConfirmed: false,
+        donorConfirmed: false,
+        recipientConfirmedAt: null,
+        donorConfirmedAt: null,
+      },
+    },
+    { session: session ?? undefined }
+  );
+  await Item.updateMany(
+    { 'waitlist.user': userId },
+    { $pull: { waitlist: { user: userId } } },
+    { session: session ?? undefined }
+  );
+};
 
+const disconnectBannedUserBestEffort = async (userId: EntityId) => {
   try {
     await disconnectUserSockets(userId, {
       code: 'ACCOUNT_BANNED',
@@ -139,9 +148,21 @@ export const banUser = async (
   reason: string | null,
   adminNote: string | null
 ) => {
-  await assertCanManageUser(userId, adminId, adminRole);
-  const user = await adminRepo.banUser(userId, reason, adminId);
-  if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
+  const user = await runMongoTransaction(async (session) => {
+    const target = await assertCanManageUser(userId, adminId, adminRole, session);
+    const updated = await adminRepo.banUser(userId, reason, adminId, session);
+    if (!updated) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
+
+    await userRepository.invalidateUserSession(userId, session);
+    await applyBanConsequences(userId, session);
+    await adminRepo.logAdminAction({
+      adminId, action: 'BAN', targetId: userId, targetModel: 'User',
+      targetName: target.name, reason: reason ?? 'حظر يدوي', adminNote: adminNote ?? null,
+      meta: { targetName: target.name, targetEmail: target.email ?? null },
+    }, session);
+
+    return updated;
+  });
 
   await notifyBestEffort(user, {
     type:  'admin_ban',
@@ -151,15 +172,8 @@ export const banUser = async (
       : 'حظرت الإدارة حسابك بسبب مخالفة سياسات المنصة.',
   }, 'ban');
 
-  await userRepository.invalidateUserSession(userId);
   sessionCache.invalidate(userId);
-  await applyBanConsequences(userId);
-
-  await adminRepo.logAdminAction({
-    adminId, action: 'BAN', targetId: userId, targetModel: 'User',
-    targetName: user.name, reason: reason ?? 'حظر يدوي', adminNote: adminNote ?? null,
-    meta: { targetName: user.name, targetEmail: user.email ?? null },
-  });
+  await disconnectBannedUserBestEffort(userId);
 
   return user;
 };
@@ -170,17 +184,20 @@ export const unbanUser = async (
   adminRole: AdminRole,
   adminNote: string | null = null
 ) => {
-  await assertCanManageUser(userId, adminId, adminRole);
-  const user = await adminRepo.unbanUser(userId);
-  if (!user) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
-  sessionCache.invalidate(userId);
+  const user = await runMongoTransaction(async (session) => {
+    const target = await assertCanManageUser(userId, adminId, adminRole, session);
+    const updated = await adminRepo.unbanUser(userId, session);
+    if (!updated) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
 
-  await adminRepo.logAdminAction({
-    adminId, action: 'UNBAN', targetId: userId, targetModel: 'User',
-    targetName: user.name, reason: 'رفع الحظر يدوياً من الأدمن', adminNote: adminNote ?? null,
-    meta: { targetName: user.name, targetEmail: user.email ?? null },
+    await adminRepo.logAdminAction({
+      adminId, action: 'UNBAN', targetId: userId, targetModel: 'User',
+      targetName: target.name, reason: 'رفع الحظر يدوياً من الأدمن', adminNote: adminNote ?? null,
+      meta: { targetName: target.name, targetEmail: target.email ?? null },
+    }, session);
+    return updated;
   });
 
+  sessionCache.invalidate(userId);
   return user;
 };
 
@@ -206,15 +223,30 @@ export const deleteItem = async (
   adminId: EntityId,
   adminNote: string | null
 ) => {
-  const item = await Item.findById(itemId).populate('donor', 'name email');
-  if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+  const item = await runMongoTransaction(async (session) => {
+    const existing = await Item.findById(itemId)
+      .populate('donor', 'name email')
+      .session(session);
+    if (!existing) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+
+    const donor = asServiceRecord(existing.donor);
+    const donorName  = typeof donor?.name === 'string' ? donor.name : null;
+    const donorEmail = typeof donor?.email === 'string' ? donor.email : null;
+    const itemTitle  = existing.title ?? 'غرض محذوف';
+
+    await Item.deleteOne({ _id: itemId }, { session });
+    await adminRepo.logAdminAction({
+      adminId, action: 'ITEM_HIDE', targetId: itemId, targetModel: 'Item',
+      targetName: donorName ?? itemTitle, reason: 'حذف غرض من لوحة الإدارة',
+      adminNote: adminNote ?? null,
+      meta: { targetName: donorName ?? itemTitle, targetEmail: donorEmail, itemTitle },
+    }, session);
+
+    return existing;
+  });
 
   const donor = asServiceRecord(item.donor);
-  const donorName  = typeof donor?.name === 'string' ? donor.name : null;
-  const donorEmail = typeof donor?.email === 'string' ? donor.email : null;
   const itemTitle  = item.title        ?? 'غرض محذوف';
-
-  await Item.deleteOne({ _id: itemId });
 
   if (item.cloudinaryId) {
     try {
@@ -246,13 +278,6 @@ export const deleteItem = async (
       itemId: null,
     }))
   );
-
-  await adminRepo.logAdminAction({
-    adminId, action: 'ITEM_HIDE', targetId: itemId, targetModel: 'Item',
-    targetName: donorName ?? itemTitle, reason: 'حذف غرض من لوحة الإدارة',
-    adminNote: adminNote ?? null,
-    meta: { targetName: donorName ?? itemTitle, targetEmail: donorEmail, itemTitle },
-  });
 
   return item;
 };
@@ -296,54 +321,124 @@ export const resolveReport = async (
     throw new AppError('حالة غير صالحة للبلاغ', 400, 'INVALID_REPORT_STATUS');
   const resolutionStatus = status as ReportResolutionStatus;
 
-  const existingReport = await reportRepository.findByIdPopulated(reportId);
-  if (!existingReport) {
-    throw new AppError('البلاغ غير موجود', 404, 'REPORT_NOT_FOUND');
-  }
-  if (existingReport.status !== 'pending') {
-    throw new AppError('تم البت في هذا البلاغ مسبقاً', 409, 'REPORT_ALREADY_RESOLVED');
-  }
-
-  const report = await adminRepo.resolvePendingReport(
-    reportId,
-    adminId,
-    resolutionStatus,
-    adminNote
-  );
-  if (!report) {
-    throw new AppError(
-      'سبق لمشرف آخر البت في هذا البلاغ',
-      409,
-      'REPORT_RESOLUTION_CONFLICT'
-    );
-  }
-
-  const fullReport = await reportRepository.findByIdPopulated(reportId);
-  const reporter = asServiceRecord(fullReport?.reporter);
-  const reportedUser = asServiceRecord(fullReport?.reportedUser);
-  const relatedItem = asServiceRecord(fullReport?.relatedItem);
-
+  const settings = await SystemSettings.getCached();
+  const threshold = settings.autoReportBanThreshold ?? 5;
   const statusLabel = {
     actioned:  'تم الإجراء',
     reviewed:  'تمّت المراجعة',
     dismissed: 'تم الرفض',
   }[resolutionStatus];
 
-  await adminRepo.logAdminAction({
-    adminId,
-    action:      'REPORT_ACTION',
-    targetId:    reportId,
-    targetModel: 'Report',
-    reason:      statusLabel,
-    adminNote:   adminNote ?? null,
-    meta: {
-      targetName:       reportedUser?.name  ?? '—',
-      reportedBy:       reporter?.name      ?? '—',
-      reason:           fullReport?.reason              ?? '—',
-      action:           statusLabel,
-      relatedItemTitle: relatedItem?.title  ?? null,
-    },
+  const transactionResult = await runMongoTransaction(async (session) => {
+    const existingReport = await reportRepository.findByIdPopulated(reportId, session);
+    if (!existingReport) {
+      throw new AppError('البلاغ غير موجود', 404, 'REPORT_NOT_FOUND');
+    }
+    if (existingReport.status !== 'pending') {
+      throw new AppError('تم البت في هذا البلاغ مسبقاً', 409, 'REPORT_ALREADY_RESOLVED');
+    }
+
+    const report = await adminRepo.resolvePendingReport(
+      reportId,
+      adminId,
+      resolutionStatus,
+      adminNote,
+      session
+    );
+    if (!report) {
+      throw new AppError(
+        'سبق لمشرف آخر البت في هذا البلاغ',
+        409,
+        'REPORT_RESOLUTION_CONFLICT'
+      );
+    }
+
+    const fullReport = await reportRepository.findByIdPopulated(reportId, session);
+    const reporter = asServiceRecord(fullReport?.reporter);
+    const reportedUser = asServiceRecord(fullReport?.reportedUser);
+    const relatedItem = asServiceRecord(fullReport?.relatedItem);
+
+    await adminRepo.logAdminAction({
+      adminId,
+      action:      'REPORT_ACTION',
+      targetId:    reportId,
+      targetModel: 'Report',
+      reason:      statusLabel,
+      adminNote:   adminNote ?? null,
+      meta: {
+        targetName:       reportedUser?.name ?? '—',
+        reportedBy:       reporter?.name ?? '—',
+        reason:           fullReport?.reason ?? '—',
+        action:           statusLabel,
+        relatedItemTitle: relatedItem?.title ?? null,
+      },
+    }, session);
+
+    let actionedCount = 0;
+    let autoBannedUser = null;
+    let autoBanReason: string | null = null;
+    if (resolutionStatus === 'actioned' && report.reportedUser) {
+      actionedCount = await reportRepository.countActionedByReportedUser(
+        report.reportedUser,
+        session
+      );
+      if (
+        actionedCount >= threshold
+        && reportedUser
+        && !reportedUser.isBanned
+        && reportedUser.role === 'user'
+      ) {
+        autoBanReason = `حظر تلقائي بعد اعتماد ${actionedCount} بلاغات`;
+        autoBannedUser = await adminRepo.banUser(
+          report.reportedUser,
+          autoBanReason,
+          adminId,
+          session
+        );
+        if (!autoBannedUser) {
+          throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
+        }
+        await userRepository.invalidateUserSession(report.reportedUser, session);
+        await applyBanConsequences(report.reportedUser, session);
+        await adminRepo.logAdminAction({
+          adminId,
+          action: 'BAN',
+          targetId: report.reportedUser,
+          targetModel: 'User',
+          targetName: typeof reportedUser.name === 'string' ? reportedUser.name : null,
+          reason: autoBanReason,
+          adminNote: `عتبة الحظر التلقائي المضبوطة: ${threshold}`,
+          meta: {
+            targetName: reportedUser.name ?? null,
+            targetEmail: reportedUser.email ?? null,
+            reportId: String(reportId),
+            actionedCount,
+            threshold,
+          },
+        }, session);
+      }
+    }
+
+    return {
+      report,
+      fullReport,
+      reporter,
+      reportedUser,
+      relatedItem,
+      autoBannedUser,
+      autoBanReason,
+    };
   });
+
+  const {
+    report,
+    fullReport,
+    reporter,
+    reportedUser,
+    relatedItem,
+    autoBannedUser,
+    autoBanReason,
+  } = transactionResult;
 
   const reporterMessage = {
     actioned:  'تمت مراجعة بلاغك واتخاذ إجراء مناسب.',
@@ -372,26 +467,16 @@ export const resolveReport = async (
       metadata: { reportId: String(reportId), status: resolutionStatus },
     }, 'report-warning');
 
-    const settings = await SystemSettings.getCached();
-    const threshold = settings.autoReportBanThreshold ?? 5;
-    const actionedCount = await reportRepository.countActionedByReportedUser(
-      report.reportedUser
-    );
-    const target = reportedUser;
-
-    if (
-      actionedCount >= threshold
-      && target
-      && !target.isBanned
-      && target.role === 'user'
-    ) {
-      await banUser(
-        report.reportedUser,
-        adminId,
-        adminRole,
-        `حظر تلقائي بعد اعتماد ${actionedCount} بلاغات`,
-        `عتبة الحظر التلقائي المضبوطة: ${threshold}`
-      );
+    if (autoBannedUser) {
+      await notifyBestEffort(autoBannedUser, {
+        type: 'admin_ban',
+        title: 'تم حظر حسابك',
+        body: autoBanReason
+          ? `حظرت الإدارة حسابك. السبب: ${autoBanReason}`
+          : 'حظرت الإدارة حسابك بسبب مخالفة سياسات المنصة.',
+      }, 'automatic-ban');
+      sessionCache.invalidate(report.reportedUser);
+      await disconnectBannedUserBestEffort(report.reportedUser);
     }
   }
 
@@ -424,25 +509,31 @@ export const promoteToLevel2 = async (
   reason: string | null = null,
   adminNote: string | null = null
 ) => {
-  const user = await assertCanManageUser(targetId, adminId, adminRole);
-  if (user.isBanned) throw new AppError('لا يمكن ترقية مستخدم محظور', 403, 'USER_BANNED');
-  if (user.trustLevel !== 1) throw new AppError(
-    `لا يمكن الترقية اليدوية — مستوى المستخدم الحالي هو ${user.trustLevel}`,
-    400, 'MANUAL_PROMOTE_RESTRICTED'
-  );
-
   const settings    = await SystemSettings.getCached();
   const level2Quota = settings?.level2Quota ?? 4;
+  const updated = await runMongoTransaction(async (session) => {
+    const user = await assertCanManageUser(targetId, adminId, adminRole, session);
+    if (user.isBanned) throw new AppError('لا يمكن ترقية مستخدم محظور', 403, 'USER_BANNED');
+    if (user.trustLevel !== 1) throw new AppError(
+      `لا يمكن الترقية اليدوية — مستوى المستخدم الحالي هو ${user.trustLevel}`,
+      400, 'MANUAL_PROMOTE_RESTRICTED'
+    );
 
-  const updated = await userRepository.setTrustLevelAndQuota(targetId, 2, level2Quota);
-  sessionCache.invalidate(targetId);
-
-  await adminRepo.logAdminAction({
-    adminId, action: 'PROMOTE', targetId, targetModel: 'User',
-    targetName: user.name, reason: reason ?? 'ترقية يدوية', adminNote: adminNote ?? null,
-    meta: { targetName: user.name, targetEmail: user.email ?? null, fromLevel: user.trustLevel, toLevel: 2 },
+    const promoted = await userRepository.setTrustLevelAndQuota(
+      targetId,
+      2,
+      level2Quota,
+      session
+    );
+    await adminRepo.logAdminAction({
+      adminId, action: 'PROMOTE', targetId, targetModel: 'User',
+      targetName: user.name, reason: reason ?? 'ترقية يدوية', adminNote: adminNote ?? null,
+      meta: { targetName: user.name, targetEmail: user.email ?? null, fromLevel: user.trustLevel, toLevel: 2 },
+    }, session);
+    return promoted;
   });
 
+  sessionCache.invalidate(targetId);
   return updated;
 };
 
@@ -453,21 +544,27 @@ export const demoteToLevel1 = async (
   reason: string | null = null,
   adminNote: string | null = null
 ) => {
-  const user = await assertCanManageUser(targetId, adminId, adminRole);
-  if (user.trustLevel === 1) throw new AppError('المستخدم في المستوى 1 بالفعل', 400, 'ALREADY_LEVEL1');
-
   const settings     = await SystemSettings.getCached();
   const defaultQuota = settings?.defaultUserQuota ?? 2;
+  const updated = await runMongoTransaction(async (session) => {
+    const user = await assertCanManageUser(targetId, adminId, adminRole, session);
+    if (user.trustLevel === 1) throw new AppError('المستخدم في المستوى 1 بالفعل', 400, 'ALREADY_LEVEL1');
 
-  const updated = await userRepository.setTrustLevelAndQuota(targetId, 1, defaultQuota);
-  sessionCache.invalidate(targetId);
-
-  await adminRepo.logAdminAction({
-    adminId, action: 'DEMOTE', targetId, targetModel: 'User',
-    targetName: user.name, reason: reason ?? 'تخفيض يدوي', adminNote: adminNote ?? null,
-    meta: { targetName: user.name, targetEmail: user.email ?? null, fromLevel: user.trustLevel, toLevel: 1 },
+    const demoted = await userRepository.setTrustLevelAndQuota(
+      targetId,
+      1,
+      defaultQuota,
+      session
+    );
+    await adminRepo.logAdminAction({
+      adminId, action: 'DEMOTE', targetId, targetModel: 'User',
+      targetName: user.name, reason: reason ?? 'تخفيض يدوي', adminNote: adminNote ?? null,
+      meta: { targetName: user.name, targetEmail: user.email ?? null, fromLevel: user.trustLevel, toLevel: 1 },
+    }, session);
+    return demoted;
   });
 
+  sessionCache.invalidate(targetId);
   return updated;
 };
 

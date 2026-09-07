@@ -1,6 +1,10 @@
 import SafeHub from '../models/SafeHub.js';
 import { ALLOWED_UPDATE_FIELDS } from '../dtos/hubDto.js';
-import type { EntityId, RepositoryPayload } from './repositoryTypes.js';
+import type {
+  EntityId,
+  RepositoryPayload,
+  RepositorySession,
+} from './repositoryTypes.js';
 
 export const findAll = () =>
   SafeHub.find({}).sort({ isActive: -1, createdAt: -1 }).lean();
@@ -12,13 +16,25 @@ export const findAllActive = () =>
     .select('-createdBy')
     .lean();
 
-export const findById = (id: EntityId) =>
-  SafeHub.findById(id).lean();
+export const findById = (
+  id: EntityId,
+  session: RepositorySession = null
+) => SafeHub.findById(id).session(session).lean();
 
-export const create = (data: RepositoryPayload) =>
-  SafeHub.create(data);
+export const create = async (
+  data: RepositoryPayload,
+  session: RepositorySession = null
+) => {
+  if (!session) return SafeHub.create(data);
+  const [hub] = await SafeHub.create([data], { session });
+  return hub;
+};
 
-export const updateById = (id: EntityId, rawBody: RepositoryPayload) => {
+export const updateById = (
+  id: EntityId,
+  rawBody: RepositoryPayload,
+  session: RepositorySession = null
+) => {
   const safeUpdate: RepositoryPayload = {};
   for (const field of ALLOWED_UPDATE_FIELDS) {          // ✅ من dto مباشرةً
     if (rawBody[field] !== undefined) safeUpdate[field] = rawBody[field];
@@ -30,13 +46,26 @@ export const updateById = (id: EntityId, rawBody: RepositoryPayload) => {
   return SafeHub.findByIdAndUpdate(id, { $set: safeUpdate }, {
     returnDocument: 'after',
     runValidators:  true,
+    session: session ?? undefined,
   });
 };
 
-export const deactivateById = (id: EntityId) =>
-  SafeHub.findByIdAndUpdate(id, { $set: { isActive: false } }, { returnDocument: 'after' });
+export const deactivateById = (
+  id: EntityId,
+  session: RepositorySession = null
+) => SafeHub.findByIdAndUpdate(
+  id,
+  { $set: { isActive: false } },
+  { returnDocument: 'after', session: session ?? undefined }
+);
 
-export const reactivateById = (id: EntityId) =>
-  SafeHub.findByIdAndUpdate(id, { $set: { isActive: true } }, { returnDocument: 'after' });
+export const reactivateById = (
+  id: EntityId,
+  session: RepositorySession = null
+) => SafeHub.findByIdAndUpdate(
+  id,
+  { $set: { isActive: true } },
+  { returnDocument: 'after', session: session ?? undefined }
+);
 
 export default { findAll, findAllActive, findById, create, updateById, deactivateById, reactivateById };

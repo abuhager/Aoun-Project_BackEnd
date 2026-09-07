@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const mongoose = require('mongoose');
 
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'test-access-secret-that-is-long-enough-123456';
@@ -22,6 +23,15 @@ const AdminLog = require('../models/AdminLog').default;
 
 const HUB_ID = '507f1f77bcf86cd799439011';
 const ADMIN_ID = '507f1f77bcf86cd799439012';
+
+const originalStartSession = mongoose.startSession;
+test.before(() => {
+  mongoose.startSession = async () => ({
+    async withTransaction(work) { await work(); },
+    async endSession() {},
+  });
+});
+test.after(() => { mongoose.startSession = originalStartSession; });
 
 const runValidation = (schemaName, body) => new Promise((resolve) => {
   const req = { body };
@@ -198,4 +208,7 @@ test('قيود Schema تطابق عقد API وسجل الأدمن يقبل SafeH
   assert.equal(SafeHub.schema.path('coordinates.lat').options.min, -90);
   assert.equal(SafeHub.schema.path('coordinates.lng').options.max, 180);
   assert.ok(AdminLog.schema.path('targetModel').options.enum.includes('SafeHub'));
+  assert.ok(AdminLog.schema.s.hooks._pres.get('save')?.length > 0);
+  assert.ok(AdminLog.schema.s.hooks._pres.get('deleteMany')?.length > 0);
+  assert.ok(AdminLog.schema.s.hooks._pres.get('findOneAndUpdate')?.length > 0);
 });

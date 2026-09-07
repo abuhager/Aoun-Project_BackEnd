@@ -3,6 +3,7 @@ import type {
   EntityId,
   PersistedDocument,
   RepositoryPayload,
+  RepositorySession,
 } from './repositoryTypes.js';
 
 type LeaderboardUser = {
@@ -127,14 +128,21 @@ export const rotateRefreshToken = (
 export const findByIdWithSession = (id: EntityId) =>
   User.findById(id).select('+refreshToken +sessionVersion +sessionIssuedAt');
 
-export const findByIdForAdmin = (id: EntityId) =>
-  User.findById(id).select(ADMIN_FIELDS);
+export const findByIdForAdmin = (
+  id: EntityId,
+  session: RepositorySession = null
+) => User.findById(id).select(ADMIN_FIELDS).session(session);
 
-export const setTrustLevelAndQuota = (id: EntityId, level: number, quota: number) =>
+export const setTrustLevelAndQuota = (
+  id: EntityId,
+  level: number,
+  quota: number,
+  session: RepositorySession = null
+) =>
   User.findByIdAndUpdate(
     id,
     { trustLevel: level, quota, promotedByAdmin: true },
-    { returnDocument: 'after' }
+    { returnDocument: 'after', session: session ?? undefined }
   ).select(
     'name email phone avatar role trustLevel trustScore quota totalDonations ' +
     'isVerified isVerifiedStudent phoneVerified isBanned isFrozen banReason ' +
@@ -237,7 +245,10 @@ export const changePassword = (userId: EntityId, hashedPassword: string) =>
     { returnDocument: 'after' }
   ).select('_id +sessionVersion');
 
-export const invalidateUserSession = (userId: EntityId) =>
+export const invalidateUserSession = (
+  userId: EntityId,
+  session: RepositorySession = null
+) =>
   User.findByIdAndUpdate(userId, {
     $inc: { sessionVersion: 1 },
     $set: { sessionIssuedAt: new Date() },
@@ -246,7 +257,7 @@ export const invalidateUserSession = (userId: EntityId) =>
       previousRefreshToken: 1,
       previousRefreshTokenExpire: 1,
     },
-  });
+  }, { session: session ?? undefined });
 
 export const findPublicProfile = (id: EntityId) =>
   User.findOne({

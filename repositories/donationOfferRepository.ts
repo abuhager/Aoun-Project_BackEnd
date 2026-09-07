@@ -5,8 +5,13 @@ import type {
   RepositorySession,
 } from './repositoryTypes.js';
 
-export const countPendingByHub = (hubId: EntityId) =>
-  DonationOffer.countDocuments({ safeHub: hubId, status: 'pending' });
+export const countPendingByHub = (
+  hubId: EntityId,
+  session: RepositorySession = null
+) => DonationOffer.countDocuments(
+  { safeHub: hubId, status: 'pending' },
+  { session: session ?? undefined }
+);
 
 export const createOffer = async (
   payload: RepositoryPayload,

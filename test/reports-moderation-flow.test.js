@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const mongoose = require('mongoose');
 
 process.env.NODE_ENV = 'test';
 process.env.CLIENT_URL = 'https://aoun.example';
@@ -30,6 +31,15 @@ const REPORTED_ID = '507f1f77bcf86cd799439012';
 const ITEM_ID = '507f1f77bcf86cd799439013';
 const REPORT_ID = '507f1f77bcf86cd799439014';
 const ADMIN_ID = '507f1f77bcf86cd799439015';
+
+const originalStartSession = mongoose.startSession;
+test.before(() => {
+  mongoose.startSession = async () => ({
+    async withTransaction(work) { await work(); },
+    async endSession() {},
+  });
+});
+test.after(() => { mongoose.startSession = originalStartSession; });
 
 const readSource = (relativePath) => fs.readFileSync(
   path.join(__dirname, relativePath),

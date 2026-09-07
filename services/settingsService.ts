@@ -1,11 +1,11 @@
-import AdminLog from '../models/AdminLog.js';
 import SystemSettings from '../models/SystemSettings.js';
+import adminRepository from '../repositories/adminRepository.js';
 import AppError from '../utils/AppError.js';
+import runMongoTransaction from '../utils/mongoTransaction.js';
 import { SOCKET_EVENTS } from '../socket/contracts.js';
 import { emitToAll } from '../socket/emitter.js';
 import { EDITABLE_SETTING_FIELDS, assertSettingsInvariants } from '../dtos/settingsDto.js';
 import type { EntityId, ServicePayload, ServiceRecord } from './serviceTypes.js';
-import { getErrorMessage } from './serviceTypes.js';
 
 const PUBLIC_SETTING_FIELDS = Object.freeze([
   'categories',
@@ -112,29 +112,24 @@ export const updateSettings = async (updates: ServicePayload, actorId: EntityId)
   const changedUpdates = Object.fromEntries(
     changedFields.map((key) => [key, sanitized[key]])
   );
-  const updated = await SystemSettings.findOneAndUpdate(
-    { _id: 'global' },
-    { $set: changedUpdates },
-    {
-      returnDocument: 'after',
-      runValidators: true,
-      context: 'query',
+  const updated = await runMongoTransaction(async (session) => {
+    const saved = await SystemSettings.findOneAndUpdate(
+      { _id: 'global' },
+      { $set: changedUpdates },
+      {
+        returnDocument: 'after',
+        runValidators: true,
+        context: 'query',
+        session,
+      }
+    ).lean();
+
+    if (!saved) {
+      throw new AppError('تعذر العثور على إعدادات النظام', 500, 'SETTINGS_NOT_FOUND');
     }
-  ).lean();
 
-  if (!updated) {
-    throw new AppError('تعذر العثور على إعدادات النظام', 500, 'SETTINGS_NOT_FOUND');
-  }
-
-  const updatedRecord = updated as unknown as ServiceRecord;
-
-  SystemSettings.invalidateCache(changedFields);
-  const publicSettings = toPublicSettings(updated as ServiceRecord);
-
-  emitToAll(SOCKET_EVENTS.SETTINGS_UPDATED, publicSettings);
-
-  try {
-    await AdminLog.create({
+    const updatedRecord = saved as unknown as ServiceRecord;
+    await adminRepository.logAdminAction({
       adminId: actorId,
       action: 'SETTINGS_UPDATE',
       targetId: null,
@@ -147,10 +142,15 @@ export const updateSettings = async (updates: ServicePayload, actorId: EntityId)
           changedFields.map((key) => [key, { before: currentRecord[key], after: updatedRecord[key] }])
         ),
       },
-    });
-  } catch (error: unknown) {
-    console.error('[Settings Audit] تعذر تسجيل تعديل الإعدادات:', getErrorMessage(error));
-  }
+    }, session);
+
+    return saved;
+  });
+
+  SystemSettings.invalidateCache(changedFields);
+  const publicSettings = toPublicSettings(updated as ServiceRecord);
+
+  emitToAll(SOCKET_EVENTS.SETTINGS_UPDATED, publicSettings);
 
   return { settings: updated, publicSettings, changedFields };
 };

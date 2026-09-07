@@ -1,6 +1,10 @@
 import Report from '../models/Report.js';
 import Item from '../models/Item.js';
-import type { EntityId, RepositoryPayload } from './repositoryTypes.js';
+import type {
+  EntityId,
+  RepositoryPayload,
+  RepositorySession,
+} from './repositoryTypes.js';
 
 type AppealUpdate = {
   reportId: EntityId;
@@ -18,11 +22,15 @@ export const findContextItem = (itemId: EntityId) =>
     .select('donor bookedBy status')
     .lean();
 
-export const findByIdPopulated = (reportId: EntityId) =>
+export const findByIdPopulated = (
+  reportId: EntityId,
+  session: RepositorySession = null
+) =>
   Report.findById(reportId)
     .populate('reportedUser', 'name email isBanned role')
     .populate('reporter',     'name email')
-    .populate('relatedItem',  'title');
+    .populate('relatedItem',  'title')
+    .session(session);
 
 export const findExistingPending = (
   reporterId: EntityId,
@@ -39,8 +47,13 @@ export const findExistingPending = (
 export const countByReportedUser = (userId: EntityId) =>
   Report.countDocuments({ reportedUser: userId });
 
-export const countActionedByReportedUser = (userId: EntityId) =>
-  Report.countDocuments({ reportedUser: userId, status: 'actioned' });
+export const countActionedByReportedUser = (
+  userId: EntityId,
+  session: RepositorySession = null
+) => Report.countDocuments(
+  { reportedUser: userId, status: 'actioned' },
+  { session: session ?? undefined }
+);
 
 export const submitAppeal = ({ reportId, userId, appealText, appealedAt }: AppealUpdate) =>
   Report.findOneAndUpdate(

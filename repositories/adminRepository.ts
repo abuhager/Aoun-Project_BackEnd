@@ -6,6 +6,7 @@ import type {
   EntityId,
   PaginationOptions,
   RepositoryRecord,
+  RepositorySession,
 } from './repositoryTypes.js';
 
 type UserListOptions = {
@@ -75,18 +76,26 @@ export const countUsers = ({ search, banned = '' }: UserListOptions = {}) => {
   return User.countDocuments(filter);
 };
 
-export const banUser = (userId: EntityId, reason: string | null, bannedBy: EntityId) =>
+export const banUser = (
+  userId: EntityId,
+  reason: string | null,
+  bannedBy: EntityId,
+  session: RepositorySession = null
+) =>
   User.findByIdAndUpdate(
     userId,
     { $set: { isBanned: true, banReason: reason, bannedBy } },
-    { returnDocument: 'after' }
+    { returnDocument: 'after', session: session ?? undefined }
   );
 
-export const unbanUser = (userId: EntityId) =>
+export const unbanUser = (
+  userId: EntityId,
+  session: RepositorySession = null
+) =>
   User.findByIdAndUpdate(
     userId,
     { $set: { isBanned: false }, $unset: { banReason: '', bannedBy: '' } },
-    { returnDocument: 'after' }
+    { returnDocument: 'after', session: session ?? undefined }
   );
 
 export const adjustTrustScore = (userId: EntityId, delta: number) =>
@@ -111,7 +120,8 @@ export const resolvePendingReport = (
   reportId: EntityId,
   adminId: EntityId,
   status: string,
-  adminNote: string | null
+  adminNote: string | null,
+  session: RepositorySession = null
 ) =>
   Report.findOneAndUpdate(
     { _id: reportId, status: 'pending' },
@@ -123,17 +133,21 @@ export const resolvePendingReport = (
         adminNote,
       },
     },
-    { returnDocument: 'after' }
+    { returnDocument: 'after', session: session ?? undefined }
   );
 
-export const logAdminAction = ({
+export const logAdminAction = async ({
   adminId, action, targetId, targetModel,
   reason, meta, targetName, adminNote,
-}: AdminActionPayload) =>
-  AdminLog.create({
+}: AdminActionPayload, session: RepositorySession = null) => {
+  const payload = {
     adminId, action, targetId, targetModel,
     reason, meta, targetName, adminNote,
-  });
+  };
+  if (!session) return AdminLog.create(payload);
+  const [entry] = await AdminLog.create([payload], { session });
+  return entry;
+};
 
 export const findAdminLogs = ({ page = 1, limit = 20 }: PaginationOptions = {}) =>
   AdminLog.find()

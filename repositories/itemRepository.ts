@@ -4,6 +4,7 @@ import type {
   DeletableDocument,
   EntityId,
   RepositoryRecord,
+  RepositorySession,
 } from './repositoryTypes.js';
 
 // ✅ ARCH-02: projection واحدة مُعرَّفة هنا فقط
@@ -22,11 +23,13 @@ export const findByIdLean = (itemId: EntityId) =>
 export const countActiveByDonor = (donorId: EntityId) =>
   Item.countDocuments({ donor: donorId, status: { $in: ['متاح', 'محجوز'] } });
 
-export const countActiveByHub = (hubId: EntityId) =>
-  Item.countDocuments({
+export const countActiveByHub = (
+  hubId: EntityId,
+  session: RepositorySession = null
+) => Item.countDocuments({
     safeHub: hubId,
     status: { $in: ['متاح', 'محجوز'] },
-  });
+  }, { session: session ?? undefined });
 
 export const countActiveBookingsByUser = (userId: EntityId) =>
   Item.countDocuments({ bookedBy: userId, status: 'محجوز' });

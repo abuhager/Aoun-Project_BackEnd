@@ -44,5 +44,23 @@ adminLogSchema.index({ createdAt: -1 }, { name: 'createdAt_desc' });
 adminLogSchema.index({ adminId: 1, createdAt: -1 }, { name: 'adminId_createdAt_desc' });
 adminLogSchema.index({ action: 1, createdAt: -1 }, { name: 'action_createdAt_desc' });
 
+const immutableAuditError = () => {
+  const error = new Error('Admin audit logs are append-only');
+  error.name = 'ImmutableAuditLogError';
+  return error;
+};
+
+// سجلات التدقيق append-only على مستوى التطبيق: يسمح بالإنشاء فقط ويمنع
+// التعديل أو الاستبدال أو الحذف عبر هذا الـModel.
+adminLogSchema.pre('save', function () {
+  if (!this.isNew) throw immutableAuditError();
+});
+adminLogSchema.pre(
+  /^(?:update|replace|delete|findOneAndUpdate|findOneAndReplace|findOneAndDelete)/,
+  function () {
+    throw immutableAuditError();
+  }
+);
+
 const AdminLog = mongoose.model('AdminLog', adminLogSchema);
 export default AdminLog;
