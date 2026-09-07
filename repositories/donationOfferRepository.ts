@@ -59,8 +59,12 @@ export const acceptOffer = (offerId: EntityId, session: RepositorySession) =>
   ).populate('donor',   'name email')
    .populate('safeHub', 'name city address');
 
-export const countPendingOffersByDonor = async (donorId: EntityId) => {
-  return DonationOffer.countDocuments({ donor: donorId, status: 'pending' });
-};
+export const countPendingOffersByDonor = (
+  donorId: EntityId,
+  session: RepositorySession = null
+) => DonationOffer.countDocuments(
+  { donor: donorId, status: 'pending' },
+  { session: session ?? undefined }
+);
 
 export default { countPendingByHub, createOffer, existsByRequestAndDonor, findViewerOffer, findOffersByRequest, findOfferById, rejectAllPendingExcept, acceptOffer, countPendingOffersByDonor };

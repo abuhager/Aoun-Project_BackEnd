@@ -10,7 +10,9 @@ import notifyUser from '../utils/notifyUser.js';
 import { SOCKET_EVENTS } from '../socket/contracts.js';
 import { emitToUser } from '../socket/emitter.js';
 import { expireDonationRequestsLogic } from '../services/donationRequestService.js';
-import type { Types } from 'mongoose';
+import runMongoTransaction from '../utils/mongoTransaction.js';
+import acquireUserOperationLocks from '../utils/userOperationLock.js';
+import type { ClientSession, Types } from 'mongoose';
 
 // ══════════════════════════════════════════════════════════════
 // ✅ NJ-19: سجل حالة Cron Jobs — يُساعد في Debugging
@@ -160,7 +162,8 @@ function scheduleQuotaReset(dayOfMonth: number): void {
 // ══════════════════════════════════════════════════════════════
 async function findEligibleWaitlistCandidate(
   item: BookingItem,
-  maxBookings: number
+  maxBookings: number,
+  session: ClientSession
 ): Promise<{ candidate: WaitlistCandidate | null; skippedUserIds: IdLike[] }> {
   const skippedUserIds: IdLike[] = [];
   const excludedUserIds = new Set(
@@ -181,18 +184,20 @@ async function findEligibleWaitlistCandidate(
       isBanned: { $ne: true },
       isFrozen: { $ne: true },
       trustLevel: { $gte: 2 },
-    }).select('_id name email').lean();
+    }).select('_id name email').session(session).lean();
 
     if (!candidate) {
       skippedUserIds.push(entry.user);
       continue;
     }
 
+    await acquireUserOperationLocks([candidate._id], session);
+
     const activeBookings = await Item.countDocuments({
       _id: { $ne: item._id },
       bookedBy: candidate._id,
       status: 'محجوز',
-    });
+    }, { session });
 
     if (activeBookings < maxBookings) {
       return { candidate, skippedUserIds };
@@ -212,11 +217,6 @@ async function processExpiredItem(
   if (item.linkedRequestId) return;
 
   const previousBookerId = item.bookedBy;
-  const { candidate, skippedUserIds } = await findEligibleWaitlistCandidate(
-    item,
-    settings.maxBookingsPerUser ?? 3
-  );
-
   const resetConfirmation = {
     recipientConfirmed:   false,
     recipientConfirmedAt: null,
@@ -226,8 +226,60 @@ async function processExpiredItem(
     reminderSent:         false,
   };
 
-  if (candidate) {
-    const promoted = await Item.findOneAndUpdate(
+  const transition = await runMongoTransaction(async (session) => {
+    const { candidate, skippedUserIds } = await findEligibleWaitlistCandidate(
+      item,
+      settings.maxBookingsPerUser ?? 3,
+      session
+    );
+
+    if (candidate) {
+      const promoted = await Item.findOneAndUpdate(
+        {
+          _id: item._id,
+          status: 'محجوز',
+          bookedBy: previousBookerId,
+          linkedRequestId: null,
+          recipientConfirmed: { $ne: true },
+        },
+        {
+          $set: {
+            bookedBy: candidate._id,
+            status:   'محجوز',
+            bookedAt: new Date(),
+            ...resetConfirmation,
+          },
+          $pull: {
+            waitlist: {
+              user: { $in: [...skippedUserIds, candidate._id] },
+            },
+          },
+          $addToSet: { cancelledBy: previousBookerId },
+        },
+        { returnDocument: 'after', session }
+      );
+
+      return { candidate, promoted, released: null };
+    }
+
+    const releaseUpdate: {
+      $set: Record<string, unknown>;
+      $addToSet: Record<string, unknown>;
+      $pull?: Record<string, unknown>;
+    } = {
+      $set: {
+        status:   'متاح',
+        bookedBy: null,
+        bookedAt: null,
+        ...resetConfirmation,
+      },
+      $addToSet: { cancelledBy: previousBookerId },
+    };
+    if (skippedUserIds.length > 0) {
+      releaseUpdate.$pull = { waitlist: { user: { $in: skippedUserIds } } };
+    }
+
+    const released = await Item.findOneAndUpdate(
       {
         _id: item._id,
         status: 'محجوز',
@@ -235,22 +287,15 @@ async function processExpiredItem(
         linkedRequestId: null,
         recipientConfirmed: { $ne: true },
       },
-      {
-        $set: {
-          bookedBy: candidate._id,
-          status:   'محجوز',
-          bookedAt: new Date(),
-          ...resetConfirmation,
-        },
-        $pull: {
-          waitlist: {
-            user: { $in: [...skippedUserIds, candidate._id] },
-          },
-        },
-        $addToSet: { cancelledBy: previousBookerId },
-      },
-      { returnDocument: 'after' }
+      releaseUpdate,
+      { returnDocument: 'after', session }
     );
+
+    return { candidate: null, promoted: null, released };
+  });
+
+  if (transition.candidate) {
+    const { candidate, promoted } = transition;
 
     if (!promoted) return;
 
@@ -302,36 +347,8 @@ async function processExpiredItem(
       '[Cron] فشل إشعار المتبرع:',
       getErrorMessage(err)
     ));
-
   } else {
-    const releaseUpdate: {
-      $set: Record<string, unknown>;
-      $addToSet: Record<string, unknown>;
-      $pull?: Record<string, unknown>;
-    } = {
-      $set: {
-        status:   'متاح',
-        bookedBy: null,
-        bookedAt: null,
-        ...resetConfirmation,
-      },
-      $addToSet: { cancelledBy: previousBookerId },
-    };
-    if (skippedUserIds.length > 0) {
-      releaseUpdate.$pull = { waitlist: { user: { $in: skippedUserIds } } };
-    }
-
-    const released = await Item.findOneAndUpdate(
-      {
-        _id: item._id,
-        status: 'محجوز',
-        bookedBy: previousBookerId,
-        linkedRequestId: null,
-        recipientConfirmed: { $ne: true },
-      },
-      releaseUpdate,
-      { returnDocument: 'after' }
-    );
+    const { released } = transition;
 
     if (!released) return;
 

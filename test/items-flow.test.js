@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const mongoose = require('mongoose');
 
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'test-access-secret-that-is-long-enough-123456';
@@ -31,6 +32,17 @@ const queryReturning = (value) => ({
   select() { return this; },
   lean() { return Promise.resolve(value); },
 });
+
+const createSessionStub = () => {
+  let active = false;
+  return {
+    startTransaction() { active = true; },
+    inTransaction() { return active; },
+    async commitTransaction() { active = false; },
+    async abortTransaction() { active = false; },
+    async endSession() {},
+  };
+};
 
 test('عقد Controller الخاص بالتعديل والحذف موجود في itemService', () => {
   assert.equal(typeof itemService.updateItemLogic, 'function');
@@ -346,19 +358,25 @@ test('قائمة التصفح لا تمرر index الخاص بالمصفوفة 
 
 test('الحجز يستخدم maxBookingsPerUser الحقيقي ويمنع تجاوز الحد', async (t) => {
   const originals = {
+    startSession: mongoose.startSession,
     userFindById: User.findById,
+    userUpdateOne: User.updateOne,
     itemFindById: Item.findById,
     countDocuments: Item.countDocuments,
     getCached: SystemSettings.getCached,
   };
   t.after(() => {
+    mongoose.startSession = originals.startSession;
     User.findById = originals.userFindById;
+    User.updateOne = originals.userUpdateOne;
     Item.findById = originals.itemFindById;
     Item.countDocuments = originals.countDocuments;
     SystemSettings.getCached = originals.getCached;
   });
 
   User.findById = () => queryReturning({ isVerified: true, trustLevel: 2 });
+  User.updateOne = async () => ({ matchedCount: 1 });
+  mongoose.startSession = async () => createSessionStub();
   Item.findById = () => queryReturning({
     status: 'متاح',
     donor: OWNER_ID,
@@ -377,14 +395,18 @@ test('الحجز يستخدم maxBookingsPerUser الحقيقي ويمنع تج�
 
 test('الحجز المباشر يعيد فحص cancelledBy ذرياً وينظف أي انتظار قديم', async (t) => {
   const originals = {
+    startSession: mongoose.startSession,
     userFindById: User.findById,
+    userUpdateOne: User.updateOne,
     itemFindById: Item.findById,
     findOneAndUpdate: Item.findOneAndUpdate,
     countDocuments: Item.countDocuments,
     getCached: SystemSettings.getCached,
   };
   t.after(() => {
+    mongoose.startSession = originals.startSession;
     User.findById = originals.userFindById;
+    User.updateOne = originals.userUpdateOne;
     Item.findById = originals.itemFindById;
     Item.findOneAndUpdate = originals.findOneAndUpdate;
     Item.countDocuments = originals.countDocuments;
@@ -394,6 +416,8 @@ test('الحجز المباشر يعيد فحص cancelledBy ذرياً وينظ�
   let updateFilter;
   let updateBody;
   User.findById = () => queryReturning({ isVerified: true, trustLevel: 2 });
+  User.updateOne = async () => ({ matchedCount: 1 });
+  mongoose.startSession = async () => createSessionStub();
   Item.findById = () => queryReturning({
     status: 'متاح',
     donor: OWNER_ID,

@@ -137,6 +137,7 @@ test('إيقاف ميزة الهاتف لا يمنع Level 1 من تقديم ع�
     getIO: socket.getIO,
     startSession: mongoose.startSession,
     updateRequest: DonationRequest.updateOne,
+    updateUser: User.updateOne,
     phoneFlag: process.env.PHONE_VERIFICATION_ENABLED,
   };
   t.after(() => {
@@ -151,6 +152,7 @@ test('إيقاف ميزة الهاتف لا يمنع Level 1 من تقديم ع�
     socket.getIO = originals.getIO;
     mongoose.startSession = originals.startSession;
     DonationRequest.updateOne = originals.updateRequest;
+    User.updateOne = originals.updateUser;
     if (originals.phoneFlag === undefined) delete process.env.PHONE_VERIFICATION_ENABLED;
     else process.env.PHONE_VERIFICATION_ENABLED = originals.phoneFlag;
   });
@@ -198,6 +200,7 @@ test('إيقاف ميزة الهاتف لا يمنع Level 1 من تقديم ع�
     };
   };
   DonationRequest.updateOne = async () => ({ matchedCount: 1 });
+  User.updateOne = async () => ({ matchedCount: 1 });
 
   const result = await donationRequestService.submitOfferLogic(
     REQUEST_ID,
@@ -499,6 +502,7 @@ test('قبول العرض ينشئ غرضاً محجوزاً مرة واحدة �
     findOffers: DonationOffer.find,
     updateOffers: DonationOffer.updateMany,
     findUser: User.findOne,
+    updateUser: User.updateOne,
     findHub: SafeHub.findOne,
     countItems: Item.countDocuments,
     createItem: Item.create,
@@ -514,6 +518,7 @@ test('قبول العرض ينشئ غرضاً محجوزاً مرة واحدة �
     DonationOffer.find = originals.findOffers;
     DonationOffer.updateMany = originals.updateOffers;
     User.findOne = originals.findUser;
+    User.updateOne = originals.updateUser;
     SafeHub.findOne = originals.findHub;
     Item.countDocuments = originals.countItems;
     Item.create = originals.createItem;
@@ -572,6 +577,7 @@ test('قبول العرض ينشئ غرضاً محجوزاً مرة واحدة �
       ? { _id: REQUESTER_ID, trustLevel: 2 }
       : { _id: DONOR_ID, name: 'متبرع', trustLevel: 1, phoneVerified: false }
   );
+  User.updateOne = async () => ({ matchedCount: 1 });
   SafeHub.findOne = () => queryReturning({
     _id: HUB_ID,
     name: 'مركز عمان',

@@ -54,6 +54,8 @@ const userSchema = new mongoose.Schema(
     previousRefreshTokenExpire: { type: Date, select: false },
     sessionVersion:      { type: Number, default: 0, select: false },
     sessionIssuedAt:     { type: Date,   select: false },
+    // رقم داخلي لتسلسل العمليات التي تتحقق من حدود متعددة المستندات.
+    operationVersion:    { type: Number, default: 0, select: false },
   },
   { timestamps: true }
 );

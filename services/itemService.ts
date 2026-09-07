@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import type { ClientSession } from 'mongoose';
 import Item from '../models/Item.js';
 import User from '../models/User.js';
 import SystemSettings from '../models/SystemSettings.js';
@@ -14,6 +15,8 @@ import { toPublicItem, toDonorItem, toReceiverItem } from '../dtos/itemDto.js';
 import { buildGamificationProfile } from '../utils/gamification.js';
 import { SOCKET_EVENTS } from '../socket/contracts.js';
 import { emitToAll, emitToUser } from '../socket/emitter.js';
+import runMongoTransaction from '../utils/mongoTransaction.js';
+import acquireUserOperationLocks from '../utils/userOperationLock.js';
 import type { EntityId, ServicePayload, ServiceRecord, UploadedFile } from './serviceTypes.js';
 import { getErrorMessage } from './serviceTypes.js';
 
@@ -91,7 +94,8 @@ const findNextEligibleWaitlistCandidate = async (
   waitlist: WaitlistEntry[] | null | undefined,
   itemId: EntityId,
   maxBookings: number,
-  excludedUserIds: EntityReference[] = []
+  excludedUserIds: EntityReference[],
+  session: ClientSession
 ) => {
   const skippedUserIds: EntityId[] = [];
   const excluded = new Set(
@@ -114,18 +118,20 @@ const findNextEligibleWaitlistCandidate = async (
       isBanned: { $ne: true },
       isFrozen: { $ne: true },
       trustLevel: { $gte: 2 },
-    }).select('_id name email').lean();
+    }).select('_id name email').session(session).lean();
 
     if (!candidate) {
       skippedUserIds.push(candidateId);
       continue;
     }
 
+    await acquireUserOperationLocks([candidate._id], session);
+
     const activeBookings = await Item.countDocuments({
       _id: { $ne: itemId },
       bookedBy: candidate._id,
       status: 'محجوز',
-    });
+    }, { session });
 
     if (activeBookings < maxBookings) {
       return { candidate, skippedUserIds };
@@ -276,10 +282,9 @@ export const createItemLogic = async (
 ) => {
   validateImageFile(file, { required: true });
 
-  const [user, settings, activeCount, safeHub] = await Promise.all([
+  const [user, settings, safeHub] = await Promise.all([
     User.findById(userId).select('isVerified trustLevel quota').lean(),
     SystemSettings.getCached(),
-    Item.countDocuments({ donor: userId, status: { $in: ['متاح', 'محجوز'] } }),
     body.safeHub
       ? SafeHub.findOne({ _id: body.safeHub, isActive: { $ne: false } }).lean()
       : Promise.resolve(null),
@@ -308,27 +313,37 @@ export const createItemLogic = async (
       ? (settings.maxActiveDonationsLevel2Plus ?? 4)
       : (settings.maxActiveDonationsPerUser    ?? 2);
 
-  if (activeCount >= maxItems)
-    throw new AppError(
-      `لا يمكنك نشر أكثر من ${maxItems} غرض نشط في نفس الوقت`,
-      429,
-      'MAX_ACTIVE_ITEMS_REACHED'
-    );
-
   const uploadResult = await uploadToCloudinary(file.buffer);
   let item;
 
   try {
-    item = await Item.create({
-      title:        body.title?.trim(),
-      description:  body.description?.trim(),
-      category:     body.category,
-      location:     body.location?.trim(),
-      condition:    body.condition,
-      safeHub:      safeHub?._id ?? null,
-      donor:        userId,
-      imageUrl:     uploadResult.secure_url,
-      cloudinaryId: uploadResult.public_id,
+    item = await runMongoTransaction(async (session) => {
+      await acquireUserOperationLocks([userId], session);
+      const activeCount = await Item.countDocuments(
+        { donor: userId, status: { $in: ['متاح', 'محجوز'] } },
+        { session }
+      );
+
+      if (activeCount >= maxItems)
+        throw new AppError(
+          `لا يمكنك نشر أكثر من ${maxItems} غرض نشط في نفس الوقت`,
+          429,
+          'MAX_ACTIVE_ITEMS_REACHED'
+        );
+
+      const [createdItem] = await Item.create([{
+        title:        body.title?.trim(),
+        description:  body.description?.trim(),
+        category:     body.category,
+        location:     body.location?.trim(),
+        condition:    body.condition,
+        safeHub:      safeHub?._id ?? null,
+        donor:        userId,
+        imageUrl:     uploadResult.secure_url,
+        cloudinaryId: uploadResult.public_id,
+      }], { session });
+
+      return createdItem;
     });
   } catch (err) {
     try {
@@ -437,38 +452,41 @@ export const bookItemLogic = async (itemId: EntityId, userId: EntityId) => {
   const userObjectId = new mongoose.Types.ObjectId(userId);
 
   if (snapshot.status === 'متاح') {
-    const currentBookings = await Item.countDocuments({
-      bookedBy: userId,
-      status:   'محجوز',
-    });
+    const item = await runMongoTransaction(async (session) => {
+      await acquireUserOperationLocks([userId], session);
+      const currentBookings = await Item.countDocuments({
+        bookedBy: userId,
+        status:   'محجوز',
+      }, { session });
 
-    if (currentBookings >= maxBookings)
-      throw new AppError(
-        `وصلت للحد الأقصى (${maxBookings} حجوزات نشطة)`,
-        429,
-        'MAX_BOOKINGS_REACHED'
-      );
+      if (currentBookings >= maxBookings)
+        throw new AppError(
+          `وصلت للحد الأقصى (${maxBookings} حجوزات نشطة)`,
+          429,
+          'MAX_BOOKINGS_REACHED'
+        );
 
-    const item = await Item.findOneAndUpdate(
-      {
-        _id:      itemId,
-        status:   'متاح',
-        donor:    { $ne: userObjectId },
-        bookedBy: null,
-        linkedRequestId: null,
-        cancelledBy: { $ne: userObjectId },
-      },
-      {
-        $set: {
-          status:   'محجوز',
-          bookedBy: userId,
-          bookedAt: new Date(),
-          ...resetDeliveryState(),
+      return Item.findOneAndUpdate(
+        {
+          _id:      itemId,
+          status:   'متاح',
+          donor:    { $ne: userObjectId },
+          bookedBy: null,
+          linkedRequestId: null,
+          cancelledBy: { $ne: userObjectId },
         },
-        $pull: { waitlist: { user: userObjectId } },
-      },
-      { returnDocument: 'after', runValidators: true }
-    ).populate('donor', 'name email');
+        {
+          $set: {
+            status:   'محجوز',
+            bookedBy: userId,
+            bookedAt: new Date(),
+            ...resetDeliveryState(),
+          },
+          $pull: { waitlist: { user: userObjectId } },
+        },
+        { returnDocument: 'after', runValidators: true, session }
+      ).populate('donor', 'name email');
+    });
 
     if (!item)
       throw new AppError(
@@ -620,16 +638,19 @@ export const cancelBookingLogic = async (itemId: EntityId, userId: EntityId) => 
   const settings = await SystemSettings.getCached();
   const maxBookings = settings.maxBookingsPerUser ?? 3;
   const oldBookerId = snapshot.bookedBy;
-  const { candidate, skippedUserIds } = await findNextEligibleWaitlistCandidate(
-    snapshot.waitlist,
-    itemId,
-    maxBookings,
-    [snapshot.donor, oldBookerId, ...(snapshot.cancelledBy ?? [])]
-  );
+  const { candidate, skippedUserIds, promoted } = await runMongoTransaction(async (session) => {
+    const next = await findNextEligibleWaitlistCandidate(
+      snapshot.waitlist,
+      itemId,
+      maxBookings,
+      [snapshot.donor, oldBookerId, ...(snapshot.cancelledBy ?? [])],
+      session
+    );
 
-  if (candidate) {
-    const removedWaitlistIds = [...skippedUserIds, candidate._id];
-    const promoted = await Item.findOneAndUpdate(
+    if (!next.candidate) return { ...next, promoted: null };
+
+    const removedWaitlistIds = [...next.skippedUserIds, next.candidate._id];
+    const updatedItem = await Item.findOneAndUpdate(
       {
         _id:      itemId,
         status:   'محجوز',
@@ -639,7 +660,7 @@ export const cancelBookingLogic = async (itemId: EntityId, userId: EntityId) => 
       },
       {
         $set: {
-          bookedBy: candidate._id,
+          bookedBy: next.candidate._id,
           bookedAt: new Date(),
           status: 'محجوز',
           ...resetDeliveryState(),
@@ -647,11 +668,15 @@ export const cancelBookingLogic = async (itemId: EntityId, userId: EntityId) => 
         $pull: { waitlist: { user: { $in: removedWaitlistIds } } },
         $addToSet: { cancelledBy: oldBookerId },
       },
-      { returnDocument: 'after' }
+      { returnDocument: 'after', session }
     )
       .populate('donor', 'name email')
       .populate('bookedBy', 'name');
 
+    return { ...next, promoted: updatedItem };
+  });
+
+  if (candidate) {
     if (!promoted)
       throw new AppError('تعذّر إلغاء الحجز — حاول مرة أخرى', 409, 'CANCEL_CONFLICT');
 

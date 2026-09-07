@@ -13,6 +13,8 @@ import AppError from '../utils/AppError.js';
 import { uploadToCloudinary, deleteFromCloudinary } from '../utils/uploadToCloudinary.js';
 import { validateImageFile } from '../utils/imageValidation.js';
 import notifyUser from '../utils/notifyUser.js';
+import runMongoTransaction from '../utils/mongoTransaction.js';
+import acquireUserOperationLocks from '../utils/userOperationLock.js';
 import { isPhoneVerificationEnabled } from '../middlewares/phoneVerificationFeature.js';
 import type { ClientSession } from 'mongoose';
 import type { EntityId, UploadedFile } from './serviceTypes.js';
@@ -300,18 +302,6 @@ export const createRequestLogic = async (body: RequestCreateInput, userId: Entit
 
   const currentMonth = new Date().toISOString().slice(0, 7);
   const maxRequests = requestSettings.maxActiveRequestsPerMonth ?? DEFAULT_REQUEST_LIMIT;
-  const usedThisMonth = await donationRequestRepository.countAllMonthlyRequests({
-    userId,
-    month: currentMonth,
-  });
-
-  if (usedThisMonth >= maxRequests) {
-    throw new AppError(
-      `لا يمكنك نشر أكثر من ${maxRequests} طلب في الشهر الواحد (بما فيها الملغية)`,
-      429,
-      'MONTHLY_LIMIT_EXCEEDED'
-    );
-  }
 
   if (!requestSettings.categories?.includes(body.category))
     throw new AppError(`التصنيف "${body.category}" غير مدعوم`, 400, 'INVALID_CATEGORY');
@@ -324,16 +314,32 @@ export const createRequestLogic = async (body: RequestCreateInput, userId: Entit
     expiresAt.getDate() + (requestSettings.requestExpiryDays ?? DEFAULT_REQUEST_EXPIRY_DAYS)
   );
 
-  const request = await donationRequestRepository.createRequest({
-    title: body.title.trim(),
-    description: body.description?.trim() || null,
-    category: body.category,
-    location: body.location.trim(),
-    urgency: body.urgency ?? 'medium',
-    requester: userId,
-    month: currentMonth,
-    expiresAt,
-    status: 'active',
+  const request = await runMongoTransaction(async (session) => {
+    await acquireUserOperationLocks([userId], session);
+    const usedThisMonth = await donationRequestRepository.countAllMonthlyRequests({
+      userId,
+      month: currentMonth,
+    }, session);
+
+    if (usedThisMonth >= maxRequests) {
+      throw new AppError(
+        `لا يمكنك نشر أكثر من ${maxRequests} طلب في الشهر الواحد (بما فيها الملغية)`,
+        429,
+        'MONTHLY_LIMIT_EXCEEDED'
+      );
+    }
+
+    return donationRequestRepository.createRequest({
+      title: body.title.trim(),
+      description: body.description?.trim() || null,
+      category: body.category,
+      location: body.location.trim(),
+      urgency: body.urgency ?? 'medium',
+      requester: userId,
+      month: currentMonth,
+      expiresAt,
+      status: 'active',
+    }, session);
   });
 
   return {
@@ -523,12 +529,11 @@ export const submitOfferLogic = async (
   if (donorLevel < minLevel)
     throw new AppError(`يلزم Level ${minLevel} على الأقل للتبرع`, 403, 'INSUFFICIENT_TRUST_LEVEL');
 
-  const [alreadyOffered, safeHub, pendingOffersCount] = await Promise.all([
+  const [alreadyOffered, safeHub] = await Promise.all([
     donationOfferRepository.existsByRequestAndDonor(requestId, donorId),
     body.safeHub
       ? SafeHub.findOne({ _id: body.safeHub, isActive: { $ne: false } }).lean()
       : Promise.resolve(null),
-    donationOfferRepository.countPendingOffersByDonor(donorId),
   ]);
 
   if (alreadyOffered)
@@ -539,54 +544,56 @@ export const submitOfferLogic = async (
     throw new AppError('نقطة الاستلام غير موجودة أو غير مفعّلة', 400, 'INVALID_SAFE_HUB');
 
   const maxPendingOffers = settings.maxPendingOffersPerDonor ?? DEFAULT_PENDING_OFFERS_LIMIT;
-  if (pendingOffersCount >= maxPendingOffers) {
-    throw new AppError(
-      `لديك ${pendingOffersCount} عرض معلّق — انتظر حتى يُعالَج بعضها`,
-      429,
-      'MAX_PENDING_OFFERS_REACHED'
-    );
-  }
 
-  let uploaded = null;
-  let session = null;
+  let uploaded: Awaited<ReturnType<typeof uploadToCloudinary>> | null = null;
   try {
     if (file) {
       validateImageFile(file);
       uploaded = await uploadToCloudinary(file.buffer, 'aoun-request-offers');
     }
 
-    session = await mongoose.startSession();
-    session.startTransaction();
-
-    const activeRequest = await DonationRequest.updateOne(
-      {
-        _id: requestId,
-        status: 'active',
-        expiresAt: { $gt: new Date() },
-      },
-      { $currentDate: { updatedAt: true } },
-      { session }
-    );
-    if (activeRequest.matchedCount !== 1) {
-      throw new AppError(
-        'الطلب لم يعد نشطاً؛ حدّث الصفحة',
-        409,
-        'REQUEST_NOT_AVAILABLE'
+    const offer = await runMongoTransaction(async (session) => {
+      await acquireUserOperationLocks([donorId], session);
+      const pendingOffersCount = await donationOfferRepository.countPendingOffersByDonor(
+        donorId,
+        session
       );
-    }
+      if (pendingOffersCount >= maxPendingOffers) {
+        throw new AppError(
+          `لديك ${pendingOffersCount} عرض معلّق — انتظر حتى يُعالَج بعضها`,
+          429,
+          'MAX_PENDING_OFFERS_REACHED'
+        );
+      }
 
-    const offer = await donationOfferRepository.createOffer({
-      request: requestId,
-      donor: donorId,
-      safeHub: safeHub?._id ?? null,
-      condition: body.condition,
-      description: body.description?.trim() || null,
-      imageUrl: uploaded?.secure_url ?? null,
-      cloudinaryId: uploaded?.public_id ?? null,
-      status: 'pending',
-    }, session);
+      const activeRequest = await DonationRequest.updateOne(
+        {
+          _id: requestId,
+          status: 'active',
+          expiresAt: { $gt: new Date() },
+        },
+        { $currentDate: { updatedAt: true } },
+        { session }
+      );
+      if (activeRequest.matchedCount !== 1) {
+        throw new AppError(
+          'الطلب لم يعد نشطاً؛ حدّث الصفحة',
+          409,
+          'REQUEST_NOT_AVAILABLE'
+        );
+      }
 
-    await session.commitTransaction();
+      return donationOfferRepository.createOffer({
+        request: requestId,
+        donor: donorId,
+        safeHub: safeHub?._id ?? null,
+        condition: body.condition,
+        description: body.description?.trim() || null,
+        imageUrl: uploaded?.secure_url ?? null,
+        cloudinaryId: uploaded?.public_id ?? null,
+        status: 'pending',
+      }, session);
+    });
 
     queueBackground('submitDonationOffer', () =>
       notifyUser(getObjectId(request.requester), {
@@ -607,7 +614,6 @@ export const submitOfferLogic = async (
       status: 'pending',
     };
   } catch (error) {
-    if (session?.inTransaction()) await session.abortTransaction();
     if (uploaded?.public_id) {
       try {
         await deleteFromCloudinary(uploaded.public_id);
@@ -619,8 +625,6 @@ export const submitOfferLogic = async (
       }
     }
     throw normalizeOfferDuplicate(error);
-  } finally {
-    if (session) await endSession(session);
   }
 };
 
@@ -690,6 +694,8 @@ export const acceptOfferLogic = async (
 
     if (!offer)
       throw new AppError('العرض غير متاح أو تمت معالجته مسبقاً', 409, 'OFFER_NOT_AVAILABLE');
+
+    await acquireUserOperationLocks([userId, offer.donor], session);
 
     const [requesterUser, donor, hub, requesterBookings, donorActiveItems, pendingOffers] = await Promise.all([
       User.findOne({

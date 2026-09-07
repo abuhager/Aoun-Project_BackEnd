@@ -3,6 +3,7 @@ import type {
   EntityId,
   RepositoryFilter,
   RepositoryPayload,
+  RepositorySession,
 } from './repositoryTypes.js';
 
 type MonthlyRequestQuery = { userId: EntityId; month: string };
@@ -19,8 +20,13 @@ type ExpiredRequestQuery = {
   limit?: number;
 };
 
-export const countAllMonthlyRequests = ({ userId, month }: MonthlyRequestQuery) =>
-  DonationRequest.countDocuments({ requester: userId, month });
+export const countAllMonthlyRequests = (
+  { userId, month }: MonthlyRequestQuery,
+  session: RepositorySession = null
+) => DonationRequest.countDocuments(
+  { requester: userId, month },
+  { session: session ?? undefined }
+);
 
 export const countActiveMonthlyRequests = ({ userId, month, now }: ActiveMonthlyRequestQuery) =>
   DonationRequest.countDocuments({
@@ -30,8 +36,14 @@ export const countActiveMonthlyRequests = ({ userId, month, now }: ActiveMonthly
     expiresAt: { $gt: now },
   });
 
-export const createRequest = (payload: RepositoryPayload) =>
-  DonationRequest.create(payload);
+export const createRequest = async (
+  payload: RepositoryPayload,
+  session: RepositorySession = null
+) => {
+  if (!session) return DonationRequest.create(payload);
+  const [request] = await DonationRequest.create([payload], { session });
+  return request;
+};
 
 export const findRequests = ({ filter, skip, limit }: RequestListQuery) =>
   DonationRequest.find(filter)
