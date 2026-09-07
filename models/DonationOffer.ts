@@ -42,5 +42,14 @@ const donationOfferSchema = new mongoose.Schema(
     },
   },
   { timestamps: true, autoIndex: false }
-);const DonationOffer = mongoose.model('DonationOffer', donationOfferSchema);
+);
+
+donationOfferSchema.index(
+  { request: 1, donor: 1 },
+  { unique: true, name: 'request_donor_unique' }
+);
+donationOfferSchema.index({ safeHub: 1, status: 1 }, { name: 'safeHub_status' });
+donationOfferSchema.index({ donor: 1, status: 1 }, { name: 'donor_status' });
+
+const DonationOffer = mongoose.model('DonationOffer', donationOfferSchema);
 export default DonationOffer;

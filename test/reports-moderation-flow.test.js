@@ -23,6 +23,7 @@ const reportService = require('../services/reportService').default;
 const adminService = require('../services/adminService').default;
 const validateBody = require('../middlewares/validateBody').default;
 const sendEmail = require('../utils/sendEmail').default;
+const { getIndexGroups } = require('../utils/ensureIndexes');
 
 const REPORTER_ID = '507f1f77bcf86cd799439011';
 const REPORTED_ID = '507f1f77bcf86cd799439012';
@@ -306,10 +307,15 @@ test('فهرس البلاغ المفتوح جزئي وقابل للترقية د
   assert.equal(index[1].unique, true);
   assert.deepEqual(index[1].partialFilterExpression, { status: 'pending' });
 
-  const ensureIndexes = readSource('../utils/ensureIndexes.ts');
-  assert.match(ensureIndexes, /pending_report_context_unique/);
-  assert.match(ensureIndexes, /partialFilterExpression:\s*\{ status: 'pending' \}/);
-  assert.match(ensureIndexes, /replaceIfDifferent:\s*true/);
+  const reportGroup = getIndexGroups().find(({ model }) => model.modelName === 'Report');
+  const productionIndex = reportGroup?.indexes.find(({ name }) => (
+    name === 'pending_report_context_unique'
+  ));
+
+  assert.ok(productionIndex);
+  assert.equal(productionIndex.unique, true);
+  assert.equal(productionIndex.replaceIfDifferent, true);
+  assert.deepEqual(productionIndex.partialFilterExpression, { status: 'pending' });
 });
 
 test('تجميع تقارير الإدارة يحسب العدادات بمرور واحد ويوازي العدد الكلي', () => {

@@ -36,6 +36,8 @@ const reportSchema = new mongoose.Schema(
 
 // ✅ FIX BUG-05: Compound index لتسريع الـ Aggregation على status + createdAt
 reportSchema.index({ status: 1, createdAt: -1 });
+reportSchema.index({ reportedUser: 1, status: 1 }, { name: 'reportedUser_status' });
+reportSchema.index({ reporter: 1 }, { name: 'reporter' });
 
 // منع تكرار البلاغ المفتوح نفسه (يسمح بإعادة البلاغ بعد إغلاق السابق)
 reportSchema.index(

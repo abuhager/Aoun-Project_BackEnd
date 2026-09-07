@@ -60,10 +60,19 @@ test('حالات العرض تغطي السحب والإلغاء والانته�
 
 test('مهمة الفهارس تزيل TTL القديم وتمنع تكرار المتبرع والغرض المرتبط', () => {
   const source = fs.readFileSync(path.join(__dirname, '../utils/ensureIndexes.ts'), 'utf8');
+  const offerIndex = DonationOffer.schema.indexes().find(([key]) => (
+    key.request === 1 && key.donor === 1
+  ));
+  const linkedItemIndex = Item.schema.indexes().find(([key]) => key.linkedRequestId === 1);
+
   assert.match(source, /dropObsoleteDonationRequestTtlIndexes/);
-  assert.match(source, /name: 'request_donor_unique'/);
-  assert.match(source, /name: 'linked_request_unique'/);
-  assert.doesNotMatch(source, /name: 'ttl_expiresAt'/);
+  assert.equal(offerIndex?.[1].name, 'request_donor_unique');
+  assert.equal(offerIndex?.[1].unique, true);
+  assert.equal(linkedItemIndex?.[1].name, 'linked_request_unique');
+  assert.equal(linkedItemIndex?.[1].unique, true);
+  assert.deepEqual(linkedItemIndex?.[1].partialFilterExpression, {
+    linkedRequestId: { $type: 'objectId' },
+  });
 });
 
 test('إنشاء الطلب يحترم minTrustLevelForRequests الديناميكي', async (t) => {

@@ -13,6 +13,7 @@
     "check": "npm run typecheck",
     "verify": "npm run typecheck && npm test && npm run build",
     "db:indexes": "tsx utils/ensureIndexes.ts",
+    "db:indexes:verify": "tsx utils/ensureIndexes.ts --verify",
     "db:seed:mock": "tsx scripts/seed-mock-data.ts",
     "perf:smoke": "tsx scripts/load-smoke.ts"
   },

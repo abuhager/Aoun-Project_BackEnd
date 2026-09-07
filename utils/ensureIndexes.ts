@@ -2,13 +2,18 @@ import 'dotenv/config';
 import mongoose from 'mongoose';
 import type { mongo } from 'mongoose';
 import { isDeepStrictEqual } from 'node:util';
-import Item from '../models/Item.js';
-import Report from '../models/Report.js';
-import DonationRequest from '../models/DonationRequest.js';
-import DonationOffer from '../models/DonationOffer.js';
-import User from '../models/User.js';
+import AdminLog from '../models/AdminLog.js';
 import Conversation from '../models/Conversation.js';
+import DonationOffer from '../models/DonationOffer.js';
+import DonationRequest from '../models/DonationRequest.js';
+import Item from '../models/Item.js';
 import Message from '../models/Message.js';
+import Notification from '../models/Notification.js';
+import Rating from '../models/Rating.js';
+import Report from '../models/Report.js';
+import SafeHub from '../models/SafeHub.js';
+import SystemSettings from '../models/SystemSettings.js';
+import User from '../models/User.js';
 
 type IndexDefinition = {
   key: Record<string, mongo.IndexDirection>;
@@ -22,10 +27,16 @@ type IndexDefinition = {
 };
 
 type ExistingIndex = IndexDefinition & { name: string };
+type SchemaIndex = [
+  fields: Record<string, mongo.IndexDirection>,
+  options: mongoose.IndexOptions,
+];
 type IndexableModel = {
   modelName: string;
   collection: mongoose.Collection;
+  schema: { indexes(): SchemaIndex[] };
 };
+type IndexGroup = { model: IndexableModel; indexes: IndexDefinition[] };
 type IndexableCollection = mongoose.Collection;
 
 const getErrorMessage = (error: unknown): string =>
@@ -37,112 +48,57 @@ const isNamespaceMissing = (error: unknown): boolean => {
   return record.code === 26 || record.codeName === 'NamespaceNotFound';
 };
 
-const indexGroups: Array<{ model: IndexableModel; indexes: IndexDefinition[] }> = [
-  {
-    model: Item,
-    indexes: [
-      { key: { status: 1, createdAt: -1 }, name: 'status_createdAt' },
-      { key: { donor: 1, status: 1 }, name: 'donor_status' },
-      { key: { bookedBy: 1, status: 1 }, name: 'bookedBy_status' },
-      { key: { category: 1, status: 1 }, name: 'category_status' },
-      { key: { 'waitlist.user': 1 }, name: 'waitlist_user' },
-      { key: { safeHub: 1 }, name: 'safeHub' },
-      {
-        key: { linkedRequestId: 1 },
-        unique: true,
-        partialFilterExpression: { linkedRequestId: { $type: 'objectId' } },
-        name: 'linked_request_unique',
-        replaceIfDifferent: true,
-      },
-    ],
-  },
-  {
-    model: Report,
-    indexes: [
-      { key: { reportedUser: 1, status: 1 }, name: 'reportedUser_status' },
-      { key: { status: 1, createdAt: -1 }, name: 'status_createdAt' },
-      { key: { reporter: 1 }, name: 'reporter' },
-      {
-        key: { reporter: 1, reportedUser: 1, relatedItem: 1, status: 1 },
-        unique: true,
-        partialFilterExpression: { status: 'pending' },
-        name: 'pending_report_context_unique',
-        replaceIfDifferent: true,
-      },
-    ],
-  },
-  {
-    model: DonationRequest,
-    indexes: [
-      { key: { status: 1, expiresAt: 1 }, name: 'status_expiresAt' },
-      { key: { requester: 1, status: 1, month: 1 }, name: 'requester_status_month' },
-      { key: { category: 1, status: 1 }, name: 'category_status' },
-    ],
-  },
-  {
-    model: DonationOffer,
-    indexes: [
-      {
-        key: { request: 1, donor: 1 },
-        unique: true,
-        name: 'request_donor_unique',
-      },
-      { key: { safeHub: 1, status: 1 }, name: 'safeHub_status' },
-      { key: { donor: 1, status: 1 }, name: 'donor_status' },
-    ],
-  },
-  {
-    model: User,
-    indexes: [
-      {
-        key: { phone: 1 },
-        unique: true,
-        partialFilterExpression: { phoneVerified: true },
-        name: 'phone_verified_unique',
-      },
-      { key: { trustLevel: 1 }, name: 'trustLevel' },
-      { key: { isBanned: 1 }, name: 'isBanned' },
-    ],
-  },
-  {
-    model: Conversation,
-    indexes: [
-      { key: { item: 1 }, name: 'item_1' },
-      { key: { owner: 1 }, name: 'owner_1' },
-      { key: { requester: 1 }, name: 'requester_1' },
-      {
-        key: { item: 1, owner: 1, requester: 1 },
-        unique: true,
-        name: 'item_1_owner_1_requester_1',
-      },
-      { key: { participants: 1, updatedAt: -1 }, name: 'participants_1_updatedAt_-1' },
-    ],
-  },
-  {
-    model: Message,
-    indexes: [
-      { key: { conversation: 1 }, name: 'conversation_1' },
-      { key: { sender: 1 }, name: 'sender_1' },
-      { key: { read: 1 }, name: 'read_1' },
-      { key: { conversation: 1, createdAt: 1 }, name: 'conversation_1_createdAt_1' },
-      {
-        key: { conversation: 1, sender: 1, read: 1 },
-        name: 'conversation_1_sender_1_read_1',
-      },
-      {
-        key: { conversation: 1, read: 1, sender: 1 },
-        name: 'conversation_1_read_1_sender_1',
-      },
-      {
-        key: { conversation: 1, sender: 1, clientMessageId: 1 },
-        unique: true,
-        partialFilterExpression: { clientMessageId: { $type: 'string' } },
-        name: 'conversation_sender_clientMessage_unique',
-        replaceIfDifferent: true,
-      },
-    ],
-  },
-];
+const indexNameForKey = (key: Record<string, mongo.IndexDirection>): string => (
+  Object.entries(key)
+    .map(([field, direction]) => `${field}_${String(direction)}`)
+    .join('_')
+);
+
+const shouldReplaceDifferentIndex = (index: IndexDefinition): boolean => Boolean(
+  index.unique
+  || index.partialFilterExpression
+  || index.expireAfterSeconds !== undefined
+);
+
+const toIndexDefinition = ([key, options]: SchemaIndex): IndexDefinition => {
+  const ttl = options.expireAfterSeconds;
+  const definition: IndexDefinition = {
+    key,
+    name: options.name ?? indexNameForKey(key),
+    unique: options.unique === undefined
+      ? undefined
+      : (Array.isArray(options.unique) ? options.unique[0] : Boolean(options.unique)),
+    sparse: options.sparse === undefined ? undefined : Boolean(options.sparse),
+    expireAfterSeconds: ttl === undefined ? undefined : Number(ttl),
+    partialFilterExpression: options.partialFilterExpression as Record<string, unknown> | undefined,
+    collation: options.collation,
+  };
+
+  definition.replaceIfDifferent = shouldReplaceDifferentIndex(definition);
+  return definition;
+};
+
+// الـModels هي المصدر الوحيد لتعريف الفهارس. إضافة Model أو index جديد إلى schema
+// تجعله جزءاً من مهمة production تلقائياً وتمنع انجراف manifest يدوي منفصل.
+const indexModels = [
+  AdminLog,
+  Conversation,
+  DonationOffer,
+  DonationRequest,
+  Item,
+  Message,
+  Notification,
+  Rating,
+  Report,
+  SafeHub,
+  SystemSettings,
+  User,
+] as unknown as IndexableModel[];
+
+const getIndexGroups = (): IndexGroup[] => indexModels.map((model) => ({
+  model,
+  indexes: model.schema.indexes().map(toIndexDefinition),
+}));
 
 const indexKeysEqual = (
   left: Record<string, unknown> | undefined,
@@ -173,20 +129,9 @@ const indexCreateOptions = ({
   key: _key,
   replaceIfDifferent: _replace,
   ...options
-}: IndexDefinition): mongo.CreateIndexesOptions => options;
-
-const dropObsoleteDonationRequestTtlIndexes = async (): Promise<void> => {
-  const collection = DonationRequest.collection;
-  const existingIndexes = await listExistingIndexes(collection);
-  const obsoleteIndexes = existingIndexes.filter((index: ExistingIndex) =>
-    index.expireAfterSeconds !== undefined
-    && indexKeysEqual(index.key, { expiresAt: 1 })
-  );
-
-  for (const index of obsoleteIndexes) {
-    await collection.dropIndex(index.name);
-  }
-};
+}: IndexDefinition): mongo.CreateIndexesOptions => Object.fromEntries(
+  Object.entries(options).filter(([, value]) => value !== undefined && value !== null)
+) as mongo.CreateIndexesOptions;
 
 const listExistingIndexes = async (
   collection: IndexableCollection
@@ -196,6 +141,128 @@ const listExistingIndexes = async (
   } catch (error: unknown) {
     if (isNamespaceMissing(error)) return [];
     throw error;
+  }
+};
+
+const findObsoleteDonationRequestTtlIndexes = async (): Promise<ExistingIndex[]> => {
+  const existingIndexes = await listExistingIndexes(DonationRequest.collection);
+  return existingIndexes.filter((index: ExistingIndex) =>
+    index.expireAfterSeconds !== undefined
+    && indexKeysEqual(index.key, { expiresAt: 1 })
+  );
+};
+
+const dropObsoleteDonationRequestTtlIndexes = async (): Promise<void> => {
+  for (const index of await findObsoleteDonationRequestTtlIndexes()) {
+    await DonationRequest.collection.dropIndex(index.name);
+  }
+};
+
+const buildUniqueSafetyMatch = (index: IndexDefinition): Record<string, unknown> => {
+  const filters: Record<string, unknown>[] = [];
+  if (index.partialFilterExpression) filters.push(index.partialFilterExpression);
+  if (index.sparse) {
+    filters.push({
+      $or: Object.keys(index.key).map((field) => ({ [field]: { $exists: true } })),
+    });
+  }
+  if (filters.length === 0) return {};
+  if (filters.length === 1) return filters[0];
+  return { $and: filters };
+};
+
+const assertUniqueIndexCanBeCreated = async (
+  collection: IndexableCollection,
+  index: IndexDefinition
+): Promise<void> => {
+  if (!index.unique) return;
+
+  const groupId = Object.fromEntries(
+    Object.keys(index.key).map((field, position) => [`key${position}`, `$${field}`])
+  );
+  const duplicates = await collection.aggregate([
+    { $match: buildUniqueSafetyMatch(index) },
+    { $group: { _id: groupId, count: { $sum: 1 } } },
+    { $match: { count: { $gt: 1 } } },
+    { $limit: 1 },
+    { $project: { _id: 0 } },
+  ], { allowDiskUse: true }).toArray();
+
+  if (duplicates.length > 0) {
+    throw new Error(
+      `توجد بيانات مكررة تمنع إنشاء الفهرس الفريد ${index.name}; نظّف التكرار قبل إعادة المحاولة`
+    );
+  }
+};
+
+const replaceIndexSafely = async (
+  collection: IndexableCollection,
+  existing: ExistingIndex,
+  requested: IndexDefinition
+): Promise<void> => {
+  await assertUniqueIndexCanBeCreated(collection, requested);
+  await collection.dropIndex(existing.name);
+
+  try {
+    await collection.createIndex(requested.key, indexCreateOptions(requested));
+  } catch (error: unknown) {
+    try {
+      await collection.createIndex(existing.key, indexCreateOptions(existing));
+    } catch (rollbackError: unknown) {
+      throw new AggregateError(
+        [error, rollbackError],
+        `فشل إنشاء ${requested.name} وفشل استرجاع ${existing.name}`
+      );
+    }
+    throw error;
+  }
+};
+
+const verifyIndexes = async (): Promise<void> => {
+  const failures: Error[] = [];
+
+  try {
+    const obsolete = await findObsoleteDonationRequestTtlIndexes();
+    if (obsolete.length > 0) {
+      failures.push(new Error(
+        `DonationRequest: توجد فهارس TTL قديمة على expiresAt: ${obsolete.map(({ name }) => name).join(', ')}`
+      ));
+    }
+  } catch (error: unknown) {
+    failures.push(new Error(
+      `DonationRequest: تعذر فحص فهارس TTL القديمة: ${getErrorMessage(error)}`,
+      { cause: error }
+    ));
+  }
+
+  for (const { model, indexes } of getIndexGroups()) {
+    let existingIndexes: ExistingIndex[];
+    try {
+      existingIndexes = await listExistingIndexes(model.collection);
+    } catch (error: unknown) {
+      failures.push(new Error(
+        `${model.modelName}: تعذر قراءة الفهارس: ${getErrorMessage(error)}`,
+        { cause: error }
+      ));
+      continue;
+    }
+
+    for (const requested of indexes) {
+      const existing = existingIndexes.find((candidate) =>
+        indexKeysEqual(candidate.key, requested.key)
+      );
+      if (!existing) {
+        failures.push(new Error(`${model.modelName}.${requested.name}: الفهرس مفقود`));
+      } else if (!indexDefinitionsEquivalent(existing, requested)) {
+        failures.push(new Error(
+          `${model.modelName}.${requested.name}: خصائص الفهرس لا تطابق schema (${existing.name})`
+        ));
+      }
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new AggregateError(failures, `فشل التحقق من ${failures.length} فهرس/فهارس`);
   }
 };
 
@@ -212,58 +279,39 @@ const ensureIndexes = async (): Promise<void> => {
     ));
   }
 
-  for (const { model, indexes } of indexGroups) {
-    let existingIndexes;
+  for (const { model, indexes } of getIndexGroups()) {
+    let existingIndexes: ExistingIndex[];
     try {
       existingIndexes = await listExistingIndexes(model.collection);
     } catch (error: unknown) {
-      failures.push(new Error(`${model.modelName}: تعذر قراءة الفهارس: ${getErrorMessage(error)}`, { cause: error }));
+      failures.push(new Error(
+        `${model.modelName}: تعذر قراءة الفهارس: ${getErrorMessage(error)}`,
+        { cause: error }
+      ));
       continue;
     }
 
     for (const index of indexes) {
-      const sameKeyIndex = existingIndexes.find((existing: ExistingIndex) =>
+      const sameKeyIndex = existingIndexes.find((existing) =>
         indexKeysEqual(existing.key, index.key)
       );
 
       if (sameKeyIndex) {
-        if (!indexDefinitionsEquivalent(sameKeyIndex, index)) {
-          if (index.replaceIfDifferent) {
-            try {
-              await model.collection.dropIndex(sameKeyIndex.name);
-              await model.collection.createIndex(index.key, indexCreateOptions(index));
-              const indexPosition = existingIndexes.indexOf(sameKeyIndex);
-              existingIndexes.splice(indexPosition, 1, index);
-            } catch (error: unknown) {
-              failures.push(new Error(
-                `${model.modelName}.${index.name}: تعذر ترقية الفهرس القديم: ${getErrorMessage(error)}`,
-                { cause: error }
-              ));
-            }
-            continue;
+        if (
+          !indexDefinitionsEquivalent(sameKeyIndex, index)
+          && index.replaceIfDifferent
+        ) {
+          try {
+            await replaceIndexSafely(model.collection, sameKeyIndex, index);
+            const indexPosition = existingIndexes.indexOf(sameKeyIndex);
+            existingIndexes.splice(indexPosition, 1, index);
+          } catch (error: unknown) {
+            failures.push(new Error(
+              `${model.modelName}.${index.name}: تعذر ترقية الفهرس القديم: ${getErrorMessage(error)}`,
+              { cause: error }
+            ));
           }
-
-          const isLegacyPhoneIndex = model.modelName === 'User'
-            && index.name === 'phone_verified_unique'
-            && sameKeyIndex.name === 'phone_1'
-            && Boolean(sameKeyIndex.unique)
-            && !sameKeyIndex.partialFilterExpression;
-
-          if (isLegacyPhoneIndex) {
-            try {
-              await model.collection.dropIndex(sameKeyIndex.name);
-              await model.collection.createIndex(index.key, indexCreateOptions(index));
-              const indexPosition = existingIndexes.indexOf(sameKeyIndex);
-              existingIndexes.splice(indexPosition, 1, index);
-            } catch (error: unknown) {
-              failures.push(new Error(
-                `${model.modelName}.${index.name}: تعذر ترقية فهرس الهاتف القديم: ${getErrorMessage(error)}`,
-                { cause: error }
-              ));
-            }
-            continue;
-          }
-
+        } else if (!indexDefinitionsEquivalent(sameKeyIndex, index)) {
           failures.push(new Error(
             `${model.modelName}.${index.name}: يوجد فهرس بنفس الحقول لكن بخصائص مختلفة (${sameKeyIndex.name})`
           ));
@@ -272,24 +320,22 @@ const ensureIndexes = async (): Promise<void> => {
       }
 
       try {
+        await assertUniqueIndexCanBeCreated(model.collection, index);
         await model.collection.createIndex(index.key, indexCreateOptions(index));
         existingIndexes.push(index);
       } catch (error: unknown) {
-        failures.push(new Error(`${model.modelName}.${index.name}: ${getErrorMessage(error)}`, { cause: error }));
+        failures.push(new Error(
+          `${model.modelName}.${index.name}: ${getErrorMessage(error)}`,
+          { cause: error }
+        ));
       }
     }
   }
 
-  if (failures.length) {
+  if (failures.length > 0) {
     throw new AggregateError(failures, `فشل إنشاء ${failures.length} فهرس/فهارس`);
   }
 };
-
-export default ensureIndexes;
-
-export { indexDefinitionsEquivalent };
-
-export { dropObsoleteDonationRequestTtlIndexes };
 
 const isDirectExecution = /(?:^|[\\/])ensureIndexes\.(?:ts|js)$/.test(process.argv[1] ?? '');
 if (isDirectExecution) {
@@ -297,9 +343,14 @@ if (isDirectExecution) {
     console.error('[Indexes] MONGO_URI مطلوب لتشغيل مهمة الفهارس');
     process.exitCode = 1;
   } else {
+    const operation = process.argv.includes('--verify') ? verifyIndexes : ensureIndexes;
     mongoose.connect(process.env.MONGO_URI, { autoIndex: false })
-      .then(ensureIndexes)
-      .then(() => console.log('[Indexes] اكتملت المهمة بنجاح'))
+      .then(operation)
+      .then(() => console.log(
+        process.argv.includes('--verify')
+          ? '[Indexes] الفهارس مطابقة للـschemas'
+          : '[Indexes] اكتملت المزامنة بنجاح'
+      ))
       .catch((error: unknown) => {
         console.error('[Indexes] فشلت المهمة:', error);
         process.exitCode = 1;
@@ -307,3 +358,15 @@ if (isDirectExecution) {
       .finally(() => mongoose.disconnect());
   }
 }
+
+export default ensureIndexes;
+
+export {
+  assertUniqueIndexCanBeCreated,
+  dropObsoleteDonationRequestTtlIndexes,
+  getIndexGroups,
+  indexCreateOptions,
+  indexDefinitionsEquivalent,
+  indexNameForKey,
+  verifyIndexes,
+};

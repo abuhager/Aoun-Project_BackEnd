@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import { parsePositiveInteger } from './env.js';
-import ensureIndexes from '../utils/ensureIndexes.js';
+import ensureIndexes, { verifyIndexes } from '../utils/ensureIndexes.js';
 
 const buildMongoOptions = () => {
   const isProduction = process.env.NODE_ENV === 'production';
@@ -34,15 +34,20 @@ const connectDB = async () => {
 
   const shouldSyncIndexes = process.env.MONGO_SYNC_INDEXES_ON_STARTUP === 'true'
     || (!isProduction && process.env.MONGO_SYNC_INDEXES_ON_STARTUP !== 'false');
+  const indexesRequired = process.env.MONGO_INDEXES_REQUIRED === 'true';
 
   if (shouldSyncIndexes) {
     try {
       await ensureIndexes();
-      console.log('[MongoDB] تم التحقق من الفهارس');
+      console.log('[MongoDB] تمت مزامنة الفهارس والتحقق منها');
     } catch (error) {
-      if (process.env.MONGO_INDEXES_REQUIRED === 'true') throw error;
-      console.error('[MongoDB] فشل التحقق من الفهارس والخادم مستمر:', error);
+      if (indexesRequired) throw error;
+      console.error('[MongoDB] فشلت مزامنة الفهارس والخادم مستمر:', error);
     }
+  } else if (isProduction && indexesRequired) {
+    // فحص قراءة فقط: يمنع بدء الإنتاج بفهرس ناقص من دون تعديل قاعدة البيانات.
+    await verifyIndexes();
+    console.log('[MongoDB] الفهارس المطلوبة مطابقة للـschemas');
   }
 
   mongoose.connection.on('disconnected', () => {

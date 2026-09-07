@@ -121,5 +121,15 @@ ItemSchema.index({ safeHub: 1, status: 1 });
 ItemSchema.index({ status: 1, bookedAt: 1 });
 ItemSchema.index({ status: 1, deliveredAt: -1 });
 ItemSchema.index({ location: 1, status: 1 });
-ItemSchema.index({ 'waitlist.user': 1, status: 1 });const Item = mongoose.model('Item', ItemSchema);
+ItemSchema.index({ 'waitlist.user': 1, status: 1 });
+ItemSchema.index(
+  { linkedRequestId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { linkedRequestId: { $type: 'objectId' } },
+    name: 'linked_request_unique',
+  }
+);
+
+const Item = mongoose.model('Item', ItemSchema);
 export default Item;

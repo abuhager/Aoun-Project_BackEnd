@@ -38,5 +38,11 @@ const adminLogSchema = new mongoose.Schema({
   adminNote:  { type: String, default: null },
 
   meta: { type: mongoose.Schema.Types.Mixed, default: {} },
-}, { timestamps: true });const AdminLog = mongoose.model('AdminLog', adminLogSchema);
+}, { timestamps: true });
+
+adminLogSchema.index({ createdAt: -1 }, { name: 'createdAt_desc' });
+adminLogSchema.index({ adminId: 1, createdAt: -1 }, { name: 'adminId_createdAt_desc' });
+adminLogSchema.index({ action: 1, createdAt: -1 }, { name: 'action_createdAt_desc' });
+
+const AdminLog = mongoose.model('AdminLog', adminLogSchema);
 export default AdminLog;
