@@ -151,11 +151,17 @@ export const setTrustLevelAndQuota = (
   id: EntityId,
   level: number,
   quota: number,
+  promotedByAdmin: boolean,
   session: RepositorySession = null
 ) =>
   User.findByIdAndUpdate(
     id,
-    { trustLevel: level, quota, promotedByAdmin: true },
+    {
+      trustLevel: level,
+      quota,
+      promotedByAdmin,
+      'trustEvidence.adminApproved': promotedByAdmin,
+    },
     { returnDocument: 'after', session: session ?? undefined }
   ).select(
     'name email phone avatar role trustLevel trustScore quota totalDonations ' +

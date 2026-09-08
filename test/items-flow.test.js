@@ -18,6 +18,8 @@ const SystemSettings = require('../models/SystemSettings').default;
 const User = require('../models/User').default;
 const Notification = require('../models/Notification').default;
 const itemRepository = require('../repositories/itemRepository').default;
+const hubRepository = require('../repositories/hubRepository').default;
+const Conversation = require('../models/Conversation').default;
 const { toPublicItem, toDonorItem, toReceiverItem } = require('../dtos/itemDto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -64,14 +66,18 @@ test('تعديل غرض متاح يقتصر على الحقول المسموحة
   const originals = {
     findById: Item.findById,
     findOneAndUpdate: Item.findOneAndUpdate,
-    findHub: SafeHub.findOne,
+    findHub: hubRepository.findActiveById,
+    acquireHub: hubRepository.acquireActiveForWrite,
     getCached: SystemSettings.getCached,
+    startSession: mongoose.startSession,
   };
   t.after(() => {
     Item.findById = originals.findById;
     Item.findOneAndUpdate = originals.findOneAndUpdate;
-    SafeHub.findOne = originals.findHub;
+    hubRepository.findActiveById = originals.findHub;
+    hubRepository.acquireActiveForWrite = originals.acquireHub;
     SystemSettings.getCached = originals.getCached;
+    mongoose.startSession = originals.startSession;
   });
 
   let hubFilter;
@@ -85,16 +91,18 @@ test('تعديل غرض متاح يقتصر على الحقول المسموحة
     cloudinaryId: 'old-image',
   });
   SystemSettings.getCached = async () => ({ categories: ['كتب', 'أثاث'] });
-  SafeHub.findOne = (filter) => {
-    hubFilter = filter;
-    return queryReturning({ _id: HUB_ID });
+  mongoose.startSession = async () => createSessionStub();
+  hubRepository.findActiveById = async (hubId) => {
+    hubFilter = hubId;
+    return { _id: HUB_ID };
   };
+  hubRepository.acquireActiveForWrite = async () => ({ _id: HUB_ID });
   Item.findOneAndUpdate = (filter, update) => {
     updateFilter = filter;
     persistedUpdate = update;
     return {
-      populate: async () => ({
-        toObject: () => ({
+      async populate() { return this; },
+      toObject: () => ({
           _id: ITEM_ID,
           title: 'كتاب جامعي',
           description: 'بحالة ممتازة',
@@ -106,7 +114,6 @@ test('تعديل غرض متاح يقتصر على الحقول المسموحة
           safeHub: { _id: HUB_ID, name: 'مركز عمان' },
           waitlist: [],
         }),
-      }),
     };
   };
 
@@ -124,10 +131,7 @@ test('تعديل غرض متاح يقتصر على الحقول المسموحة
 
   assert.equal(result.msg, 'تم تحديث الغرض بنجاح ✅');
   assert.equal(result.item.title, 'كتاب جامعي');
-  assert.deepEqual(hubFilter, {
-    _id: HUB_ID,
-    isActive: { $ne: false },
-  });
+  assert.equal(hubFilter, HUB_ID);
   assert.deepEqual(updateFilter, {
     _id: ITEM_ID,
     donor: OWNER_ID,
@@ -138,6 +142,8 @@ test('تعديل غرض متاح يقتصر على الحقول المسموحة
       title: 'كتاب جامعي',
       category: 'كتب',
       safeHub: HUB_ID,
+      searchTokens: ['كتاب', 'جامعي', 'كتب'],
+      searchPrefixes: ['كت', 'كتا', 'كتاب', 'جا', 'جام', 'جامع', 'جامعي', 'كتب'],
     },
   });
 });
@@ -165,14 +171,17 @@ test('تعارض الحجز أثناء الحفظ لا يكتب تعديلاً �
   const originals = {
     findById: Item.findById,
     findOneAndUpdate: Item.findOneAndUpdate,
+    startSession: mongoose.startSession,
   };
   t.after(() => {
     Item.findById = originals.findById;
     Item.findOneAndUpdate = originals.findOneAndUpdate;
+    mongoose.startSession = originals.startSession;
   });
 
   Item.findById = () => queryReturning({ donor: OWNER_ID, status: 'متاح' });
-  Item.findOneAndUpdate = () => ({ populate: async () => null });
+  Item.findOneAndUpdate = async () => null;
+  mongoose.startSession = async () => createSessionStub();
 
   await assert.rejects(
     itemService.updateItemLogic(ITEM_ID, OWNER_ID, { title: 'عنوان جديد' }),
@@ -183,11 +192,15 @@ test('تعارض الحجز أثناء الحفظ لا يكتب تعديلاً �
 test('حذف المالك ذري ولا يسمح لغيره أو بحذف غرض تم تسليمه', async (t) => {
   const originals = {
     findById: Item.findById,
-    findOneAndDelete: Item.findOneAndDelete,
+    findOneAndUpdate: Item.findOneAndUpdate,
+    updateConversations: Conversation.updateMany,
+    startSession: mongoose.startSession,
   };
   t.after(() => {
     Item.findById = originals.findById;
-    Item.findOneAndDelete = originals.findOneAndDelete;
+    Item.findOneAndUpdate = originals.findOneAndUpdate;
+    Conversation.updateMany = originals.updateConversations;
+    mongoose.startSession = originals.startSession;
   });
 
   let snapshot = {
@@ -201,10 +214,12 @@ test('حذف المالك ذري ولا يسمح لغيره أو بحذف غرض
   let deleteFilter;
 
   Item.findById = () => queryReturning(snapshot);
-  Item.findOneAndDelete = async (filter) => {
+  Item.findOneAndUpdate = async (filter) => {
     deleteFilter = filter;
     return snapshot;
   };
+  Conversation.updateMany = async () => ({ modifiedCount: 0 });
+  mongoose.startSession = async () => createSessionStub();
 
   await assert.rejects(
     itemService.deleteItemLogic(ITEM_ID, OTHER_ID),
@@ -354,6 +369,42 @@ test('قائمة التصفح لا تمرر index الخاص بالمصفوفة 
   assert.equal(result.items[1].isInWaitlist, false);
   assert.equal(result.items[1].waitlistCount, 1);
   assert.equal(result.total, 2);
+});
+
+test('بحث التصفح يدعم بداية الكلمة مثل شا للعثور على شاشة', async (t) => {
+  const originals = {
+    find: Item.find,
+    countDocuments: Item.countDocuments,
+    getCached: SystemSettings.getCached,
+  };
+  t.after(() => {
+    Item.find = originals.find;
+    Item.countDocuments = originals.countDocuments;
+    SystemSettings.getCached = originals.getCached;
+  });
+
+  let browseFilter;
+  const query = {
+    populate() { return this; },
+    sort() { return this; },
+    skip() { return this; },
+    limit() { return this; },
+    select() { return this; },
+    lean: async () => [],
+  };
+  Item.find = (filter) => {
+    browseFilter = filter;
+    return query;
+  };
+  Item.countDocuments = async () => 0;
+  SystemSettings.getCached = async () => ({ maxPageSize: 20 });
+
+  await itemService.getItemsLogic({ page: 1, limit: 10, search: 'شا' });
+
+  assert.deepEqual(browseFilter.$or[0], { searchTokens: { $all: ['شا'] } });
+  assert.deepEqual(browseFilter.$or[1], { searchPrefixes: { $all: ['شا'] } });
+  assert.equal(browseFilter.$or[2].searchPrefixes.$exists, false);
+  assert.equal(browseFilter.$or[2].title.test('شاشة'), true);
 });
 
 test('الحجز يستخدم maxBookingsPerUser الحقيقي ويمنع تجاوز الحد', async (t) => {

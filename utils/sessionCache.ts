@@ -52,9 +52,22 @@ const set = (userId: unknown, state: unknown): void => {
  * - حظر المستخدم (banUser في adminService)
  * @param {string} userId
  */
-const invalidate = (userId: unknown): void => {
+const invalidateLocal = (userId: unknown): void => {
   _cache.delete(String(userId));
 };
+
+const invalidate = (userId: unknown): void => {
+  invalidateLocal(userId);
+  void publishRuntimeEvent('session:invalidate', { userId: String(userId) })
+    .catch((error: unknown) => console.error(
+      '[SessionCache] failed to publish invalidation:',
+      error instanceof Error ? error.message : String(error)
+    ));
+};
+
+subscribeRuntimeEvent('session:invalidate', ({ userId }) => {
+  if (userId != null) invalidateLocal(userId);
+});
 
 /**
  * إحصائيات للـ debugging (اختياري)
@@ -65,7 +78,8 @@ const stats = (): { size: number; ttl_ms: number; entries: string[] } => ({
   entries: [..._cache.keys()],
 });
 
-const sessionCache = { get, set, invalidate, stats };
+const sessionCache = { get, set, invalidate, invalidateLocal, stats };
 
-export { get, set, invalidate, stats };
+export { get, set, invalidate, invalidateLocal, stats };
 export default sessionCache;
+import { publishRuntimeEvent, subscribeRuntimeEvent } from './runtimeBus.js';

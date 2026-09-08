@@ -30,7 +30,10 @@ type ConversationActionInput = {
   io?: RealtimeServer | null;
 };
 
-type GetMessagesInput = ConversationActionInput & { page?: unknown };
+type GetMessagesInput = ConversationActionInput & {
+  cursor?: unknown;
+  page?: unknown;
+};
 
 const asId = (value: unknown): string | undefined => {
   if (value == null) return undefined;
@@ -95,8 +98,11 @@ export const openConversationLogic = async ({
   const legacyTargetId = targetUserId || donorId || null;
   if (legacyTargetId) assertObjectId(legacyTargetId, 'المستخدم الآخر');
 
-  const item = await Item.findById(itemId).select('donor bookedBy').lean();
+  const item = await Item.findById(itemId).select('donor bookedBy status').lean();
   if (!item) {
+    throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+  }
+  if (item.status === 'محذوف') {
     throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
   }
 
@@ -175,6 +181,7 @@ export const openConversationLogic = async ({
 export const getMessagesLogic = async ({
   conversationId,
   userId,
+  cursor,
   page = 1,
 }: GetMessagesInput) => {
   assertObjectId(conversationId, 'المحادثة');
@@ -184,6 +191,10 @@ export const getMessagesLogic = async ({
   if (!Number.isInteger(parsedPage) || parsedPage < 1) {
     throw new AppError('رقم الصفحة غير صالح', 400, 'INVALID_PAGE');
   }
+  const parsedCursor = cursor == null || cursor === '' ? null : String(cursor);
+  if (parsedCursor && !repo.decodeMessageCursor(parsedCursor)) {
+    throw new AppError('مؤشر الرسائل غير صالح', 400, 'INVALID_MESSAGE_CURSOR');
+  }
 
   const conversation = await repo.findConversationById(conversationId);
   if (!conversation) {
@@ -192,6 +203,7 @@ export const getMessagesLogic = async ({
   assertParticipant(conversation as ConversationRecord, userId);
 
   const result = await repo.findMessagesPage(conversationId, {
+    cursor: parsedCursor,
     page: parsedPage,
     limit: repo.DEFAULT_MESSAGE_PAGE_SIZE,
   });
@@ -202,6 +214,8 @@ export const getMessagesLogic = async ({
     total: result.total,
     page: result.page,
     totalPages: result.totalPages,
+    hasMore: result.hasMore,
+    nextCursor: result.nextCursor,
   };
 };
 

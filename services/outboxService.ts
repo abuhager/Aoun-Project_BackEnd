@@ -25,8 +25,18 @@ export type CriticalNotificationEmailPayload = {
   actionUrl: string | null;
 };
 
+export type RegistrationGuidanceEmailPayload = {
+  to: string;
+  name: string;
+};
+
+export type CloudinaryDeletePayload = {
+  publicId: string;
+  itemId: string;
+};
+
 const enqueueEncrypted = (
-  type: 'verification_email' | 'password_reset_email' | 'critical_notification_email',
+  type: 'verification_email' | 'password_reset_email' | 'critical_notification_email' | 'registration_guidance_email' | 'cloudinary_delete',
   payload: unknown,
   idempotencyKey: string,
   session?: ClientSession | null
@@ -59,8 +69,25 @@ export const enqueueCriticalNotificationEmail = (
   session
 );
 
+export const enqueueRegistrationGuidanceEmail = (
+  payload: RegistrationGuidanceEmailPayload,
+  idempotencyKey: string
+) => enqueueEncrypted('registration_guidance_email', payload, idempotencyKey);
+
+export const enqueueCloudinaryDelete = (
+  payload: CloudinaryDeletePayload,
+  session?: ClientSession | null
+) => enqueueEncrypted(
+  'cloudinary_delete',
+  payload,
+  `cloudinary-delete:item:${payload.itemId}:${payload.publicId}`,
+  session
+);
+
 export default {
   enqueueVerificationEmail,
   enqueuePasswordResetEmail,
   enqueueCriticalNotificationEmail,
+  enqueueRegistrationGuidanceEmail,
+  enqueueCloudinaryDelete,
 };

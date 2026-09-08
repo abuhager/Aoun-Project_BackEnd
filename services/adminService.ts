@@ -4,9 +4,9 @@ import userRepository from '../repositories/userRepository.js';
 import AdminLog from '../models/AdminLog.js';
 import User from '../models/User.js';
 import Item from '../models/Item.js';
+import Conversation from '../models/Conversation.js';
 import SystemSettings from '../models/SystemSettings.js';
 import notifyUser from '../utils/notifyUser.js';
-import { deleteFromCloudinary } from '../utils/uploadToCloudinary.js';
 import AppError from '../utils/AppError.js';
 import sessionCache from '../utils/sessionCache.js';
 import { SOCKET_EVENTS } from '../socket/contracts.js';
@@ -16,6 +16,7 @@ import runMongoTransaction from '../utils/mongoTransaction.js';
 import type { EntityId, ServicePayload, ServiceRecord } from './serviceTypes.js';
 import { getErrorMessage } from './serviceTypes.js';
 import type { ClientSession } from 'mongoose';
+import outboxService from './outboxService.js';
 
 export type AdminRole = 'admin' | 'super_admin';
 type ReportResolutionStatus = 'actioned' | 'reviewed' | 'dismissed';
@@ -234,7 +235,29 @@ export const deleteItem = async (
     const donorEmail = typeof donor?.email === 'string' ? donor.email : null;
     const itemTitle  = existing.title ?? 'غرض محذوف';
 
-    await Item.deleteOne({ _id: itemId }, { session });
+    await Item.updateOne(
+      { _id: itemId, status: { $ne: 'محذوف' } },
+      {
+        $set: {
+          status: 'محذوف',
+          deletedAt: new Date(),
+          deletedBy: adminId,
+          deletionReason: adminNote || 'deleted_by_admin',
+        },
+      },
+      { session, runValidators: true }
+    );
+    await Conversation.updateMany(
+      { item: itemId, archivedAt: null },
+      { $set: { archivedAt: new Date(), archiveReason: 'item_deleted_by_admin' } },
+      { session }
+    );
+    if (existing.cloudinaryId) {
+      await outboxService.enqueueCloudinaryDelete({
+        itemId: String(itemId),
+        publicId: existing.cloudinaryId,
+      }, session);
+    }
     await adminRepo.logAdminAction({
       adminId, action: 'ITEM_HIDE', targetId: itemId, targetModel: 'Item',
       targetName: donorName ?? itemTitle, reason: 'حذف غرض من لوحة الإدارة',
@@ -247,17 +270,6 @@ export const deleteItem = async (
 
   const donor = asServiceRecord(item.donor);
   const itemTitle  = item.title        ?? 'غرض محذوف';
-
-  if (item.cloudinaryId) {
-    try {
-      await deleteFromCloudinary(item.cloudinaryId);
-    } catch (error: unknown) {
-      console.warn(
-        '[Admin Items] تعذر حذف صورة الغرض من Cloudinary:',
-        getErrorMessage(error)
-      );
-    }
-  }
 
   const affectedUserIds = [
     donor?._id ?? item.donor,
@@ -523,6 +535,7 @@ export const promoteToLevel2 = async (
       targetId,
       2,
       level2Quota,
+      true,
       session
     );
     await adminRepo.logAdminAction({
@@ -554,6 +567,7 @@ export const demoteToLevel1 = async (
       targetId,
       1,
       defaultQuota,
+      false,
       session
     );
     await adminRepo.logAdminAction({

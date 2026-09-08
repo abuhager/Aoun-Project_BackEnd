@@ -22,6 +22,7 @@ const userRepository = require('../repositories/userRepository').default;
 const authMiddleware = require('../middlewares/auth').default;
 const authService = require('../services/authService').default;
 const emailService = require('../services/emailService').default;
+const outboxService = require('../services/outboxService').default;
 const SystemSettings = require('../models/SystemSettings').default;
 const User = require('../models/User').default;
 const { escapeHtml, getClientOrigin } = require('../services/emailService');
@@ -160,16 +161,18 @@ test('قالب البريد يهرب HTML ويبني رابط reset من Origin 
   assert.equal(getClientOrigin(), 'https://frontend.example');
 });
 
-test('التسجيل ببريد مفعّل يعيد EMAIL_ALREADY_EXISTS ولا يرسل OTP', async (t) => {
+test('التسجيل ببريد مفعّل يعيد الرد العام ويرسل إرشاداً دون OTP', async (t) => {
   const originals = {
     getCached: SystemSettings.getCached,
     findByEmail: userRepository.findByEmail,
     sendVerificationEmail: emailService.sendVerificationEmail,
+    enqueueGuidance: outboxService.enqueueRegistrationGuidanceEmail,
   };
   t.after(() => {
     SystemSettings.getCached = originals.getCached;
     userRepository.findByEmail = originals.findByEmail;
     emailService.sendVerificationEmail = originals.sendVerificationEmail;
+    outboxService.enqueueRegistrationGuidanceEmail = originals.enqueueGuidance;
   });
 
   SystemSettings.getCached = async () => ({
@@ -183,7 +186,9 @@ test('التسجيل ببريد مفعّل يعيد EMAIL_ALREADY_EXISTS ولا 
     isVerified: true,
   });
   let mailCalls = 0;
+  let guidanceCalls = 0;
   emailService.sendVerificationEmail = async () => { mailCalls += 1; };
+  outboxService.enqueueRegistrationGuidanceEmail = async () => { guidanceCalls += 1; };
 
   const result = await authService.registerLogic({
     name: 'Existing User',
@@ -192,9 +197,10 @@ test('التسجيل ببريد مفعّل يعيد EMAIL_ALREADY_EXISTS ولا 
     phone: '+962791234567',
   });
 
-  assert.equal(result.statusCode, 409);
-  assert.equal(result.body.code, 'EMAIL_ALREADY_EXISTS');
+  assert.equal(result.statusCode, 201);
+  assert.equal(result.body.code, undefined);
   assert.equal(mailCalls, 0);
+  assert.equal(guidanceCalls, 1);
 });
 
 test('لا يوجد fallback لهوية ثابتة في Socket chat', () => {

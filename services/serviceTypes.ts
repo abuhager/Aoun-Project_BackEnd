@@ -1,11 +1,11 @@
 import type { Types } from 'mongoose';
-import type { Server as SocketServer } from 'socket.io';
+import type { AounSocketServer } from '../socket/socketTypes.js';
 
 export type EntityId = string | Types.ObjectId;
 export type ServiceRecord = Record<string, unknown>;
 export type ServicePayload = Record<string, unknown>;
 export type UploadedFile = Express.Multer.File;
-export type RealtimeServer = SocketServer;
+export type RealtimeServer = AounSocketServer;
 
 export type ErrorDetails = {
   code?: unknown;

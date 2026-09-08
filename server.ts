@@ -7,6 +7,8 @@ import app from './app.js';
 import connectDB from './config/db.js';
 import { initCronJobs, stopCronJobs } from './jobs/cronJobs.js';
 import { initSocket, resetIO } from './socket/index.js';
+import { attachSocketRedisAdapter, closeSocketRedisAdapter } from './socket/redisAdapter.js';
+import { startRuntimeBus, stopRuntimeBus } from './utils/runtimeBus.js';
 
 const runtime: {
   app: import('express').Express | null;
@@ -28,6 +30,7 @@ const closeResources = async () => {
   const activeServer = runtime.server;
   if (activeIo) {
     await new Promise<void>((resolve) => activeIo.close(() => resolve()));
+    await closeSocketRedisAdapter();
     runtime.io = null;
     resetIO();
   } else if (activeServer?.listening) {
@@ -39,6 +42,7 @@ const closeResources = async () => {
   runtime.server = null;
   runtime.app = null;
 
+  await stopRuntimeBus();
   await closeRedis();
 
   if (mongoose.connection.readyState !== 0) {
@@ -95,14 +99,16 @@ const registerProcessHandlers = () => {
 const startServer = async () => {
   const { port, nodeEnv } = validateEnvironment();
   const server = http.createServer(app);
-  const io = initSocket(server);
   runtime.app = app;
   runtime.server = server;
-  runtime.io = io;
-  app.set('io', io);
 
   await connectRedis();
   await connectDB();
+  await startRuntimeBus();
+  const io = initSocket(server);
+  runtime.io = io;
+  app.set('io', io);
+  await attachSocketRedisAdapter(io);
   await initCronJobs();
 
   await new Promise<void>((resolve, reject) => {

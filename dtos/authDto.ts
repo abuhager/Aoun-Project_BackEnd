@@ -6,6 +6,7 @@ const toDate = toIsoDate;
 export const toAuthUser = (rawUser: unknown) => {
   const user = toPlainRecord(rawUser);
   if (!user) return null;
+  const trustEvidence = toPlainRecord(user.trustEvidence) ?? {};
 
   return ({
   _id:               toId(user),
@@ -21,6 +22,14 @@ export const toAuthUser = (rawUser: unknown) => {
   totalDonations:    user.totalDonations    ?? 0,
   isVerified:        Boolean(user.isVerified),
   isVerifiedStudent: Boolean(user.isVerifiedStudent),
+  trustEvidence: {
+    emailVerified: Boolean(trustEvidence.emailVerified ?? user.isVerified),
+    studentVerified: Boolean(
+      trustEvidence.studentVerified ?? user.isVerifiedStudent
+    ),
+    phoneVerified: Boolean(trustEvidence.phoneVerified ?? user.phoneVerified),
+    adminApproved: Boolean(trustEvidence.adminApproved ?? user.promotedByAdmin),
+  },
   isBanned:          Boolean(user.isBanned),
   isFrozen:          Boolean(user.isFrozen),
   badges:            user.badges            ?? [],

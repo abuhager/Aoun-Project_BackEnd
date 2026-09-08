@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'crypto';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { corsOrigin } from './config/cors.js';
 import { globalLimiter, publicLimiter } from './middlewares/rateLimiter.js';
@@ -11,6 +11,7 @@ import errorHandler from './middlewares/errorHandler.js';
 import AppError from './utils/AppError.js';
 import apiRoutes from './routes/index.js';
 import getRuntimeReadiness from './utils/runtimeHealth.js';
+import { recordHttpMetrics, renderPrometheusMetrics } from './utils/metrics.js';
 
 const app = express();
 
@@ -36,6 +37,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   res.setHeader('X-Request-ID', requestId);
   next();
 });
+app.use(recordHttpMetrics);
 
 app.use(helmet({
   contentSecurityPolicy: false,
@@ -143,6 +145,32 @@ app.get(['/health', '/health/ready'], publicLimiter, async (_req: Request, res: 
     uptime: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
   });
+});
+
+const metricsTokenMatches = (authorization: string | undefined): boolean => {
+  const configured = process.env.METRICS_TOKEN;
+  const provided = authorization?.startsWith('Bearer ')
+    ? authorization.slice('Bearer '.length)
+    : '';
+  if (!configured || !provided) return false;
+  const expectedHash = createHash('sha256').update(configured).digest();
+  const providedHash = createHash('sha256').update(provided).digest();
+  return timingSafeEqual(expectedHash, providedHash);
+};
+
+app.get('/metrics', publicLimiter, (req: Request, res: Response, next: NextFunction) => {
+  if (process.env.METRICS_ENABLED !== 'true') {
+    return next(AppError.notFound('المسار المطلوب غير موجود', 'ROUTE_NOT_FOUND'));
+  }
+  if (
+    process.env.NODE_ENV === 'production'
+    && !metricsTokenMatches(req.headers.authorization)
+  ) {
+    return next(AppError.unauthorized('غير مصرح بقراءة المقاييس', 'METRICS_UNAUTHORIZED'));
+  }
+
+  res.type('text/plain; version=0.0.4; charset=utf-8');
+  return res.status(200).send(renderPrometheusMetrics());
 });
 
 app.use('/api', apiRoutes);

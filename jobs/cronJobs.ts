@@ -13,6 +13,7 @@ import { expireDonationRequestsLogic } from '../services/donationRequestService.
 import runMongoTransaction from '../utils/mongoTransaction.js';
 import acquireUserOperationLocks from '../utils/userOperationLock.js';
 import type { ClientSession, Types } from 'mongoose';
+import { runWithDistributedLock } from '../utils/distributedLock.js';
 
 // ══════════════════════════════════════════════════════════════
 // ✅ NJ-19: سجل حالة Cron Jobs — يُساعد في Debugging
@@ -121,7 +122,16 @@ const replaceScheduledTask = (
   const existing = scheduledTasks.get(name);
   if (existing) existing.destroy();
 
-  const task = cron.schedule(expression, handler, {
+  const task = cron.schedule(expression, async () => {
+    const execution = await runWithDistributedLock(
+      `cron:${name}`,
+      30 * 60 * 1000,
+      async () => Promise.resolve(handler())
+    );
+    if (!execution.acquired) {
+      console.info(`[Cron] ⏭️ [${name}] ينفذها leader آخر`);
+    }
+  }, {
     name,
     noOverlap: true,
     timezone: JOB_TIMEZONE,

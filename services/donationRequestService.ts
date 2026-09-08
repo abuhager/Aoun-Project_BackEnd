@@ -7,6 +7,7 @@ import DonationRequest from '../models/DonationRequest.js';
 import DonationOffer from '../models/DonationOffer.js';
 import donationRequestRepository from '../repositories/donationRequestRepository.js';
 import donationOfferRepository from '../repositories/donationOfferRepository.js';
+import hubRepository from '../repositories/hubRepository.js';
 import { toPublicRequest } from '../dtos/donationRequestDto.js';
 import { toPublicOffer } from '../dtos/donationOfferDto.js';
 import AppError from '../utils/AppError.js';
@@ -19,6 +20,7 @@ import { isPhoneVerificationEnabled } from '../middlewares/phoneVerificationFeat
 import type { ClientSession } from 'mongoose';
 import type { EntityId, UploadedFile } from './serviceTypes.js';
 import { getErrorDetails, getErrorMessage, hasErrorCode } from './serviceTypes.js';
+import { getBusinessMonthKey } from '../utils/businessTime.js';
 
 const DEFAULT_REQUEST_LIMIT = 1;
 const DEFAULT_REQUEST_EXPIRY_DAYS = 30;
@@ -300,7 +302,7 @@ export const createRequestLogic = async (body: RequestCreateInput, userId: Entit
     );
   }
 
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = getBusinessMonthKey();
   const maxRequests = requestSettings.maxActiveRequestsPerMonth ?? DEFAULT_REQUEST_LIMIT;
 
   if (!requestSettings.categories?.includes(body.category))
@@ -475,7 +477,7 @@ export const cancelRequestLogic = async (requestId: EntityId, userId: EntityId) 
 };
 
 export const getMyRequestsLogic = async (userId: EntityId) => {
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = getBusinessMonthKey();
   const [requests, settings, usedThisMonth] = await Promise.all([
     donationRequestRepository.findUserRequests(userId),
     SystemSettings.getCached(),
@@ -532,7 +534,7 @@ export const submitOfferLogic = async (
   const [alreadyOffered, safeHub] = await Promise.all([
     donationOfferRepository.existsByRequestAndDonor(requestId, donorId),
     body.safeHub
-      ? SafeHub.findOne({ _id: body.safeHub, isActive: { $ne: false } }).lean()
+      ? hubRepository.findActiveById(body.safeHub)
       : Promise.resolve(null),
   ]);
 
@@ -554,6 +556,16 @@ export const submitOfferLogic = async (
 
     const offer = await runMongoTransaction(async (session) => {
       await acquireUserOperationLocks([donorId], session);
+      if (body.safeHub) {
+        const acquiredHub = await hubRepository.acquireActiveForWrite(body.safeHub, session);
+        if (!acquiredHub) {
+          throw new AppError(
+            'نقطة التسليم لم تعد متاحة؛ حدّث الصفحة',
+            409,
+            'SAFE_HUB_UNAVAILABLE'
+          );
+        }
+      }
       const pendingOffersCount = await donationOfferRepository.countPendingOffersByDonor(
         donorId,
         session
@@ -638,8 +650,6 @@ export const getOffersLogic = async (requestId: EntityId, userId: EntityId) => {
   if (!idsEqual(request.requester, userId))
     throw new AppError('غير مصرح لك برؤية هذه العروض 🚫', 403, 'FORBIDDEN');
 
-  if (isPastExpiry(request)) await expireSingleRequest(requestId);
-
   const offers = await donationOfferRepository.findOffersByRequest(requestId);
   offers.sort((left: OfferLike, right: OfferLike) => {
     const statusOrder = Number(right.status === 'pending') - Number(left.status === 'pending');
@@ -647,7 +657,14 @@ export const getOffersLogic = async (requestId: EntityId, userId: EntityId) => {
     return new Date(right.createdAt ?? 0).getTime() - new Date(left.createdAt ?? 0).getTime();
   });
 
-  return { offers: offers.map(toPublicOffer) };
+  const requestExpired = isPastExpiry(request);
+  return {
+    offers: offers.map((offer: OfferLike) => toPublicOffer(
+      requestExpired && offer.status === 'pending'
+        ? { ...offer, status: 'request_expired' }
+        : offer
+    )),
+  };
 };
 
 export const acceptOfferLogic = async (
@@ -737,6 +754,14 @@ export const acceptOfferLogic = async (
       throw new AppError('يجب تحديد نقطة تسليم لهذا العرض', 409, 'SAFE_HUB_REQUIRED');
     if (offer.safeHub && !hub)
       throw new AppError('نقطة التسليم لم تعد متاحة', 409, 'SAFE_HUB_UNAVAILABLE');
+    if (offer.safeHub) {
+      const acquiredHub = await hubRepository.acquireActiveForWrite(
+        getObjectId(offer.safeHub)!,
+        session
+      );
+      if (!acquiredHub)
+        throw new AppError('نقطة التسليم لم تعد متاحة', 409, 'SAFE_HUB_UNAVAILABLE');
+    }
 
     const maxBookings = settings.maxBookingsPerUser ?? DEFAULT_BOOKINGS_LIMIT;
     if (requesterBookings >= maxBookings) {
@@ -955,15 +980,9 @@ export const getRequestByIdLogic = async (
   viewerId: EntityId | null = null,
   viewerRole = 'user'
 ) => {
-  let request = await donationRequestRepository.findRequestByIdWithItem(requestId);
+  const request = await donationRequestRepository.findRequestByIdWithItem(requestId);
   if (!request)
     throw new AppError('الطلب غير موجود', 404, 'REQUEST_NOT_FOUND');
-
-  if (isPastExpiry(request)) {
-    await expireSingleRequest(requestId);
-    request = await donationRequestRepository.findRequestByIdWithItem(requestId);
-    if (!request) throw new AppError('الطلب غير موجود', 404, 'REQUEST_NOT_FOUND');
-  }
 
   const isOwner = idsEqual(request.requester, viewerId);
   const isAdmin = isAdminRole(viewerRole);

@@ -4,8 +4,9 @@ import Item from '../models/Item.js';
 import User from '../models/User.js';
 import SystemSettings from '../models/SystemSettings.js';
 import DonationRequest from '../models/DonationRequest.js';
-import SafeHub from '../models/SafeHub.js';
+import Conversation from '../models/Conversation.js';
 import itemRepository from '../repositories/itemRepository.js';
+import hubRepository from '../repositories/hubRepository.js';
 import AppError from '../utils/AppError.js';
 import { uploadToCloudinary, deleteFromCloudinary } from '../utils/uploadToCloudinary.js';
 import notifyUser from '../utils/notifyUser.js';
@@ -17,8 +18,10 @@ import { SOCKET_EVENTS } from '../socket/contracts.js';
 import { emitToAll, emitToUser } from '../socket/emitter.js';
 import runMongoTransaction from '../utils/mongoTransaction.js';
 import acquireUserOperationLocks from '../utils/userOperationLock.js';
+import outboxService from './outboxService.js';
 import type { EntityId, ServicePayload, ServiceRecord, UploadedFile } from './serviceTypes.js';
 import { getErrorMessage } from './serviceTypes.js';
+import { buildSearchPrefixes, buildSearchTokens } from '../utils/searchText.js';
 
 // ── ✅ ARCH-01: ثوابت مشتركة ────────────────────────────────────────────────
 const DEFAULT_MAX_WAITLIST = 10;
@@ -105,22 +108,40 @@ const findNextEligibleWaitlistCandidate = async (
       .map((id) => id.toString())
   );
 
+  const candidateIds = (waitlist ?? [])
+    .map((entry) => resolveEntityId(entry.user))
+    .filter((id): id is EntityId => Boolean(id) && !excluded.has(id!.toString()))
+    .slice(0, 50);
+  const [eligibleUsers, bookingCounts] = await Promise.all([
+    User.find({
+      _id: { $in: candidateIds },
+      role: { $nin: ['admin', 'super_admin'] },
+      isVerified: true,
+      isBanned: { $ne: true },
+      isFrozen: { $ne: true },
+      trustLevel: { $gte: 2 },
+    }).select('_id name email').session(session).lean(),
+    Item.aggregate([
+      { $match: { bookedBy: { $in: candidateIds }, status: 'محجوز', _id: { $ne: itemId } } },
+      { $group: { _id: '$bookedBy', count: { $sum: 1 } } },
+    ]).session(session),
+  ]);
+  const eligibleById = new Map(
+    eligibleUsers.map((candidate) => [candidate._id.toString(), candidate])
+  );
+  const countById = new Map(
+    bookingCounts.map((row) => [String(row._id), Number(row.count) || 0])
+  );
+
   for (const entry of waitlist ?? []) {
     const candidateId = resolveEntityId(entry.user);
     if (!candidateId || excluded.has(candidateId.toString())) {
       if (candidateId) skippedUserIds.push(candidateId);
       continue;
     }
-    const candidate = await User.findOne({
-      _id: candidateId,
-      role: { $nin: ['admin', 'super_admin'] },
-      isVerified: true,
-      isBanned: { $ne: true },
-      isFrozen: { $ne: true },
-      trustLevel: { $gte: 2 },
-    }).select('_id name email').session(session).lean();
+    const candidate = eligibleById.get(candidateId.toString());
 
-    if (!candidate) {
+    if (!candidate || (countById.get(candidateId.toString()) ?? 0) >= maxBookings) {
       skippedUserIds.push(candidateId);
       continue;
     }
@@ -181,7 +202,19 @@ export const getItemsLogic = async (query: ItemListQuery = {}) => {
   };
 
   if (query.location)    filter.location = new RegExp(escapeRegex(query.location), 'i');
-  if (query.search)      filter.title    = new RegExp(escapeRegex(query.search),    'i');
+  if (query.search) {
+    const searchTokens = buildSearchTokens(query.search).slice(0, 5);
+    if (searchTokens.length) {
+      filter.$or = [
+        { searchTokens: { $all: searchTokens } },
+        { searchPrefixes: { $all: searchTokens } },
+        {
+          searchPrefixes: { $exists: false },
+          title: new RegExp(escapeRegex(query.search), 'i'),
+        },
+      ];
+    }
+  }
   if (query.category && query.category !== 'all') filter.category = query.category;
 
   if (query.availableOnly === 'true') filter.status = 'متاح';
@@ -239,6 +272,8 @@ export const getItemByIdLogic = async (
 ) => {
   const item = await itemRepository.findItemDetails(itemId);
   if (!item) throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
+  if (item.status === 'محذوف')
+    throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
 
   const settings = await SystemSettings.getCached();
   const obj = (item.toObject ? item.toObject() : { ...item }) as unknown as (
@@ -286,7 +321,7 @@ export const createItemLogic = async (
     User.findById(userId).select('isVerified trustLevel quota').lean(),
     SystemSettings.getCached(),
     body.safeHub
-      ? SafeHub.findOne({ _id: body.safeHub, isActive: { $ne: false } }).lean()
+      ? hubRepository.findActiveById(body.safeHub)
       : Promise.resolve(null),
   ]);
 
@@ -319,6 +354,16 @@ export const createItemLogic = async (
   try {
     item = await runMongoTransaction(async (session) => {
       await acquireUserOperationLocks([userId], session);
+      if (body.safeHub) {
+        const acquiredHub = await hubRepository.acquireActiveForWrite(body.safeHub, session);
+        if (!acquiredHub) {
+          throw new AppError(
+            'نقطة الاستلام لم تعد متاحة؛ حدّث الصفحة',
+            409,
+            'SAFE_HUB_UNAVAILABLE'
+          );
+        }
+      }
       const activeCount = await Item.countDocuments(
         { donor: userId, status: { $in: ['متاح', 'محجوز'] } },
         { session }
@@ -334,6 +379,17 @@ export const createItemLogic = async (
       const [createdItem] = await Item.create([{
         title:        body.title?.trim(),
         description:  body.description?.trim(),
+        searchTokens: buildSearchTokens(
+          body.title,
+          body.description,
+          body.category,
+          body.location
+        ),
+        searchPrefixes: buildSearchPrefixes(
+          body.title,
+          body.category,
+          body.location
+        ),
         category:     body.category,
         location:     body.location?.trim(),
         condition:    body.condition,
@@ -966,7 +1022,7 @@ export const updateItemLogic = async (
   file: UploadedFile | null = null
 ) => {
   const snapshot = await Item.findById(itemId)
-    .select('donor status cloudinaryId')
+    .select('donor status cloudinaryId title description category location')
     .lean();
 
   if (!snapshot)
@@ -1000,10 +1056,7 @@ export const updateItemLogic = async (
 
   if (body.safeHub) {
     // المراكز القديمة التي لا تحتوي isActive تُعامل كمفعّلة للتوافق مع البيانات الحالية.
-    const safeHub = await SafeHub.findOne({
-      _id: body.safeHub,
-      isActive: { $ne: false },
-    }).select('_id').lean();
+    const safeHub = await hubRepository.findActiveById(body.safeHub);
 
     if (!safeHub)
       throw new AppError(
@@ -1033,6 +1086,22 @@ export const updateItemLogic = async (
     }
   }
 
+  if (['title', 'description', 'category', 'location'].some((field) => Object.hasOwn(updates, field))) {
+    updates.searchTokens = buildSearchTokens(
+      updates.title ?? snapshot.title,
+      updates.description ?? snapshot.description,
+      updates.category ?? snapshot.category,
+      updates.location ?? snapshot.location
+    );
+  }
+  if (['title', 'category', 'location'].some((field) => Object.hasOwn(updates, field))) {
+    updates.searchPrefixes = buildSearchPrefixes(
+      updates.title ?? snapshot.title,
+      updates.category ?? snapshot.category,
+      updates.location ?? snapshot.location
+    );
+  }
+
   let uploadedImage = null;
 
   if (file) {
@@ -1048,15 +1117,29 @@ export const updateItemLogic = async (
   let updatedItem;
 
   try {
-    updatedItem = await Item.findOneAndUpdate(
-      {
-        _id: itemId,
-        donor: userId,
-        status: { $in: ['متاح', 'مخفي'] },
-      },
-      { $set: updates },
-      { returnDocument: 'after', runValidators: true }
-    ).populate([
+    updatedItem = await runMongoTransaction(async (session) => {
+      if (body.safeHub) {
+        const acquiredHub = await hubRepository.acquireActiveForWrite(body.safeHub, session);
+        if (!acquiredHub) {
+          throw new AppError(
+            'نقطة الاستلام لم تعد متاحة؛ حدّث الصفحة',
+            409,
+            'SAFE_HUB_UNAVAILABLE'
+          );
+        }
+      }
+      return Item.findOneAndUpdate(
+        {
+          _id: itemId,
+          donor: userId,
+          status: { $in: ['متاح', 'مخفي'] },
+        },
+        { $set: updates },
+        { returnDocument: 'after', runValidators: true, session }
+      );
+    });
+
+    if (updatedItem) await updatedItem.populate([
       {
         path: 'donor',
         select: 'name avatar trustScore isVerifiedStudent trustLevel',
@@ -1159,24 +1242,38 @@ export const deleteItemLogic = async (itemId: EntityId, userId: EntityId) => {
     recipientConfirmed: { $ne: true as const },
   };
 
-  const deletedItem = await Item.findOneAndDelete(deleteFilter);
-  if (!deletedItem)
-    throw new AppError(
-      'تغيّرت حالة الغرض أثناء الحذف؛ حدّث الصفحة وحاول مجدداً',
-      409,
-      'ITEM_DELETE_CONFLICT'
+  await runMongoTransaction(async (session) => {
+    const deletedItem = await Item.findOneAndUpdate(
+      deleteFilter,
+      {
+        $set: {
+          status: 'محذوف',
+          deletedAt: new Date(),
+          deletedBy: userId,
+          deletionReason: 'deleted_by_owner',
+        },
+      },
+      { returnDocument: 'after', session, runValidators: true }
     );
-
-  if (snapshot.cloudinaryId) {
-    try {
-      await deleteFromCloudinary(snapshot.cloudinaryId);
-    } catch (cleanupError: unknown) {
-      console.warn(
-        '[Cloudinary] تعذر حذف صورة الغرض المحذوف:',
-        getErrorMessage(cleanupError)
+    if (!deletedItem)
+      throw new AppError(
+        'تغيّرت حالة الغرض أثناء الحذف؛ حدّث الصفحة وحاول مجدداً',
+        409,
+        'ITEM_DELETE_CONFLICT'
       );
+
+    await Conversation.updateMany(
+      { item: itemId, archivedAt: null },
+      { $set: { archivedAt: new Date(), archiveReason: 'item_deleted' } },
+      { session }
+    );
+    if (snapshot.cloudinaryId) {
+      await outboxService.enqueueCloudinaryDelete({
+        itemId: String(itemId),
+        publicId: snapshot.cloudinaryId,
+      }, session);
     }
-  }
+  });
 
   // إغلاق شاشة الغرض فوراً لدى الحاجز وقائمة الانتظار إن كانوا متصلين.
   const affectedUserIds = [...new Set([

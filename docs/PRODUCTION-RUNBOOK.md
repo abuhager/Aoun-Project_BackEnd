@@ -1,6 +1,10 @@
 # Aoun Backend — Production Runbook
 
-هذا الدليل مخصص للـPilot الحالي. البنية المدعومة الآن هي **نسخة Web واحدة فقط**، ومعها **Background Worker واحد على الأقل**، وMongoDB Atlas/Replica Set وRedis مُدار. يمنع فحص البيئة تشغيل `WEB_CONCURRENCY>1` حتى إضافة Socket.IO Redis adapter وdistributed cache invalidation وscheduler leadership.
+يدعم النظام نمطين: `RUNTIME_TOPOLOGY=single` لنسخة Web واحدة، أو
+`RUNTIME_TOPOLOGY=distributed` لعدة نسخ Web مع Redis إلزامي. النمط الموزع
+يستخدم Socket.IO Redis adapter، WebSocket-only، invalidation موزعًا للجلسات
+والإعدادات، وقفل leader لمهام Cron. يلزم Background Worker واحد على الأقل
+وMongoDB Replica Set وRedis مُدار.
 
 ## بوابة ما قبل النشر
 
@@ -15,20 +19,22 @@
    npm run db:indexes:verify
    ```
 
-4. تأكد أن `RUNTIME_TOPOLOGY=single` و`WEB_CONCURRENCY=1` وأن عدد نسخ خدمة Render Web يساوي واحدًا.
+4. لنسخة واحدة اضبط `RUNTIME_TOPOLOGY=single` و`WEB_CONCURRENCY=1`. للتوسع
+   اضبط `RUNTIME_TOPOLOGY=distributed` و`REDIS_REQUIRED=true` واختبر عقدتين.
 5. اضبط `MONGO_INDEXES_REQUIRED=true` و`MONGO_SYNC_INDEXES_ON_STARTUP=false`.
 6. اضبط `REDIS_REQUIRED=true` عند الاعتماد على Redis؛ عند فشل الاتصال سيفشل startup بدل الرجوع الصامت إلى MemoryStore.
 7. لا تفعّل `PHONE_VERIFICATION_ENABLED=true` قبل ضبط متغيرات Firebase الثلاثة واختبارها.
 8. تحقق أن Brevo sender موثّق وأن `CLIENT_URL` و`ALLOWED_ORIGINS` يستخدمان HTTPS الصحيح.
 9. أنشئ `OUTBOX_ENCRYPTION_KEY` ثابتًا بـ`openssl rand -hex 32`، واضبط `OUTBOX_WORKER_REQUIRED=true` على خدمتي Web وWorker. لا تغيّر المفتاح قبل تفريغ كل أحداث Outbox المعلقة.
-10. شغّل خدمة Background Worker مستقلة بنفس نسخة الكود ومتغيرات البيئة:
+10. اضبط `METRICS_ENABLED=true` و`METRICS_TOKEN` عشوائيًا (32 محرفًا على الأقل)، ثم اربط Prometheus أو منصة المراقبة بـ`GET /metrics` مع `Authorization: Bearer <token>`.
+11. شغّل خدمة Background Worker مستقلة بنفس نسخة الكود ومتغيرات البيئة:
 
    ```text
    Build Command: npm ci && npm run build
    Start Command: npm run worker
    ```
 
-11. عند أول نشر لهذه الدفعة: طبّق الفهارس، انشر Worker وتأكد من heartbeat، ثم انشر Web. استمرار نسخة Worker واحدة على الأقل شرط readiness.
+12. عند أول نشر لهذه الدفعة: طبّق الفهارس، انشر Worker وتأكد من heartbeat، ثم انشر Web. استمرار نسخة Worker واحدة على الأقل شرط readiness.
 
 ## فحص النشر
 
@@ -58,6 +64,7 @@ npm run perf:smoke
 ## مؤشرات يجب مراقبتها
 
 - HTTP 5xx و429 وp95 latency.
+- `aoun_http_requests_total` و`aoun_http_request_duration_ms` من كل Web instance؛ التجميع والتنبيه يتمان في منصة المراقبة.
 - `/health/ready` وأسباب `degraded`.
 - انقطاع MongoDB أو Redis وإعادة الاتصال.
 - `backgroundJobs.*.status=failed` ومدة كل job.
@@ -88,8 +95,8 @@ npm run perf:smoke
 
 ## حدود هذه المرحلة
 
-- التوسع الأفقي غير مدعوم وممنوع ببوابة البيئة الحالية.
-- Socket presence وsession/settings invalidation والـCron محلية للنسخة الواحدة.
+- التوسع الأفقي مدعوم فقط مع `RUNTIME_TOPOLOGY=distributed` وRedis؛ اختبار عقدتين خلف موازن الحمل شرط قبل تفعيله في Production.
+- مقاييس `/metrics` محلية لكل process وتحتاج Prometheus/منصة خارجية للتجميع والتنبيه. لا يوجد tracing أو error tracker خارجي مضمن لأن اختيار المزود ووجهته قرار تشغيل وخصوصية.
 - بريد التفعيل والاستعادة والتنبيهات الإدارية الحرجة يستخدم Durable Outbox مشفّرًا وتسليمًا at-least-once مع retries وحالة `dead`. قد تصل رسالة مكررة نادرًا إذا نجح مزود البريد ثم انقطعت العملية قبل تسجيل الإكمال.
-- عمليات خارجية أخرى، مثل تنظيف ملفات Cloudinary بعد حذف السجل، ليست ضمن Outbox الحالي وتحتاج تعويضًا دوريًا قبل إطلاق عام واسع.
+- تنظيف ملفات Cloudinary بعد tombstone يمر عبر Outbox نفسه؛ يجب مراقبة أحداث `dead` وتشغيل orphan audit دوريًا.
 - النصوص القانونية وسياسة الاحتفاظ والحذف تحتاج مراجعة قانونية مستقلة قبل تبنٍ مؤسسي.

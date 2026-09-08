@@ -21,7 +21,16 @@ type MessageCreatePayload = {
   clientMessageId?: string | null;
 };
 
-type MessagePageOptions = { page?: number; limit?: number };
+type MessagePageOptions = {
+  cursor?: string | null;
+  page?: number;
+  limit?: number;
+};
+
+type MessageCursor = {
+  createdAt: Date;
+  id: mongoose.Types.ObjectId;
+};
 
 type PopulatableQuery = {
   populate: (path: string, fields: string) => PopulatableQuery;
@@ -48,6 +57,34 @@ const isDuplicateKeyError = (error: unknown): boolean => (
   && 'code' in error
   && error.code === 11000
 );
+
+export const encodeMessageCursor = (message: RepositoryRecord): string => Buffer
+  .from(JSON.stringify({
+    createdAt: new Date(String(message.createdAt)).toISOString(),
+    id: String(message._id),
+  }))
+  .toString('base64url');
+
+export const decodeMessageCursor = (cursor: string): MessageCursor | null => {
+  try {
+    const decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
+      createdAt?: unknown;
+      id?: unknown;
+    };
+    const createdAt = new Date(String(decoded.createdAt ?? ''));
+    if (
+      Number.isNaN(createdAt.getTime())
+      || !mongoose.isObjectIdOrHexString(decoded.id)
+    ) return null;
+
+    return {
+      createdAt,
+      id: new mongoose.Types.ObjectId(String(decoded.id)),
+    };
+  } catch {
+    return null;
+  }
+};
 
 export { DEFAULT_MESSAGE_PAGE_SIZE };
 
@@ -79,7 +116,10 @@ export const findConversationById = async (conversationId: EntityId) => (
 );
 
 export const findUserConversations = async (userId: EntityId) => (
-  populateConversation(Conversation.find({ participants: toObjectId(userId) }))
+  populateConversation(Conversation.find({
+    participants: toObjectId(userId),
+    archivedAt: null,
+  }))
     .sort({ lastMessageAt: -1, updatedAt: -1 })
     .lean()
 );
@@ -88,7 +128,7 @@ export const countUnreadForUser = async (userId: EntityId) => {
   const actualUserId = toObjectId(userId);
   const conversationIds = (await Conversation.distinct(
     '_id',
-    { participants: actualUserId }
+    { participants: actualUserId, archivedAt: null }
   )) as Array<string | mongoose.Types.ObjectId>;
 
   if (!conversationIds.length) return 0;
@@ -160,27 +200,52 @@ export const createMessage = async ({
 
 export const findMessagesPage = async (
   conversationId: EntityId,
-  { page = 1, limit = DEFAULT_MESSAGE_PAGE_SIZE }: MessagePageOptions = {}
+  options: MessagePageOptions = {}
 ) => {
+  const {
+    cursor = null,
+    page = 1,
+    limit = DEFAULT_MESSAGE_PAGE_SIZE,
+  } = options;
   const safeLimit = Math.min(Math.max(Number(limit) || DEFAULT_MESSAGE_PAGE_SIZE, 1), 100);
   const safePage = Math.max(Number(page) || 1, 1);
   const skip = (safePage - 1) * safeLimit;
+  const cursorMode = Object.prototype.hasOwnProperty.call(options, 'cursor');
+  const boundary = cursor ? decodeMessageCursor(cursor) : null;
+  const filter: Record<string, unknown> = { conversation: conversationId };
 
-  const [messages, total] = await Promise.all([
-    Message.find({ conversation: conversationId })
+  if (boundary) {
+    filter.$or = [
+      { createdAt: { $lt: boundary.createdAt } },
+      { createdAt: boundary.createdAt, _id: { $lt: boundary.id } },
+    ];
+  }
+
+  const [rows, total] = await Promise.all([
+    Message.find(filter)
       .populate('sender', `${POPULATE_USER} _id`)
       .sort({ createdAt: -1, _id: -1 })
-      .skip(skip)
-      .limit(safeLimit)
+      .skip(cursorMode ? 0 : skip)
+      .limit(safeLimit + (cursorMode ? 1 : 0))
       .lean(),
     Message.countDocuments({ conversation: conversationId }),
   ]);
 
+  const hasMore = cursorMode
+    ? rows.length > safeLimit
+    : safePage * safeLimit < total;
+  const pageRows = cursorMode ? rows.slice(0, safeLimit) : rows;
+  const oldestMessage = pageRows.at(-1) as RepositoryRecord | undefined;
+
   return {
-    messages: messages.reverse(),
+    messages: pageRows.reverse(),
     total,
     page: safePage,
     totalPages: Math.ceil(total / safeLimit),
+    hasMore,
+    nextCursor: hasMore && oldestMessage
+      ? encodeMessageCursor(oldestMessage)
+      : null,
   };
 };
 
@@ -231,4 +296,4 @@ export const countUnreadForUserBatch = async (
   }, {} as Record<string, number>);
 };
 
-export default { DEFAULT_MESSAGE_PAGE_SIZE, findConversationByPair, findOrCreateConversation, findConversationById, findUserConversations, countUnreadForUser, isParticipant, createMessage, findMessagesPage, markMessagesRead, markMessageNotificationsRead, countUnreadForUserBatch };
+export default { DEFAULT_MESSAGE_PAGE_SIZE, encodeMessageCursor, decodeMessageCursor, findConversationByPair, findOrCreateConversation, findConversationById, findUserConversations, countUnreadForUser, isParticipant, createMessage, findMessagesPage, markMessagesRead, markMessageNotificationsRead, countUnreadForUserBatch };

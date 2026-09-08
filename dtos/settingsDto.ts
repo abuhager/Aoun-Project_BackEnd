@@ -3,6 +3,17 @@ import { toPlainRecord } from './dtoTypes.js';
 
 const EMAIL_DOMAIN = /^@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+$/;
 
+// Some older settings documents/clients can still contain blank list entries.
+// Strip only those legacy blanks before validating the list; non-empty values
+// must continue to satisfy the same minimum and maximum length rules.
+const settingsStringList = (maxItems: number, maxLength: number) => Joi.array()
+  .items(
+    Joi.string().trim().min(2).max(maxLength),
+    Joi.string().trim().valid('').strip()
+  )
+  .min(1)
+  .max(maxItems);
+
 const EDITABLE_SETTING_FIELDS = Object.freeze([
   'defaultUserQuota',
   'studentQuota',
@@ -49,6 +60,7 @@ const EDITABLE_SETTING_FIELDS = Object.freeze([
 ]);
 
 const updateSettings = Joi.object({
+  expectedVersion:                 Joi.number().integer().min(1).required(),
   defaultUserQuota:               Joi.number().integer().min(1).max(20),
   studentQuota:                   Joi.number().integer().min(1).max(20),
   studentDefaultTrustLevel:       Joi.number().integer().min(1).max(2),
@@ -67,18 +79,9 @@ const updateSettings = Joi.object({
   ratingThresholdGood:            Joi.number().integer().min(1).max(10),
   ratingThresholdNeutral:         Joi.number().integer().min(1).max(10),
   ratingThresholdBad:             Joi.number().integer().min(1).max(10),
-  categories: Joi.array()
-    .items(Joi.string().trim().min(2).max(50))
-    .min(1)
-    .max(30),
-  locations: Joi.array()
-    .items(Joi.string().trim().min(2).max(60))
-    .min(1)
-    .max(30),
-  reportReasons: Joi.array()
-    .items(Joi.string().trim().min(2).max(100))
-    .min(1)
-    .max(50),
+  categories:                     settingsStringList(30, 50),
+  locations:                      settingsStringList(30, 60),
+  reportReasons:                  settingsStringList(50, 100),
   autoReportBanThreshold:         Joi.number().integer().min(1).max(20),
   appealWindowHours:               Joi.number().integer().min(1).max(336),
   otpExpiryMinutes:               Joi.number().integer().min(1).max(60),
@@ -110,7 +113,7 @@ const updateSettings = Joi.object({
   contactEmail:                   Joi.string().trim().lowercase().max(254)
     .email({ tlds: { allow: false } }),
 })
-  .min(1)
+  .min(2)
   .unknown(false);
 
 const assertSettingsInvariants = (rawSettings: unknown) => {

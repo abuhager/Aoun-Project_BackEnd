@@ -88,9 +88,11 @@ const validateEnvironment = (env: NodeJS.ProcessEnv = process.env): {
   }
 
   validateOptionalBoolean(env, 'PHONE_VERIFICATION_ENABLED', errors);
+  validateOptionalBoolean(env, 'PHONE_VERIFICATION_PROMOTES_TRUST', errors);
   validateOptionalBoolean(env, 'REDIS_REQUIRED', errors);
   validateOptionalBoolean(env, 'BACKGROUND_JOBS_REQUIRED', errors);
   validateOptionalBoolean(env, 'OUTBOX_WORKER_REQUIRED', errors);
+  validateOptionalBoolean(env, 'METRICS_ENABLED', errors);
 
   if (env.ALLOWED_ORIGINS) {
     try {
@@ -145,15 +147,23 @@ const validateEnvironment = (env: NodeJS.ProcessEnv = process.env): {
 
   if (env.NODE_ENV === 'production') {
     const topology = env.RUNTIME_TOPOLOGY?.trim().toLowerCase();
-    if (topology !== 'single') {
+    if (!['single', 'distributed'].includes(topology ?? '')) {
       errors.push(
-        'RUNTIME_TOPOLOGY=single مطلوب في production حتى إضافة Socket/Cache adapter موزع'
+        'RUNTIME_TOPOLOGY يجب أن تكون single أو distributed في production'
       );
     }
 
     const webConcurrency = parsePositiveInteger(env.WEB_CONCURRENCY, 1, { max: 100 });
     if (topology === 'single' && webConcurrency > 1) {
       errors.push('WEB_CONCURRENCY يجب أن يساوي 1 عندما تكون RUNTIME_TOPOLOGY=single');
+    }
+    if (topology === 'distributed') {
+      if (!isEnabled(env.REDIS_REQUIRED)) {
+        errors.push('REDIS_REQUIRED=true مطلوب عندما تكون RUNTIME_TOPOLOGY=distributed');
+      }
+      if (!env.REDIS_URL?.trim()) {
+        errors.push('REDIS_URL مطلوب عندما تكون RUNTIME_TOPOLOGY=distributed');
+      }
     }
 
     const emailSender = env.SMTP_USER?.trim() || env.PLATFORM_EMAIL?.trim();
@@ -175,6 +185,14 @@ const validateEnvironment = (env: NodeJS.ProcessEnv = process.env): {
       errors.push(
         'OUTBOX_ENCRYPTION_KEY مطلوب ويجب أن يكون 32 بايت بصيغة base64 أو 64 خانة hex'
       );
+    }
+    if (isEnabled(env.METRICS_ENABLED)) {
+      if (
+        (env.METRICS_TOKEN?.length ?? 0) < 32
+        || isPlaceholderSecret(env.METRICS_TOKEN)
+      ) {
+        errors.push('METRICS_TOKEN يجب ألا يقل عن 32 محرفاً عند تفعيل metrics في production');
+      }
     }
 
     if (isEnabled(env.PHONE_VERIFICATION_ENABLED)) {

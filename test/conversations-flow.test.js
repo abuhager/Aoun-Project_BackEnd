@@ -218,7 +218,13 @@ test('إعادة إرسال clientMessageId نفسه تُؤكَّد دون بث 
   });
 
   repo.findConversationById = async () => conversationFixture();
-  repo.findMessagesPage = async () => ({ messages: [], page: 1, totalPages: 1 });
+  repo.findMessagesPage = async () => ({
+    messages: [],
+    page: 1,
+    totalPages: 1,
+    hasMore: false,
+    nextCursor: null,
+  });
   repo.markMessagesRead = async () => 0;
   repo.markMessageNotificationsRead = async () => 0;
   repo.createMessage = async ({ clientMessageId }) => ({

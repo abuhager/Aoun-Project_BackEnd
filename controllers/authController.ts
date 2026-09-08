@@ -48,7 +48,11 @@ export const register = asyncHandler(async (req, res) => {
 export const verifyEmail = asyncHandler(async (req, res) => {
   const result = await authService.verifyEmailLogic(req.body as VerificationInput);
 
-  if (result.statusCode === 200 && result.refreshToken) {
+  if (
+    result.statusCode === 200
+    && 'refreshToken' in result
+    && typeof result.refreshToken === 'string'
+  ) {
     setSessionCookies(res, result.refreshToken);
   }
 

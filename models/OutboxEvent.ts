@@ -4,6 +4,8 @@ export const OUTBOX_EVENT_TYPES = Object.freeze([
   'verification_email',
   'password_reset_email',
   'critical_notification_email',
+  'registration_guidance_email',
+  'cloudinary_delete',
 ] as const);
 
 export const OUTBOX_STATUSES = Object.freeze([

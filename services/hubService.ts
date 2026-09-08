@@ -110,15 +110,21 @@ export const deactivateHub = async (hubId: EntityId, adminId: EntityId) => {
   if (!isValidId(hubId)) return invalidIdResponse();
 
   return runMongoTransaction(async (session) => {
-    const existingHub = await hubRepository.findById(hubId, session);
-    if (!existingHub) {
-      return {
-        statusCode: 404,
-        body: { msg: 'المركز غير موجود', code: 'HUB_NOT_FOUND' },
-      };
-    }
-
-    if (existingHub.isActive === false) {
+    const claimedHub = await hubRepository.beginDeactivation(hubId, session);
+    if (!claimedHub) {
+      const existingHub = await hubRepository.findById(hubId, session);
+      if (!existingHub) {
+        return {
+          statusCode: 404,
+          body: { msg: 'المركز غير موجود', code: 'HUB_NOT_FOUND' },
+        };
+      }
+      if (existingHub.lifecycleState === 'deactivating') {
+        return {
+          statusCode: 409,
+          body: { msg: 'تعطيل المركز قيد التنفيذ', code: 'HUB_DEACTIVATION_IN_PROGRESS' },
+        };
+      }
       return {
         statusCode: 200,
         body: { msg: 'المركز معطّل مسبقاً', hub: hubDto.toAdminHub(existingHub) },
@@ -129,6 +135,7 @@ export const deactivateHub = async (hubId: EntityId, adminId: EntityId) => {
     const pendingOffers = await donationOfferRepository.countPendingByHub(hubId, session);
 
     if (activeItems > 0 || pendingOffers > 0) {
+      await hubRepository.restoreActive(hubId, session);
       const blockers: string[] = [];
       if (activeItems > 0) blockers.push(`${activeItems} غرض نشط`);
       if (pendingOffers > 0) blockers.push(`${pendingOffers} عرض تبرع معلّق`);
@@ -143,7 +150,7 @@ export const deactivateHub = async (hubId: EntityId, adminId: EntityId) => {
       };
     }
 
-    const hub = await hubRepository.deactivateById(hubId, session);
+    const hub = await hubRepository.completeDeactivation(hubId, session);
     if (!hub) {
       return {
         statusCode: 404,
@@ -183,6 +190,13 @@ export const reactivateHub = async (hubId: EntityId, adminId: EntityId) => {
       return {
         statusCode: 200,
         body: { msg: 'المركز مفعّل مسبقاً', hub: hubDto.toAdminHub(existingHub) },
+      };
+    }
+
+    if (existingHub.lifecycleState === 'deactivating') {
+      return {
+        statusCode: 409,
+        body: { msg: 'تعطيل المركز قيد التنفيذ', code: 'HUB_DEACTIVATION_IN_PROGRESS' },
       };
     }
 

@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 async function setup(t, responseFactory, production = false) {
   const { default: SystemSettings } = await import('../models/SystemSettings.ts');
   const { default: sendEmail } = await import('../utils/sendEmail.ts');
+  const { default: axios } = await import('axios');
   const saved = { BREVO_API_KEY: process.env.BREVO_API_KEY, NODE_ENV: process.env.NODE_ENV };
   process.env.BREVO_API_KEY = 'test-only-api-key';
   process.env.NODE_ENV = production ? 'production' : 'test';
@@ -19,9 +20,15 @@ async function setup(t, responseFactory, production = false) {
     t.mock.method(console, method, (...args) => entries.push(args));
   }
   const calls = [];
-  t.mock.method(globalThis, 'fetch', async (url, options) => {
-    calls.push({ url, options });
-    return responseFactory();
+  t.mock.method(axios, 'post', async (url, body, options) => {
+    calls.push({ url, body, options });
+    const response = responseFactory();
+    if (!response.ok) {
+      throw Object.assign(new Error('private-provider-body'), {
+        response: { status: response.status },
+      });
+    }
+    return { status: response.status, data: null };
   });
   const options = {
     email: 'private-recipient@example.test',
@@ -36,11 +43,12 @@ async function setup(t, responseFactory, production = false) {
     sendError = error;
   }
   assert.equal(calls.length, 1);
-  const payload = JSON.parse(calls[0].options.body);
+  const payload = calls[0].body;
   assert.deepEqual(payload.to, [{ email: options.email }]);
   assert.equal(payload.subject, options.subject);
   assert.equal(payload.htmlContent, options.message);
   assert.equal(payload.replyTo.email, options.replyTo);
+  assert.equal(calls[0].options.timeout, 10_000);
   const output = JSON.stringify(entries);
   for (const secret of [...Object.values(options), 'private-reset-token', 'test-only-api-key']) {
     assert.ok(!output.includes(secret), 'Logs must not contain recipient, subject, message or credentials');

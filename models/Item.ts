@@ -21,6 +21,8 @@ const ItemSchema = new mongoose.Schema(
       trim: true,
       maxlength: [1000, 'الوصف طويل جداً'],
     },
+    searchTokens: { type: [String], default: [], select: false },
+    searchPrefixes: { type: [String], default: [], select: false },
     category: {
       type: String,
       default: 'أخرى',
@@ -64,7 +66,7 @@ const ItemSchema = new mongoose.Schema(
     // ✅ [A] حُذف حقل deliveryOtp بالكامل — النظام يعتمد على Double Confirmation
     status: {
       type: String,
-      enum: ['متاح', 'محجوز', 'تم التسليم', 'مخفي'],
+      enum: ['متاح', 'محجوز', 'تم التسليم', 'مخفي', 'محذوف'],
       default: 'متاح',
       index: true,
     },
@@ -106,6 +108,9 @@ const ItemSchema = new mongoose.Schema(
       ref: 'DonationRequest',
       default: null,
     },
+    deletedAt: { type: Date, default: null, index: true },
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    deletionReason: { type: String, trim: true, maxlength: 500, default: null },
   },
   {
     timestamps: true,
@@ -121,6 +126,8 @@ ItemSchema.index({ safeHub: 1, status: 1 });
 ItemSchema.index({ status: 1, bookedAt: 1 });
 ItemSchema.index({ status: 1, deliveredAt: -1 });
 ItemSchema.index({ location: 1, status: 1 });
+ItemSchema.index({ searchTokens: 1, status: 1, createdAt: -1 });
+ItemSchema.index({ searchPrefixes: 1, status: 1, createdAt: -1 });
 ItemSchema.index({ 'waitlist.user': 1, status: 1 });
 ItemSchema.index(
   { linkedRequestId: 1 },

@@ -51,6 +51,7 @@ const hubRecord = (overrides = {}) => ({
   coordinates: { lat: 31.95, lng: 35.91 },
   workingHours: '9:00 ص — 5:00 م',
   isActive: true,
+  lifecycleState: 'active',
   createdBy: ADMIN_ID,
   ...overrides,
 });
@@ -106,7 +107,12 @@ test('المراكز القديمة غير المعطلة تبقى ظاهرة ف
   };
 
   await hubRepository.findAllActive();
-  assert.deepEqual(capturedFilter, { isActive: { $ne: false } });
+  assert.deepEqual(capturedFilter, {
+    $or: [
+      { lifecycleState: 'active', isActive: { $ne: false } },
+      { lifecycleState: { $exists: false }, isActive: { $ne: false } },
+    ],
+  });
   assert.equal(hubDto.toPublicHub(hubRecord({ isActive: undefined })).isActive, true);
   assert.equal(hubDto.toPublicHub(hubRecord({ isActive: false })).isActive, false);
 });
@@ -128,21 +134,33 @@ test('التعديل العام لا يستطيع تمرير isActive إلى Mon
 test('لا يعطل المركز مع أغراض نشطة أو عروض تبرع معلقة', async (t) => {
   const originals = {
     findById: hubRepository.findById,
-    deactivate: hubRepository.deactivateById,
+    begin: hubRepository.beginDeactivation,
+    restore: hubRepository.restoreActive,
+    complete: hubRepository.completeDeactivation,
     activeItems: itemRepository.countActiveByHub,
     pendingOffers: donationOfferRepository.countPendingByHub,
   };
   t.after(() => {
     hubRepository.findById = originals.findById;
-    hubRepository.deactivateById = originals.deactivate;
+    hubRepository.beginDeactivation = originals.begin;
+    hubRepository.restoreActive = originals.restore;
+    hubRepository.completeDeactivation = originals.complete;
     itemRepository.countActiveByHub = originals.activeItems;
     donationOfferRepository.countPendingByHub = originals.pendingOffers;
   });
 
-  hubRepository.findById = async () => hubRecord();
+  hubRepository.beginDeactivation = async () => hubRecord({
+    isActive: false,
+    lifecycleState: 'deactivating',
+  });
   itemRepository.countActiveByHub = async () => 2;
   donationOfferRepository.countPendingByHub = async () => 1;
-  hubRepository.deactivateById = async () => {
+  let restored = false;
+  hubRepository.restoreActive = async () => {
+    restored = true;
+    return hubRecord();
+  };
+  hubRepository.completeDeactivation = async () => {
     throw new Error('يجب ألا يصل التنفيذ إلى التعطيل');
   };
 
@@ -150,6 +168,7 @@ test('لا يعطل المركز مع أغراض نشطة أو عروض تبرع
   assert.equal(result.statusCode, 409);
   assert.equal(result.body.code, 'HUB_HAS_ACTIVE_HANDOFFS');
   assert.deepEqual(result.body.details, { activeItems: 2, pendingOffers: 1 });
+  assert.equal(restored, true);
 });
 
 test('كل عملية إدارة مركز تسجل هوية الأدمن والهدف', async (t) => {

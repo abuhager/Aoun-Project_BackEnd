@@ -5,6 +5,8 @@ import emailService from '../services/emailService.js';
 import { sendCriticalNotificationEmail } from '../services/criticalNotificationEmailService.js';
 import { decryptOutboxPayload } from '../utils/outboxCrypto.js';
 import type { CriticalNotificationEmailPayload } from '../services/outboxService.js';
+import type { RegistrationGuidanceEmailPayload } from '../services/outboxService.js';
+import type { CloudinaryDeletePayload } from '../services/outboxService.js';
 
 type VerificationPayload = {
   to: string;
@@ -80,6 +82,26 @@ const deliver = async (event: ClaimedEvent) => {
       event.encryptedPayload
     );
     await sendCriticalNotificationEmail(payload);
+    return;
+  }
+  if (event.type === 'registration_guidance_email') {
+    const payload = decryptOutboxPayload<RegistrationGuidanceEmailPayload>(
+      event.encryptedPayload
+    );
+    await emailService.sendRegistrationGuidanceEmail(payload.to, payload.name);
+    return;
+  }
+  if (event.type === 'cloudinary_delete') {
+    const payload = decryptOutboxPayload<CloudinaryDeletePayload>(event.encryptedPayload);
+    const [{ deleteFromCloudinary }, { default: Item }] = await Promise.all([
+      import('../utils/uploadToCloudinary.js'),
+      import('../models/Item.js'),
+    ]);
+    await deleteFromCloudinary(payload.publicId);
+    await Item.updateOne(
+      { _id: payload.itemId, cloudinaryId: payload.publicId },
+      { $set: { cloudinaryId: null, imageUrl: null } }
+    );
     return;
   }
   throw new Error('OUTBOX_EVENT_TYPE_UNSUPPORTED');

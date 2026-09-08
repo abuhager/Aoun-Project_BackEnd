@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import User from "../models/User.js";
 import Item from "../models/Item.js";
 import DonationRequest from "../models/DonationRequest.js";
+import { getBusinessMonthKey } from "../utils/businessTime.js";
 import DonationOffer from "../models/DonationOffer.js";
 import SafeHub from "../models/SafeHub.js";
 import Conversation from "../models/Conversation.js";
@@ -93,8 +94,7 @@ const toId = (value: unknown): string => String(value ?? "");
 const addDays = (date: Date, days: number): Date =>
   new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 
-const monthKey = (date: Date): string =>
-  `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+const monthKey = getBusinessMonthKey;
 
 function buildMockDataset(passwordHash: string, now = new Date()) {
   const userIds = createIds([

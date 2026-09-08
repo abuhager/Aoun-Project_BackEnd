@@ -107,7 +107,7 @@ test('بيئة production تفرض HTTPS وفصل الأسرار ومدداً م
   );
 });
 
-test('بوابة production ترفض البريد أو Firebase الناقص والتوسع الأفقي غير المدعوم', () => {
+test('بوابة production ترفض البريد أو Firebase الناقص وتفرض Redis للتوسع الأفقي', () => {
   assert.throws(
     () => validateEnvironment({
       ...secureProductionEnv(),
@@ -145,8 +145,16 @@ test('بوابة production ترفض البريد أو Firebase الناقص و�
       ...secureProductionEnv(),
       RUNTIME_TOPOLOGY: 'distributed',
     }),
-    /RUNTIME_TOPOLOGY=single/
+    /REDIS_REQUIRED|REDIS_URL/
   );
+
+  assert.doesNotThrow(() => validateEnvironment({
+    ...secureProductionEnv(),
+    RUNTIME_TOPOLOGY: 'distributed',
+    WEB_CONCURRENCY: '2',
+    REDIS_REQUIRED: 'true',
+    REDIS_URL: 'rediss://redis.example:6380',
+  }));
 });
 
 test('حارس Cookie endpoints يرفض cross-site وغير JSON ويقبل Origin الموثوق', async () => {

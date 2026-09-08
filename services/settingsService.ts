@@ -6,6 +6,7 @@ import { SOCKET_EVENTS } from '../socket/contracts.js';
 import { emitToAll } from '../socket/emitter.js';
 import { EDITABLE_SETTING_FIELDS, assertSettingsInvariants } from '../dtos/settingsDto.js';
 import type { EntityId, ServicePayload, ServiceRecord } from './serviceTypes.js';
+import { publishRuntimeEvent } from '../utils/runtimeBus.js';
 
 const PUBLIC_SETTING_FIELDS = Object.freeze([
   'categories',
@@ -77,7 +78,11 @@ export const getPublicSettings = async () => (
 );
 
 export const updateSettings = async (updates: ServicePayload, actorId: EntityId) => {
-  const unknownFields = Object.keys(updates).filter((key) => !editableFieldSet.has(key));
+  const expectedVersion = Number(updates.expectedVersion);
+  const requestedUpdates = Object.fromEntries(
+    Object.entries(updates).filter(([key]) => key !== 'expectedVersion')
+  );
+  const unknownFields = Object.keys(requestedUpdates).filter((key) => !editableFieldSet.has(key));
   if (unknownFields.length > 0) {
     throw new AppError(
       `حقول إعدادات غير مسموحة: ${unknownFields.join(', ')}`,
@@ -87,7 +92,7 @@ export const updateSettings = async (updates: ServicePayload, actorId: EntityId)
   }
 
   const sanitized = Object.fromEntries(
-    Object.entries(updates).map(([key, value]) => [key, normalizeSettingValue(key, value)])
+    Object.entries(requestedUpdates).map(([key, value]) => [key, normalizeSettingValue(key, value)])
   );
   if (Object.keys(sanitized).length === 0) {
     throw new AppError('لا توجد حقول صالحة للتحديث', 400, 'EMPTY_SETTINGS_UPDATE');
@@ -95,6 +100,13 @@ export const updateSettings = async (updates: ServicePayload, actorId: EntityId)
 
   const current = await SystemSettings.getInstance();
   const currentRecord = current as unknown as ServiceRecord;
+  if (Number(currentRecord.version ?? 1) !== expectedVersion) {
+    throw new AppError(
+      'تم تعديل الإعدادات من جلسة أخرى. أعد تحميل الصفحة وراجع التغييرات.',
+      409,
+      'SETTINGS_VERSION_CONFLICT'
+    );
+  }
   const merged = { ...current, ...sanitized };
   assertSettingsInvariants(merged);
 
@@ -114,8 +126,8 @@ export const updateSettings = async (updates: ServicePayload, actorId: EntityId)
   );
   const updated = await runMongoTransaction(async (session) => {
     const saved = await SystemSettings.findOneAndUpdate(
-      { _id: 'global' },
-      { $set: changedUpdates },
+      { _id: 'global', version: expectedVersion },
+      { $set: changedUpdates, $inc: { version: 1 } },
       {
         returnDocument: 'after',
         runValidators: true,
@@ -125,7 +137,11 @@ export const updateSettings = async (updates: ServicePayload, actorId: EntityId)
     ).lean();
 
     if (!saved) {
-      throw new AppError('تعذر العثور على إعدادات النظام', 500, 'SETTINGS_NOT_FOUND');
+      throw new AppError(
+        'تم تعديل الإعدادات من جلسة أخرى. أعد تحميل الصفحة وراجع التغييرات.',
+        409,
+        'SETTINGS_VERSION_CONFLICT'
+      );
     }
 
     const updatedRecord = saved as unknown as ServiceRecord;
@@ -138,6 +154,8 @@ export const updateSettings = async (updates: ServicePayload, actorId: EntityId)
       reason: `تعديل ${changedFields.length} إعداد/إعدادات`,
       meta: {
         changedFields,
+        expectedVersion,
+        resultingVersion: updatedRecord.version,
         changes: Object.fromEntries(
           changedFields.map((key) => [key, { before: currentRecord[key], after: updatedRecord[key] }])
         ),
@@ -148,6 +166,13 @@ export const updateSettings = async (updates: ServicePayload, actorId: EntityId)
   });
 
   SystemSettings.invalidateCache(changedFields);
+  await publishRuntimeEvent('settings:invalidate', {
+    changedFields,
+    version: Number((updated as unknown as ServiceRecord).version ?? 1),
+  }).catch((error: unknown) => console.error(
+    '[Settings] failed to publish distributed invalidation:',
+    error instanceof Error ? error.message : String(error)
+  ));
   const publicSettings = toPublicSettings(updated as ServiceRecord);
 
   emitToAll(SOCKET_EVENTS.SETTINGS_UPDATED, publicSettings);

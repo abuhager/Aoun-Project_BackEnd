@@ -44,6 +44,8 @@ const conversationSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    archivedAt: { type: Date, default: null, index: true },
+    archiveReason: { type: String, trim: true, maxlength: 100, default: null },
   },
   { timestamps: true }
 );

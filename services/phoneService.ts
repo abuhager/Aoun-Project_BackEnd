@@ -6,6 +6,7 @@ import { isPhoneVerificationEnabled } from '../middlewares/phoneVerificationFeat
 import { isValidJordanPhone, normalizeJordanPhone } from '../utils/phoneUtils.js';
 import type { EntityId } from './serviceTypes.js';
 import { hasErrorCode } from './serviceTypes.js';
+import { deriveTrustLevel, phoneVerificationPromotesTrust } from '../utils/trustPolicy.js';
 
 const serviceError = (message: string, status: number, code: string) =>
   new AppError(message, status, code);
@@ -47,11 +48,31 @@ export const verifyPhoneWithFirebase = async (userId: EntityId, idToken: string)
 
   let updated;
   try {
+    const current = await User.findById(userId)
+      .select('isVerified isVerifiedStudent promotedByAdmin trustLevel')
+      .lean();
+    if (!current) {
+      throw serviceError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
+    }
+    const nextTrustLevel = deriveTrustLevel({
+      emailVerified: Boolean(current.isVerified),
+      studentVerified: Boolean(current.isVerifiedStudent),
+      phoneVerified: true,
+      adminApproved: Boolean(current.promotedByAdmin),
+    }, { phonePromotesTrust: phoneVerificationPromotesTrust() });
+
     updated = await User.findByIdAndUpdate(
       userId,
       {
-        $set: { phone: firebasePhone, phoneVerified: true },
-        $max: { trustLevel: 2 },
+        $set: {
+          phone: firebasePhone,
+          phoneVerified: true,
+          'trustEvidence.emailVerified': Boolean(current.isVerified),
+          'trustEvidence.studentVerified': Boolean(current.isVerifiedStudent),
+          'trustEvidence.phoneVerified': true,
+          'trustEvidence.adminApproved': Boolean(current.promotedByAdmin),
+          trustLevel: nextTrustLevel,
+        },
         $unset: { phoneOtp: 1, phoneOtpExpiry: 1, phoneOtpSentAt: 1 },
       },
       { returnDocument: 'after', runValidators: true }

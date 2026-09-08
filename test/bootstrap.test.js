@@ -12,6 +12,7 @@ process.env.JWT_REFRESH_EXPIRE = '30d';
 process.env.CLOUDINARY_CLOUD_NAME = 'test-cloud';
 process.env.CLOUDINARY_API_KEY = 'test-key';
 process.env.CLOUDINARY_API_SECRET = 'test-secret';
+process.env.METRICS_ENABLED = 'true';
 
 const { parseAllowedOrigins } = require('../config/cors');
 const { validateEnvironment } = require('../config/env');
@@ -113,6 +114,16 @@ test('يعيد liveness بنجاح ويولّد Request ID آمناً', async ()
   assert.equal(response.headers.get('access-control-allow-origin'), 'https://frontend.example');
   assert.match(response.headers.get('x-request-id'), /^[a-f0-9-]{36}$/);
   assert.equal((await response.json()).status, 'ok');
+});
+
+test('يعرض مقاييس HTTP منخفضة الكاردينالية بصيغة Prometheus', async () => {
+  const response = await fetch(`${baseUrl}/metrics`);
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  assert.match(body, /aoun_http_requests_total\{method="GET",route="\/health",status="2xx"\}/);
+  assert.match(body, /aoun_http_request_duration_ms_bucket/);
+  assert.match(body, /process_resident_memory_bytes/);
+  assert.ok(!body.includes(baseUrl));
 });
 
 test('يرفض CORS Origin غير المصرح به', async () => {

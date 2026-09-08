@@ -46,6 +46,7 @@ const readSource = (relativePath) => fs.readFileSync(
 
 test('عقد الإعدادات يغطي كل الحقول التشغيلية ويرفض الحقول غير المعروفة', () => {
   const payload = {
+    expectedVersion: 1,
     defaultUserQuota: 3,
     level2Quota: 6,
     maxWaitlistPerItem: 12,
@@ -62,8 +63,28 @@ test('عقد الإعدادات يغطي كل الحقول التشغيلية و
   assert.ok(EDITABLE_SETTING_FIELDS.includes('locations'));
   assert.ok(EDITABLE_SETTING_FIELDS.includes('appealWindowHours'));
 
-  const invalid = updateSettings.validate({ defaultQuota: 5 });
+  const invalid = updateSettings.validate({ expectedVersion: 1, defaultQuota: 5 });
   assert.equal(invalid.error?.details[0].type, 'object.unknown');
+});
+
+test('عقد الإعدادات ينظف القيم الفارغة القديمة ويبقي رفض القيم القصيرة', () => {
+  const legacyPayload = updateSettings.validate({
+    expectedVersion: 1,
+    categories: ['كتب', '  '],
+    locations: ['عمان', ''],
+    reportReasons: ['معلومات مضللة', ''],
+  }, { abortEarly: false });
+
+  assert.equal(legacyPayload.error, undefined);
+  assert.deepEqual(legacyPayload.value.categories, ['كتب']);
+  assert.deepEqual(legacyPayload.value.locations, ['عمان']);
+  assert.deepEqual(legacyPayload.value.reportReasons, ['معلومات مضللة']);
+
+  const invalid = updateSettings.validate({
+    expectedVersion: 1,
+    reportReasons: ['أ'],
+  });
+  assert.ok(invalid.error);
 });
 
 test('قواعد الإعدادات تمنع حدود تقييم أو تبرعات متناقضة', () => {
@@ -119,6 +140,7 @@ test('الإعدادات العامة لا تكشف إلا العقد الآمن
 test('تحديث الإعدادات يحفظ الفروق فقط ويبطل الكاش ويسجل الأثر الإداري', async () => {
   const current = {
     _id: 'global',
+    version: 1,
     platformName: 'عون',
     categories: ['كتب'],
     locations: ['عمان'],
@@ -143,18 +165,21 @@ test('تحديث الإعدادات يحفظ الفروق فقط ويبطل ال
   SystemSettings.getInstance = async () => ({ ...current });
   SystemSettings.findOneAndUpdate = (_filter, update) => {
     databaseUpdate = update;
-    return { lean: async () => ({ ...current, ...update.$set }) };
+    return { lean: async () => ({ ...current, ...update.$set, version: 2 }) };
   };
   SystemSettings.invalidateCache = (fields) => { invalidated = fields; };
   adminRepository.logAdminAction = async (payload) => { audit = payload; return payload; };
 
   try {
     const result = await settingsService.updateSettings(
-      { platformName: ' عون الجامعات ', categories: ['كتب'] },
+      { expectedVersion: 1, platformName: ' عون الجامعات ', categories: ['كتب'] },
       '507f1f77bcf86cd799439011'
     );
 
-    assert.deepEqual(databaseUpdate, { $set: { platformName: 'عون الجامعات' } });
+    assert.deepEqual(databaseUpdate, {
+      $set: { platformName: 'عون الجامعات' },
+      $inc: { version: 1 },
+    });
     assert.deepEqual(result.changedFields, ['platformName']);
     assert.deepEqual(invalidated, ['platformName']);
     assert.equal(audit.action, 'SETTINGS_UPDATE');

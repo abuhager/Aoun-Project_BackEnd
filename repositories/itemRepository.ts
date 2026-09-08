@@ -79,22 +79,24 @@ async function attachReportIds(
   }));
 }
 
-export const findDonationsByUser = async (userId: EntityId) => {
+export const findDonationsByUser = async (userId: EntityId, limit = 200) => {
   const items = await Item.find({ donor: userId })
     .populate('bookedBy', 'name avatar phone email trustScore isVerifiedStudent')
     .populate('safeHub',  'name city')
     .sort({ createdAt: -1 })
+    .limit(Math.min(Math.max(limit, 1), 200))
     .lean() as RepositoryRecord[];
 
   // لا نعرض زر الاعتراض إلا إذا كان صاحب لوحة التحكم هو المُبلَّغ عنه.
   return attachReportIds(items, userId);
 };
 
-export const findReceivedByUser = async (userId: EntityId) => {
+export const findReceivedByUser = async (userId: EntityId, limit = 200) => {
   const items = await Item.find({ bookedBy: userId })
     .populate('donor',   'name avatar phone trustScore isVerifiedStudent')
     .populate('safeHub', 'name address city workingHours')
     .sort({ createdAt: -1 })
+    .limit(Math.min(Math.max(limit, 1), 200))
     .lean() as RepositoryRecord[];
 
   // userId كـ filter — البلاغ على المستلم تحديداً

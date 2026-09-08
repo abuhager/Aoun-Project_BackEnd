@@ -7,6 +7,7 @@ type SendEmailInput = {
   subject: string;
   htmlContent: string;
   platformName: string;
+  replyTo?: string;
 };
 
 const BREVO_URL = 'https://api.brevo.com/v3/smtp/email';
@@ -34,14 +35,20 @@ const getClientOrigin = () => {
   return parsed.origin;
 };
 
-const send = async ({ to, subject, htmlContent, platformName }: SendEmailInput) => {
+const send = async ({
+  to,
+  subject,
+  htmlContent,
+  platformName,
+  replyTo,
+}: SendEmailInput) => {
   if (!process.env.BREVO_API_KEY) {
-    throw new Error('[emailService] BREVO_API_KEY غير مضبوط');
+    throw Object.assign(new Error('EMAIL_PROVIDER_NOT_CONFIGURED'), {
+      code: 'EMAIL_PROVIDER_NOT_CONFIGURED',
+    });
   }
 
-  await axios.post(
-    BREVO_URL,
-    {
+  const body: Record<string, unknown> = {
       sender: {
         name: `منصة ${platformName}`,
         email: process.env.SMTP_USER || process.env.PLATFORM_EMAIL,
@@ -49,15 +56,49 @@ const send = async ({ to, subject, htmlContent, platformName }: SendEmailInput) 
       to: [{ email: to }],
       subject,
       htmlContent,
-    },
-    {
+  };
+  if (replyTo) body.replyTo = { email: replyTo };
+
+  try {
+    await axios.post(BREVO_URL, body, {
       timeout: 10_000,
       headers: {
         'api-key': process.env.BREVO_API_KEY,
         'Content-Type': 'application/json',
       },
+    });
+  } catch (error: unknown) {
+    const responseStatus = typeof error === 'object'
+      && error !== null
+      && 'response' in error
+      && typeof error.response === 'object'
+      && error.response !== null
+      && 'status' in error.response
+      ? Number(error.response.status)
+      : null;
+
+    if (responseStatus && Number.isInteger(responseStatus)) {
+      console.error('[emailService] فشل مزود البريد', { status: responseStatus });
+      throw Object.assign(new Error('EMAIL_PROVIDER_REJECTED'), {
+        code: `EMAIL_HTTP_${responseStatus}`,
+      });
     }
-  );
+
+    console.error('[emailService] تعذر الاتصال بخدمة البريد');
+    throw Object.assign(new Error('EMAIL_PROVIDER_UNAVAILABLE'), {
+      code: 'EMAIL_PROVIDER_UNAVAILABLE',
+    });
+  }
+};
+
+export const sendCustomEmail = async ({
+  to,
+  subject,
+  htmlContent,
+  replyTo,
+}: Omit<SendEmailInput, 'platformName'>) => {
+  const platformName = await getPlatformName();
+  await send({ to, subject, htmlContent, platformName, replyTo });
 };
 
 export const sendVerificationEmail = async (
@@ -126,8 +167,41 @@ export const sendPasswordResetEmail = async (
   });
 };
 
+export const sendRegistrationGuidanceEmail = async (
+  to: string,
+  name = ''
+) => {
+  const platformName = await getPlatformName();
+  const safePlatform = escapeHtml(platformName);
+  const safeName = escapeHtml(name);
+  const loginUrl = escapeHtml(`${getClientOrigin()}/login`);
+
+  await send({
+    to,
+    platformName,
+    subject: `محاولة إنشاء حساب في منصة ${platformName}`,
+    htmlContent: `
+      <div dir="rtl" style="font-family:Arial,sans-serif;max-width:480px;margin:auto;border:1px solid #e5e7eb;border-radius:12px;padding:32px;">
+        <h2 style="color:#1a6b4a;">مرحباً ${safeName}</h2>
+        <p>وصلتنا محاولة إنشاء حساب باستخدام هذا البريد في ${safePlatform}.</p>
+        <p>إذا كان لديك حساب بالفعل، استخدم صفحة تسجيل الدخول أو استعادة كلمة المرور. وإذا لم تكن أنت، يمكنك تجاهل هذه الرسالة.</p>
+        <div style="text-align:center;margin:24px 0;">
+          <a href="${loginUrl}" style="background:#1a6b4a;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">تسجيل الدخول</a>
+        </div>
+      </div>
+    `,
+  });
+};
+
 export { escapeHtml };
 
 export { getClientOrigin };
 
-export default { sendVerificationEmail, sendPasswordResetEmail, escapeHtml, getClientOrigin };
+export default {
+  sendVerificationEmail,
+  sendPasswordResetEmail,
+  sendRegistrationGuidanceEmail,
+  sendCustomEmail,
+  escapeHtml,
+  getClientOrigin,
+};

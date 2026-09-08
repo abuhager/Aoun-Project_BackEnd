@@ -16,6 +16,11 @@
     "verify": "npm run typecheck && npm test && npm run build",
     "db:indexes": "tsx utils/ensureIndexes.ts",
     "db:indexes:verify": "tsx utils/ensureIndexes.ts --verify",
+    "db:periods:check": "tsx scripts/backfill-donation-request-period.ts",
+    "db:periods:apply": "tsx scripts/backfill-donation-request-period.ts --apply",
+    "db:orphans:audit": "tsx scripts/audit-item-references.ts",
+    "db:search:check": "tsx scripts/backfill-item-search.ts",
+    "db:search:apply": "tsx scripts/backfill-item-search.ts --apply",
     "db:seed:mock": "tsx scripts/seed-mock-data.ts",
     "perf:smoke": "tsx scripts/load-smoke.ts"
   },
@@ -24,6 +29,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@socket.io/redis-adapter": "^8.3.0",
     "axios": "^1.16.1",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^2.9.0",

@@ -10,11 +10,10 @@ import { asSocketError } from './socketTypes.js';
 import repo from '../repositories/conversationRepository.js';
 import dto from '../dtos/conversationDto.js';
 import notifyUser from '../utils/notifyUser.js';
+import { consumeSocketMessageQuota } from '../utils/socketRateLimit.js';
 import { SOCKET_EVENTS, conversationRoom, userRoom } from './contracts.js';
 
 const MAX_MESSAGE_LENGTH = 2000;
-const MESSAGE_RATE_WINDOW_MS = 10_000;
-const MESSAGE_RATE_MAX = 15;
 const CLIENT_MESSAGE_ID_PATTERN = /^[A-Za-z0-9._:-]{8,100}$/;
 
 type ChatEventPayload = {
@@ -31,6 +30,7 @@ type ConversationRecord = UnknownRecord & {
   item?: unknown;
   owner?: unknown;
   requester?: unknown;
+  archivedAt?: unknown;
 };
 
 const chatError = (
@@ -57,6 +57,7 @@ const participantIds = (conversation: ConversationRecord): string[] => (
 ) as string[];
 
 const canSendInConversation = (conversation: ConversationRecord): boolean => {
+  if (conversation.archivedAt) return false;
   const item = asRecord(conversation.item);
   return asId(item?.donor) === asId(conversation.owner)
     && asId(item?.bookedBy) === asId(conversation.requester);
@@ -156,7 +157,6 @@ const markReadAndBroadcast = async (
 };
 
 function registerChatHandlers(io: AounSocketServer, socket: AounSocket): void {
-  let recentMessageTimes: number[] = [];
   const userId = socket.data.userId;
   const userName = socket.data.userName;
 
@@ -177,7 +177,7 @@ function registerChatHandlers(io: AounSocketServer, socket: AounSocket): void {
       await socket.join(targetRoom);
 
       const page = await repo.findMessagesPage(conversationId, {
-        page: 1,
+        cursor: null,
         limit: repo.DEFAULT_MESSAGE_PAGE_SIZE,
       });
       await markReadAndBroadcast(io, conversation, conversationId, userId);
@@ -189,6 +189,8 @@ function registerChatHandlers(io: AounSocketServer, socket: AounSocket): void {
         messages: dto.toMessagesResponse(page.messages, conversationId).messages,
         page: page.page,
         totalPages: page.totalPages,
+        hasMore: page.hasMore,
+        nextCursor: page.nextCursor,
         canSend: canSendInConversation(conversation),
       });
     } catch (error: unknown) {
@@ -235,14 +237,6 @@ function registerChatHandlers(io: AounSocketServer, socket: AounSocket): void {
         throw chatError('معرّف الرسالة غير صالح', 'INVALID_CLIENT_MESSAGE_ID');
       }
 
-      const now = Date.now();
-      recentMessageTimes = recentMessageTimes.filter(
-        (timestamp) => now - timestamp < MESSAGE_RATE_WINDOW_MS
-      );
-      if (recentMessageTimes.length >= MESSAGE_RATE_MAX) {
-        throw chatError('تم إرسال رسائل كثيرة بسرعة؛ حاول بعد لحظات', 'CHAT_RATE_LIMITED', 429);
-      }
-
       const conversation = await assertParticipant(convId, userId);
       const conversationId = String(conversation._id);
       if (!canSendInConversation(conversation)) {
@@ -256,7 +250,17 @@ function registerChatHandlers(io: AounSocketServer, socket: AounSocket): void {
       if (!socket.rooms.has(room)) {
         throw chatError('افتح المحادثة قبل إرسال الرسالة', 'CHAT_ROOM_NOT_JOINED', 409);
       }
-      recentMessageTimes.push(now);
+      const quota = await consumeSocketMessageQuota(userId);
+      if (quota.unavailable) {
+        throw chatError(
+          'خدمة حماية المحادثة غير متاحة مؤقتاً؛ حاول لاحقاً',
+          'CHAT_RATE_LIMIT_UNAVAILABLE',
+          503
+        );
+      }
+      if (!quota.allowed) {
+        throw chatError('تم إرسال رسائل كثيرة بسرعة؛ حاول بعد لحظات', 'CHAT_RATE_LIMITED', 429);
+      }
 
       const result = await repo.createMessage({
         conversationId,

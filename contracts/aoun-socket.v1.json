@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "protocol": "socket.io",
+  "transport": "websocket",
+  "clientToServer": {
+    "join_room": "join_room",
+    "leave_room": "leave_room",
+    "send_message": "send_message",
+    "mark_read": "mark_read",
+    "typing_status": "typing_status"
+  },
+  "serverToClient": {
+    "auth_forced_logout": "auth:forced_logout",
+    "auth_token_expiring": "auth:token_expiring",
+    "auth_token_expired": "auth:token_expired",
+    "socket_ready": "socket:ready",
+    "settings_updated": "settings:updated",
+    "item_booked": "item:booked",
+    "item_booking_cancelled": "item:booking_cancelled",
+    "item_booking_transferred": "item:booking_transferred",
+    "item_waitlist_promoted": "item:waitlist_promoted",
+    "item_recipient_confirmed": "item:recipient_confirmed",
+    "item_delivered": "item:delivered",
+    "item_deleted": "item:deleted",
+    "leaderboard_update": "leaderboard:update",
+    "new_conversation": "new_conversation",
+    "conversation_updated": "conversation_updated",
+    "receive_message": "receive_message",
+    "typing_status": "typing_status",
+    "messages_read": "messages_read",
+    "chat_error": "chat_error",
+    "notification_new": "notification:new",
+    "notification_refresh": "notification:refresh"
+  }
+}

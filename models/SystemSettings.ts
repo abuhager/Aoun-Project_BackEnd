@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import EventEmitter from 'events';
+import { subscribeRuntimeEvent } from '../utils/runtimeBus.js';
 
 const settingsEvents = new EventEmitter();
 
@@ -18,6 +19,7 @@ const normalizeDomainList = (values: unknown): string[] => (
 const systemSettingsSchema = new mongoose.Schema(
   {
     _id: { type: String, default: 'global' },
+    version: { type: Number, default: 1, min: 1 },
 
     // ─── حصص المستخدمين ──────────────────────────────────────────────────
     defaultUserQuota:         { type: Number, default: 2, min: 1, max: 20 },
@@ -209,7 +211,8 @@ systemSettingsSchema.statics.getInstance = async function () {
 };
 
 // ─── In-Memory Cache ─────────────────────────────────────────────────────────
-const IS_CLUSTER = parseInt(process.env.WEB_CONCURRENCY ?? '1', 10) > 1;
+const IS_CLUSTER = parseInt(process.env.WEB_CONCURRENCY ?? '1', 10) > 1
+  || process.env.RUNTIME_TOPOLOGY?.trim().toLowerCase() === 'distributed';
 const CACHE_TTL  = IS_CLUSTER ? 5_000 : 60_000;
 
 let _cache: CachedSettings | null = null;
@@ -248,6 +251,14 @@ systemSettingsSchema.statics.invalidateCache = function (changedFields: string[]
 };
 
 const SystemSettings = mongoose.model('SystemSettings', systemSettingsSchema) as unknown as SystemSettingsModel;
+
+subscribeRuntimeEvent('settings:invalidate', ({ changedFields }) => {
+  SystemSettings.invalidateCache(
+    Array.isArray(changedFields)
+      ? changedFields.filter((field): field is string => typeof field === 'string')
+      : []
+  );
+});
 
 export { settingsEvents };
 export default SystemSettings;

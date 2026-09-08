@@ -36,6 +36,7 @@ export const getMessages = catchAsync(async (req, res) => {
   const data = await conversationService.getMessagesLogic({
     conversationId: req.params.conversationId,
     userId: currentUserId(req),
+    cursor: req.query.cursor,
     page: req.query.page,
   });
 

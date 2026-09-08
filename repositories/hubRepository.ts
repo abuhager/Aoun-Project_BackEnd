@@ -10,8 +10,12 @@ export const findAll = () =>
   SafeHub.find({}).sort({ isActive: -1, createdAt: -1 }).lean();
 
 export const findAllActive = () =>
-  // يدعم السجلات القديمة التي لا تحتوي isActive؛ التعطيل الصريح وحده يخفي المركز.
-  SafeHub.find({ isActive: { $ne: false } })
+  SafeHub.find({
+    $or: [
+      { lifecycleState: 'active', isActive: { $ne: false } },
+      { lifecycleState: { $exists: false }, isActive: { $ne: false } },
+    ],
+  })
     .sort({ city: 1, name: 1 })
     .select('-createdBy')
     .lean();
@@ -20,6 +24,44 @@ export const findById = (
   id: EntityId,
   session: RepositorySession = null
 ) => SafeHub.findById(id).session(session).lean();
+
+const activeHubFilter = (id: EntityId): {
+  _id: EntityId;
+  isActive: { $ne: boolean };
+  $or: Array<
+    { lifecycleState: 'active' }
+    | { lifecycleState: { $exists: boolean } }
+  >;
+} => ({
+  _id: id,
+  isActive: { $ne: false },
+  $or: [
+    { lifecycleState: 'active' },
+    { lifecycleState: { $exists: false } },
+  ],
+});
+
+export const findActiveById = (
+  id: EntityId,
+  session: RepositorySession = null
+) => SafeHub.findOne(activeHubFilter(id)).session(session).lean();
+
+/**
+ * يكتب على سجل المركز داخل نفس transaction الخاصة بإنشاء المرجع. بهذه
+ * الكتابة يتصادم أي إنشاء/تعديل متزامن مع عملية التعطيل بدلاً من المرور بين
+ * check وdeactivate.
+ */
+export const acquireActiveForWrite = (
+  id: EntityId,
+  session: RepositorySession
+) => SafeHub.findOneAndUpdate(
+  activeHubFilter(id),
+  {
+    $inc: { operationVersion: 1 },
+    $set: { lifecycleState: 'active', isActive: true },
+  },
+  { returnDocument: 'after', session: session ?? undefined }
+).select('_id name city address lifecycleState operationVersion').lean();
 
 export const create = async (
   data: RepositoryPayload,
@@ -50,22 +92,55 @@ export const updateById = (
   });
 };
 
-export const deactivateById = (
+export const beginDeactivation = (
   id: EntityId,
   session: RepositorySession = null
-) => SafeHub.findByIdAndUpdate(
-  id,
-  { $set: { isActive: false } },
+) => SafeHub.findOneAndUpdate(
+  activeHubFilter(id),
+  {
+    $set: { isActive: false, lifecycleState: 'deactivating' },
+    $inc: { operationVersion: 1 },
+  },
+  { returnDocument: 'after', session: session ?? undefined }
+);
+
+export const restoreActive = (
+  id: EntityId,
+  session: RepositorySession = null
+) => SafeHub.findOneAndUpdate(
+  { _id: id, lifecycleState: 'deactivating' },
+  { $set: { isActive: true, lifecycleState: 'active' } },
+  { returnDocument: 'after', session: session ?? undefined }
+);
+
+export const completeDeactivation = (
+  id: EntityId,
+  session: RepositorySession = null
+) => SafeHub.findOneAndUpdate(
+  { _id: id, lifecycleState: 'deactivating' },
+  { $set: { isActive: false, lifecycleState: 'inactive' } },
   { returnDocument: 'after', session: session ?? undefined }
 );
 
 export const reactivateById = (
   id: EntityId,
   session: RepositorySession = null
-) => SafeHub.findByIdAndUpdate(
-  id,
-  { $set: { isActive: true } },
+) => SafeHub.findOneAndUpdate(
+  { _id: id, isActive: false, lifecycleState: { $ne: 'deactivating' } },
+  { $set: { isActive: true, lifecycleState: 'active' }, $inc: { operationVersion: 1 } },
   { returnDocument: 'after', session: session ?? undefined }
 );
 
-export default { findAll, findAllActive, findById, create, updateById, deactivateById, reactivateById };
+export default {
+  findAll,
+  findAllActive,
+  findById,
+  findActiveById,
+  create,
+  updateById,
+  acquireActiveForWrite,
+  beginDeactivation,
+  restoreActive,
+  completeDeactivation,
+  reactivateById,
+};

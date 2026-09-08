@@ -31,6 +31,17 @@ const safeHubSchema = new mongoose.Schema(
       type:    Boolean,
       default: true,
     },
+    lifecycleState: {
+      type: String,
+      enum: ['active', 'deactivating', 'inactive'],
+      default: 'active',
+      index: true,
+    },
+    operationVersion: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref:  'User',
@@ -46,5 +57,7 @@ const safeHubSchema = new mongoose.Schema(
 );
 
 // ✅ FIX [HUB-09]: compound index — كل query تفلتر بـ isActive أولاً ثم city
-safeHubSchema.index({ isActive: 1, city: 1 });const SafeHub = mongoose.model('SafeHub', safeHubSchema);
+safeHubSchema.index({ lifecycleState: 1, city: 1 });
+safeHubSchema.index({ isActive: 1, city: 1 });
+const SafeHub = mongoose.model('SafeHub', safeHubSchema);
 export default SafeHub;

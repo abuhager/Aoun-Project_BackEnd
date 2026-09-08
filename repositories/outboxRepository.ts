@@ -3,7 +3,7 @@ import OutboxEvent from '../models/OutboxEvent.js';
 import WorkerHeartbeat from '../models/WorkerHeartbeat.js';
 
 type OutboxCreateInput = {
-  type: 'verification_email' | 'password_reset_email' | 'critical_notification_email';
+  type: 'verification_email' | 'password_reset_email' | 'critical_notification_email' | 'registration_guidance_email' | 'cloudinary_delete';
   encryptedPayload: string;
   idempotencyKey: string;
   maxAttempts?: number;

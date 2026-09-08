@@ -136,16 +136,21 @@ Build Command: npm ci && npm run build
 Start Command: npm run worker
 ```
 
-- اضبط `RUNTIME_TOPOLOGY=single` و`WEB_CONCURRENCY=1` وشغّل **نسخة Render واحدة فقط**. التوسع الأفقي ممنوع حاليًا حتى إضافة Socket.IO Redis adapter وdistributed invalidation وscheduler leadership.
+- استخدم `RUNTIME_TOPOLOGY=single` و`WEB_CONCURRENCY=1` لنسخة واحدة. للتوسع
+  الأفقي استخدم `RUNTIME_TOPOLOGY=distributed` مع `REDIS_REQUIRED=true`؛ عندها
+  يعمل Socket.IO Redis adapter وdistributed invalidation وCron leadership.
 - يبدأ HTTP فقط بعد نجاح اتصال MongoDB وتهيئة Cron Jobs. فشل jobs لم يعد يسمح بخادم يبدو جاهزًا.
 - اضبط `OUTBOX_WORKER_REQUIRED=true` و`OUTBOX_ENCRYPTION_KEY` ثابتًا من 32 بايت على Web وWorker. بريد OTP واستعادة كلمة المرور والتنبيهات الإدارية الحرجة يُحفظ مشفرًا مع تغيير قاعدة البيانات داخل transaction واحدة، ثم يرسله Worker مع retry وdead-letter state.
 - `/health/ready` يفحص MongoDB وRedis وجدولة background jobs وheartbeat عامل Outbox عندما تكون مطلوبة، بينما `/health/live` يثبت فقط أن عملية Web تعمل.
+- عند `METRICS_ENABLED=true` يوفّر `/metrics` عدادات HTTP وزمن الاستجابة وذاكرة العملية بصيغة Prometheus؛ في Production يلزم `METRICS_TOKEN` وإرساله كـBearer token.
 - استخدم HTTPS وأسرارًا طويلة ومنفصلة لكل بيئة.
 - اضبط Redis وCORS وCookie domains حسب النطاق المنشور.
 - فعّل نسخ MongoDB الاحتياطية ومراقبة الأخطاء قبل Pilot حقيقي.
 - راجع سياسات الخصوصية والشروط قانونيًا قبل أي تبنٍ مؤسسي واسع.
 
 خطوات النشر والفحص والاسترجاع موثقة في [Production Runbook](docs/PRODUCTION-RUNBOOK.md).
+وحالة تنفيذ كل بند من المراجعة موثقة في
+[Review Remediation Status](docs/REVIEW-REMEDIATION-STATUS.md).
 
 ### تحقق CI الحقيقي
 

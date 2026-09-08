@@ -13,6 +13,8 @@ export const toPublicHub = (rawHub: unknown) => {
   workingHours: hub.workingHours || '9:00 ص — 5:00 م',
   // المراكز القديمة التي سبقت إضافة الحقل تُعامل كنشطة ما لم تُعطّل صراحةً.
   isActive:     hub.isActive !== false,
+  lifecycleState: hub.lifecycleState
+    ?? (hub.isActive === false ? 'inactive' : 'active'),
   });
 };
 
@@ -25,6 +27,7 @@ export const toAdminHub = (rawHub: unknown) => {
     createdBy: hub.createdBy,
     createdAt: hub.createdAt,
     updatedAt: hub.updatedAt,
+    operationVersion: hub.operationVersion ?? 0,
   });
 };
 

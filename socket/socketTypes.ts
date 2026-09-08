@@ -7,10 +7,6 @@ export type AounSocketData = {
   tokenExpiresAt: number;
 };
 
-export type AounSocket = Socket & { data: AounSocketData };
-export type AounSocketServer = Server;
-export type SocketNext = (error?: ExtendedError) => void;
-
 export type SocketAckPayload = {
   ok: boolean;
   success: boolean;
@@ -18,6 +14,43 @@ export type SocketAckPayload = {
 };
 
 export type SocketAck = (payload: SocketAckPayload) => void;
+
+export type ChatCommandPayload = {
+  convId?: string;
+  text?: string;
+  correlationId?: string;
+  isTyping?: boolean;
+};
+
+export interface ClientToServerEvents {
+  join_room: (payload?: ChatCommandPayload, ack?: SocketAck) => void;
+  leave_room: (payload?: ChatCommandPayload) => void;
+  send_message: (payload?: ChatCommandPayload, ack?: SocketAck) => void;
+  mark_read: (payload?: ChatCommandPayload, ack?: SocketAck) => void;
+  typing_status: (payload?: ChatCommandPayload) => void;
+}
+
+export interface ServerToClientEvents {
+  [event: string]: (payload?: unknown) => void;
+}
+
+export interface InterServerEvents {
+  [event: string]: (payload?: unknown) => void;
+}
+
+export type AounSocket = Socket<
+  ClientToServerEvents,
+  ServerToClientEvents,
+  InterServerEvents,
+  AounSocketData
+>;
+export type AounSocketServer = Server<
+  ClientToServerEvents,
+  ServerToClientEvents,
+  InterServerEvents,
+  AounSocketData
+>;
+export type SocketNext = (error?: ExtendedError) => void;
 
 export type SocketOperationError = Error & {
   code?: string;

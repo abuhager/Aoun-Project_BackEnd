@@ -18,6 +18,7 @@ const donationRequestController = require('../controllers/donationRequestControl
 const donationRequestRepository = require('../repositories/donationRequestRepository').default;
 const donationOfferRepository = require('../repositories/donationOfferRepository').default;
 const itemRepository = require('../repositories/itemRepository').default;
+const hubRepository = require('../repositories/hubRepository').default;
 const SystemSettings = require('../models/SystemSettings').default;
 const DonationRequest = require('../models/DonationRequest').default;
 const DonationOffer = require('../models/DonationOffer').default;
@@ -131,7 +132,8 @@ test('إيقاف ميزة الهاتف لا يمنع Level 1 من تقديم ع�
     pending: donationOfferRepository.countPendingOffersByDonor,
     create: donationOfferRepository.createOffer,
     findUser: User.findById,
-    findHub: SafeHub.findOne,
+    findHub: hubRepository.findActiveById,
+    acquireHub: hubRepository.acquireActiveForWrite,
     settings: SystemSettings.getCached,
     createNotification: Notification.create,
     getIO: socket.getIO,
@@ -146,7 +148,8 @@ test('إيقاف ميزة الهاتف لا يمنع Level 1 من تقديم ع�
     donationOfferRepository.countPendingOffersByDonor = originals.pending;
     donationOfferRepository.createOffer = originals.create;
     User.findById = originals.findUser;
-    SafeHub.findOne = originals.findHub;
+    hubRepository.findActiveById = originals.findHub;
+    hubRepository.acquireActiveForWrite = originals.acquireHub;
     SystemSettings.getCached = originals.settings;
     Notification.create = originals.createNotification;
     socket.getIO = originals.getIO;
@@ -176,9 +179,13 @@ test('إيقاف ميزة الهاتف لا يمنع Level 1 من تقديم ع�
   });
   donationOfferRepository.existsByRequestAndDonor = async () => false;
   donationOfferRepository.countPendingOffersByDonor = async () => 0;
-  SafeHub.findOne = (filter) => {
-    assert.deepEqual(filter, { _id: HUB_ID, isActive: { $ne: false } });
-    return queryReturning({ _id: HUB_ID });
+  hubRepository.findActiveById = async (hubId) => {
+    assert.equal(hubId, HUB_ID);
+    return { _id: HUB_ID };
+  };
+  hubRepository.acquireActiveForWrite = async (hubId) => {
+    assert.equal(hubId, HUB_ID);
+    return { _id: HUB_ID };
   };
   donationOfferRepository.createOffer = async () => ({ _id: OFFER_ID });
   Notification.create = async (payload) => ({
@@ -504,6 +511,7 @@ test('قبول العرض ينشئ غرضاً محجوزاً مرة واحدة �
     findUser: User.findOne,
     updateUser: User.updateOne,
     findHub: SafeHub.findOne,
+    acquireHub: hubRepository.acquireActiveForWrite,
     countItems: Item.countDocuments,
     createItem: Item.create,
     createNotification: Notification.create,
@@ -520,6 +528,7 @@ test('قبول العرض ينشئ غرضاً محجوزاً مرة واحدة �
     User.findOne = originals.findUser;
     User.updateOne = originals.updateUser;
     SafeHub.findOne = originals.findHub;
+    hubRepository.acquireActiveForWrite = originals.acquireHub;
     Item.countDocuments = originals.countItems;
     Item.create = originals.createItem;
     Notification.create = originals.createNotification;
@@ -584,6 +593,7 @@ test('قبول العرض ينشئ غرضاً محجوزاً مرة واحدة �
     city: 'عمان',
     address: 'الشارع الرئيسي',
   });
+  hubRepository.acquireActiveForWrite = async () => ({ _id: HUB_ID });
   Item.countDocuments = () => ({ session: async () => 0 });
 
   let itemPayload;

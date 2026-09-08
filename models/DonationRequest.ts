@@ -18,7 +18,8 @@ const donationRequestSchema = new mongoose.Schema({
     ref: 'Item',
     default: null,
   },
-  month:     { type: String },
+  // مفتاح YYYY-MM حسب Asia/Amman؛ راجع utils/businessTime.ts.
+  month:     { type: String, match: /^\d{4}-(0[1-9]|1[0-2])$/ },
   expiresAt: { type: Date, required: true },
 }, {
   timestamps: true,

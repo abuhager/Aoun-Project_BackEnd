@@ -35,7 +35,8 @@ const messageSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-messageSchema.index({ conversation: 1, createdAt: 1 });
+// Stable cursor pagination orders by the timestamp and ObjectId tie-breaker.
+messageSchema.index({ conversation: 1, createdAt: -1, _id: -1 });
 // Speeds up unread-count queries (conversation + sender + read)
 messageSchema.index({ conversation: 1, sender: 1, read: 1 });
 // Navbar unread total filters equality fields before excluding the current sender.

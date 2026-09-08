@@ -35,6 +35,8 @@ const buildSocketServerOptions = (): Partial<ServerOptions> => ({
   maxHttpBufferSize: 100_000,
   perMessageDeflate: false,
   serveClient: false,
+  // WebSocket-only avoids sticky-session requirements in multi-node mode.
+  transports: ['websocket'],
   pingInterval: 25_000,
   pingTimeout: 20_000,
 });

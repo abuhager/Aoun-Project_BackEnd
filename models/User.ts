@@ -41,6 +41,12 @@ const userSchema = new mongoose.Schema(
     trustScore:        { type: Number, default: 70 },
     promotedByAdmin:   { type: Boolean, default: false },
     isVerifiedStudent: { type: Boolean, default: false },
+    trustEvidence: {
+      emailVerified:   { type: Boolean, default: false },
+      studentVerified: { type: Boolean, default: false },
+      phoneVerified:   { type: Boolean, default: false },
+      adminApproved:   { type: Boolean, default: false },
+    },
     quota:             { type: Number, default: 2 },
     totalDonations:    { type: Number, default: 0 },
     badges:            { type: [String], default: [] },

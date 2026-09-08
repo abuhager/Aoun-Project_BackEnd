@@ -222,16 +222,18 @@ export const registerLogic = async ({ name, email, password, phone }: Registrati
 
 
   if (exists) {
+    // الحسابات الموجودة والجديدة تدفع كلفة bcrypt متقاربة لتقليل فرق التوقيت.
+    await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
     if (exists.isVerified) {
-      // نحافظ على كلفة bcrypt لتقليل فرق التوقيت، لكن نعيد حالة واضحة للواجهة.
-      await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
-      return {
-        statusCode: 409,
-        body: {
-          msg: 'هذا البريد الإلكتروني مسجّل مسبقاً، سجّل الدخول للمتابعة',
-          code: 'EMAIL_ALREADY_EXISTS',
-        },
-      };
+      const day = new Date().toISOString().slice(0, 10);
+      await outboxService.enqueueRegistrationGuidanceEmail(
+        { to: email, name: exists.name ?? name },
+        `registration-guidance:${String(exists._id)}:${day}`
+      ).catch((error: unknown) => {
+        if (getErrorMessage(error).includes('E11000')) return;
+        throw error;
+      });
+      return GENERIC_REGISTER_RESPONSE;
     }
 
 
@@ -290,29 +292,35 @@ export const verifyEmailLogic = async ({ email, otp }: VerificationInput) => {
 
   const user = await userRepository.findAndIncrementOtpAttempts(email, maxAttempts);
 
+  const INVALID_OTP = {
+    statusCode: 400,
+    body: {
+      msg: 'رمز التحقق غير صالح أو منتهي. اطلب رمزاً جديداً ثم حاول مرة أخرى.',
+      code: 'INVALID_OR_EXPIRED_OTP',
+    },
+  };
+
 
   if (!user) {
-    const checkUser = await userRepository.findEmailStatus(email);
-    if (!checkUser)           return { statusCode: 404, body: { msg: 'المستخدم غير موجود' } };
-    if (checkUser.isVerified) return { statusCode: 400, body: { msg: 'الإيميل محقق مسبقاً ✅' } };
-    await userRepository.resetOtpAttemptsAfterLock(email);
-    return { statusCode: 429, body: { msg: 'تجاوزت الحد المسموح من المحاولات، اطلب رمزاً جديداً 🔒', code: 'OTP_ATTEMPTS_EXCEEDED' } };
+    verifyOtp(otp, hashOtp('000000'));
+    return INVALID_OTP;
   }
 
   if (!user.verificationOtp || !user.verificationOtpExpiry) {
-    return { statusCode: 400, body: { msg: 'لا يوجد رمز تحقق نشط، اطلب رمزاً جديداً' } };
+    verifyOtp(otp, hashOtp('000000'));
+    return INVALID_OTP;
   }
 
 
   if (new Date(user.verificationOtpExpiry).getTime() < Date.now()) {
-    return { statusCode: 400, body: { msg: 'انتهت صلاحية رمز التحقق ⏰ — اطلب رمزاً جديداً', code: 'OTP_EXPIRED' } };
+    verifyOtp(otp, user.verificationOtp);
+    return INVALID_OTP;
   }
 
 
   const isValid = verifyOtp(otp, user.verificationOtp);
   if (!isValid) {
-    const remaining = maxAttempts - user.otpAttempts;
-    return { statusCode: 400, body: { msg: `رمز التحقق غير صحيح ❌ (${Math.max(0, remaining)} محاولة متبقية)` } };
+    return INVALID_OTP;
   }
 
 
@@ -323,6 +331,8 @@ export const verifyEmailLogic = async ({ email, otp }: VerificationInput) => {
     $set: {
       isVerified:        true,
       isVerifiedStudent: mutableUser.isVerifiedStudent,
+      'trustEvidence.emailVerified': true,
+      'trustEvidence.studentVerified': Boolean(mutableUser.isVerifiedStudent),
       trustLevel:        mutableUser.trustLevel,
       quota:             mutableUser.quota,
       otpAttempts:       0,
@@ -454,6 +464,8 @@ export const loginLogic = async ({ email, password }: LoginInput) => {
   if (needsUpdate) {
     const saved = await userRepository.updateUser(user._id, {
       isVerifiedStudent: user.isVerifiedStudent,
+      'trustEvidence.emailVerified': true,
+      'trustEvidence.studentVerified': Boolean(user.isVerifiedStudent),
       trustLevel:        user.trustLevel,
       quota:             user.quota,
     });
@@ -742,6 +754,7 @@ export const updateMeLogic = async (
       }
 
       updates.phoneVerified = false;
+      updates['trustEvidence.phoneVerified'] = false;
 
       const wasPhoneOnlyLevel2 =
         currentUser.phoneVerified

@@ -192,6 +192,10 @@ const getRateLimiterStatus = () => ({
   redisReady,
 });
 
+const getRedisClient = (): RedisClient | null => (
+  redisReady && redisClient?.isReady ? redisClient : null
+);
+
 export const globalLimiter = delegate('globalLimiter');
 export const loginLimiter = delegate('loginLimiter');
 export const registerLimiter = delegate('registerLimiter');
@@ -207,11 +211,12 @@ export const resendOtpLimiter = delegate('resendOtpLimiter');
 export const uploadLimiter = delegate('uploadLimiter');
 export const meLimiter = delegate('meLimiter');
 
-export { connectRedis, closeRedis, getRateLimiterStatus };
+export { connectRedis, closeRedis, getRateLimiterStatus, getRedisClient };
 export default {
   connectRedis,
   closeRedis,
   getRateLimiterStatus,
+  getRedisClient,
   globalLimiter,
   loginLimiter,
   registerLimiter,
