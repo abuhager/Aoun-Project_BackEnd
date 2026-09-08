@@ -1,8 +1,23 @@
 # Aoun Backend
 
+[![Backend CI](https://github.com/abuhager/Aoun-Project_BackEnd/actions/workflows/ci.yml/badge.svg)](https://github.com/abuhager/Aoun-Project_BackEnd/actions/workflows/ci.yml)
+
+- **Live application:** https://aoun-project-theta.vercel.app/
+- **Frontend repository:** https://github.com/abuhager/Aoun-Project_FrontEnd
+- **Health check:** https://aoun-project-backend.onrender.com/health/live
+
 خدمة REST وSocket.IO لمنصة **عون**، وهي منصة عربية لتنظيم التبرعات العينية وطلبات الاحتياج والحجز والتسليم والمحادثات والإشراف.
 
-> حالة المشروع: الوظائف الأساسية مكتملة، ويجري تجهيز MVP لتجربة محدودة. بيانات Demo مخصصة للاختبار والعرض ولا تمثل مستخدمين أو شراكات حقيقية.
+> حالة المشروع: MVP منشور، واجتاز فحوصات CI، وجاهز لتجربة Pilot محدودة. بيانات Demo مخصصة للاختبار والعرض ولا تمثل مستخدمين أو شراكات حقيقية.
+
+## ما الذي يقدمه الخادم؟
+
+- مصادقة آمنة وصلاحيات متعددة مع Access/Refresh tokens وتدوير رموز التجديد.
+- دورة كاملة للأغراض والطلبات والعروض والحجز وقائمة الانتظار والتسليم والتقييم.
+- محادثات وإشعارات فورية، وإشراف وبلاغات واعتراضات وسجل إداري.
+- معاملات MongoDB للعمليات الحساسة وفهارس مدارة وأدوات تدقيق وترحيل آمنة.
+- Durable Outbox مشفر للبريد الحرج مع retry وdead-letter handling.
+- إعدادات ديناميكية، Rate Limiting، health checks، metrics اختيارية، واختبارات آلية.
 
 ## المتطلبات
 
@@ -12,7 +27,7 @@
 - Cloudinary لرفع الصور.
 - Brevo للتحقق من البريد واستعادة كلمة المرور.
 - Redis مُدار لتثبيت Rate Limiting وإدخاله ضمن readiness عند ضبط `REDIS_REQUIRED=true`.
-- خدمة Worker مستقلة لتسليم البريد المحفوظ في Durable Outbox.
+- عامل Outbox مدمج عند تشغيل خدمة واحدة، أو Worker مستقل عند التشغيل الموزع.
 
 ## التشغيل المحلي
 
@@ -98,7 +113,7 @@ npm run db:seed:mock
 | المتبرع | `mock.donor@aoun.test` |
 | متبرع العرض | `mock.donor2@aoun.test` |
 
-كلمة مرور Seed الافتراضية: `AounDemo2026!`. لا تستخدمها لحسابات حقيقية، ويمكن إدارة إظهار بطاقات الدخول من متغيرات بيئة الواجهة/الخادم دون وضع البيانات داخل الكود العام.
+تُدار كلمة مرور Seed وحسابات العرض من بيئة الاختبار فقط. لا تضع بيانات الدخول أو الأسرار داخل ملفات المصدر أو README، ويمكن إدارة إظهار بطاقات الدخول من متغيرات بيئة الواجهة والخادم.
 
 ## بنية المشروع
 
