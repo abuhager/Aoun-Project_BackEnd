@@ -57,7 +57,7 @@
     "@types/multer": "^2.2.0",
     "@types/node": "^20.19.43",
     "tsx": "^4.23.13",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   },
   "engines": {
     "node": ">=20.19.0"
