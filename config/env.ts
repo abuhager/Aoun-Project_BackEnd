@@ -33,6 +33,13 @@ const isEnabled = (value: unknown): boolean => (
   String(value ?? '').trim().toLowerCase() === 'true'
 );
 
+const shouldRunEmbeddedOutboxWorker = (
+  env: NodeJS.ProcessEnv = process.env
+): boolean => (
+  env.RUNTIME_TOPOLOGY?.trim().toLowerCase() === 'single'
+  && isEnabled(env.OUTBOX_WORKER_REQUIRED)
+);
+
 const validateOptionalBoolean = (
   env: NodeJS.ProcessEnv,
   key: string,
@@ -281,6 +288,7 @@ const environment = {
   parseDurationMs,
   parsePositiveInteger,
   isEnabled,
+  shouldRunEmbeddedOutboxWorker,
   validateEnvironment,
 };
 
@@ -290,6 +298,7 @@ export {
   isPlaceholderSecret,
   parseDurationMs,
   parsePositiveInteger,
+  shouldRunEmbeddedOutboxWorker,
   validateEnvironment,
 };
 export default environment;

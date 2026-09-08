@@ -1,4 +1,8 @@
 import mongoose from 'mongoose';
+// Mongoose populate resolves ref names through the registered model registry.
+// Import both referenced models here so repositories do not depend on route import order.
+import '../models/Item.js';
+import '../models/User.js';
 import Conversation from '../models/Conversation.js';
 import Message from '../models/Message.js';
 import Notification from '../models/Notification.js';

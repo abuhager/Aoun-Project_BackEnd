@@ -292,9 +292,11 @@ test('عقد Flow 11 يغلق Cron بأمان ويزيل النسخة القدي
   assert.match(jobsSource, /75 \* 60 \* 1000/);
   assert.match(jobsSource, /MAX_BOOKING_JOB_BATCH/);
   assert.match(serverSource, /await stopCronJobs\(\)/);
+  assert.match(serverSource, /await stopOutboxWorker\(\)/);
   assert.match(appSource, /getRuntimeReadiness\(\)/);
   assert.match(appSource, /health\.backgroundJobs\.jobs/);
   assert.match(serverSource, /await initCronJobs\(\)[\s\S]*server\.listen/);
+  assert.match(serverSource, /server\.listen[\s\S]*await startOutboxWorker\(\)/);
   assert.match(adminSource, /type:\s*'admin_ban'/);
   assert.equal(
     fs.existsSync(path.join(__dirname, '../utils/cronJobs.ts')),

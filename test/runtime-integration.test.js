@@ -12,6 +12,11 @@ const enabled = process.env.RUN_RUNTIME_INTEGRATION === 'true';
 const PROBE_COLLECTION = 'runtime_atomicity_probe';
 const PROBE_EMAIL = 'runtime-index-probe@aoun.invalid';
 
+test('مستودع المحادثات يسجل Models اللازمة لـ populate دون الاعتماد على ترتيب Routes', () => {
+  assert.ok(mongoose.modelNames().includes('User'));
+  assert.ok(mongoose.modelNames().includes('Item'));
+});
+
 test('Mongo replica set يثبت rollback والفهارس وcursor بينما Redis يجيب PING', {
   skip: !enabled,
   timeout: 30_000,

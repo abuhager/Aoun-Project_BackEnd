@@ -3,8 +3,9 @@
 يدعم النظام نمطين: `RUNTIME_TOPOLOGY=single` لنسخة Web واحدة، أو
 `RUNTIME_TOPOLOGY=distributed` لعدة نسخ Web مع Redis إلزامي. النمط الموزع
 يستخدم Socket.IO Redis adapter، WebSocket-only، invalidation موزعًا للجلسات
-والإعدادات، وقفل leader لمهام Cron. يلزم Background Worker واحد على الأقل
-وMongoDB Replica Set وRedis مُدار.
+والإعدادات، وقفل leader لمهام Cron. يشغّل نمط `single` عامل Outbox مدمجًا داخل
+Web، بينما يلزم النمط `distributed` خدمة Background Worker مستقلة واحدة على
+الأقل. يتطلب كلا النمطين MongoDB Replica Set، ويتطلب النمط الموزع Redis مُدارًا.
 
 ## بوابة ما قبل النشر
 
@@ -25,16 +26,16 @@
 6. اضبط `REDIS_REQUIRED=true` عند الاعتماد على Redis؛ عند فشل الاتصال سيفشل startup بدل الرجوع الصامت إلى MemoryStore.
 7. لا تفعّل `PHONE_VERIFICATION_ENABLED=true` قبل ضبط متغيرات Firebase الثلاثة واختبارها.
 8. تحقق أن Brevo sender موثّق وأن `CLIENT_URL` و`ALLOWED_ORIGINS` يستخدمان HTTPS الصحيح.
-9. أنشئ `OUTBOX_ENCRYPTION_KEY` ثابتًا بـ`openssl rand -hex 32`، واضبط `OUTBOX_WORKER_REQUIRED=true` على خدمتي Web وWorker. لا تغيّر المفتاح قبل تفريغ كل أحداث Outbox المعلقة.
+9. أنشئ `OUTBOX_ENCRYPTION_KEY` ثابتًا بـ`openssl rand -hex 32`، واضبط `OUTBOX_WORKER_REQUIRED=true`. في `single` يعمل العامل داخل Web؛ وفي `distributed` اضبط المفتاح نفسه على Web وWorker المستقل. لا تغيّر المفتاح قبل تفريغ كل أحداث Outbox المعلقة.
 10. اضبط `METRICS_ENABLED=true` و`METRICS_TOKEN` عشوائيًا (32 محرفًا على الأقل)، ثم اربط Prometheus أو منصة المراقبة بـ`GET /metrics` مع `Authorization: Bearer <token>`.
-11. شغّل خدمة Background Worker مستقلة بنفس نسخة الكود ومتغيرات البيئة:
+11. عند `RUNTIME_TOPOLOGY=single` لا تنشئ خدمة أخرى؛ يبدأ Web عامل Outbox المدمج تلقائيًا. عند `RUNTIME_TOPOLOGY=distributed` شغّل خدمة Background Worker مستقلة بنفس نسخة الكود ومتغيرات البيئة:
 
    ```text
    Build Command: npm ci && npm run build
    Start Command: npm run worker
    ```
 
-12. عند أول نشر لهذه الدفعة: طبّق الفهارس، انشر Worker وتأكد من heartbeat، ثم انشر Web. استمرار نسخة Worker واحدة على الأقل شرط readiness.
+12. عند أول نشر لهذه الدفعة: طبّق الفهارس. في `single` انشر Web ثم تأكد من heartbeat المدمج؛ وفي `distributed` انشر Worker وتأكد من heartbeat ثم انشر Web. استمرار عامل واحد على الأقل شرط readiness.
 
 ## فحص النشر
 

@@ -129,7 +129,9 @@ Build Command: npm ci && npm run build
 Start Command: npm start
 ```
 
-وأضف Background Worker من نفس المستودع:
+مع `RUNTIME_TOPOLOGY=single` يعمل Outbox Worker داخل Web Service نفسه، وهذا يناسب
+خدمة Render واحدة. عند استخدام `RUNTIME_TOPOLOGY=distributed` فقط، أضف Background
+Worker مستقلًا من نفس المستودع:
 
 ```text
 Build Command: npm ci && npm run build
@@ -140,7 +142,7 @@ Start Command: npm run worker
   الأفقي استخدم `RUNTIME_TOPOLOGY=distributed` مع `REDIS_REQUIRED=true`؛ عندها
   يعمل Socket.IO Redis adapter وdistributed invalidation وCron leadership.
 - يبدأ HTTP فقط بعد نجاح اتصال MongoDB وتهيئة Cron Jobs. فشل jobs لم يعد يسمح بخادم يبدو جاهزًا.
-- اضبط `OUTBOX_WORKER_REQUIRED=true` و`OUTBOX_ENCRYPTION_KEY` ثابتًا من 32 بايت على Web وWorker. بريد OTP واستعادة كلمة المرور والتنبيهات الإدارية الحرجة يُحفظ مشفرًا مع تغيير قاعدة البيانات داخل transaction واحدة، ثم يرسله Worker مع retry وdead-letter state.
+- اضبط `OUTBOX_WORKER_REQUIRED=true` و`OUTBOX_ENCRYPTION_KEY` ثابتًا من 32 بايت. في نمط `single` يشغّل Web العامل المدمج؛ وفي `distributed` يجب أن تتطابق القيمة على Web وWorker المستقل. بريد OTP واستعادة كلمة المرور والتنبيهات الإدارية الحرجة يُحفظ مشفرًا مع تغيير قاعدة البيانات داخل transaction واحدة، ثم يرسله Worker مع retry وdead-letter state.
 - `/health/ready` يفحص MongoDB وRedis وجدولة background jobs وheartbeat عامل Outbox عندما تكون مطلوبة، بينما `/health/live` يثبت فقط أن عملية Web تعمل.
 - عند `METRICS_ENABLED=true` يوفّر `/metrics` عدادات HTTP وزمن الاستجابة وذاكرة العملية بصيغة Prometheus؛ في Production يلزم `METRICS_TOKEN` وإرساله كـBearer token.
 - استخدم HTTPS وأسرارًا طويلة ومنفصلة لكل بيئة.

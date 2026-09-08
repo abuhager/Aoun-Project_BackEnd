@@ -1,11 +1,15 @@
 import 'dotenv/config';
 import http from 'http';
 import mongoose from 'mongoose';
-import { validateEnvironment } from './config/env.js';
+import {
+  shouldRunEmbeddedOutboxWorker,
+  validateEnvironment,
+} from './config/env.js';
 import { connectRedis, closeRedis } from './middlewares/rateLimiter.js';
 import app from './app.js';
 import connectDB from './config/db.js';
 import { initCronJobs, stopCronJobs } from './jobs/cronJobs.js';
+import { startOutboxWorker, stopOutboxWorker } from './jobs/outboxWorker.js';
 import { initSocket, resetIO } from './socket/index.js';
 import { attachSocketRedisAdapter, closeSocketRedisAdapter } from './socket/redisAdapter.js';
 import { startRuntimeBus, stopRuntimeBus } from './utils/runtimeBus.js';
@@ -22,9 +26,15 @@ const runtime: {
 
 let shutdownPromise: Promise<void> | null = null;
 let processHandlersRegistered = false;
+let embeddedOutboxWorkerStarted = false;
 
 const closeResources = async () => {
   await stopCronJobs();
+
+  if (embeddedOutboxWorkerStarted) {
+    await stopOutboxWorker();
+    embeddedOutboxWorkerStarted = false;
+  }
 
   const activeIo = runtime.io;
   const activeServer = runtime.server;
@@ -119,6 +129,12 @@ const startServer = async () => {
     });
   });
 
+  if (shouldRunEmbeddedOutboxWorker()) {
+    await startOutboxWorker();
+    embeddedOutboxWorkerStarted = true;
+    console.log('[Startup] عامل Outbox يعمل داخل Web Service (single topology)');
+  }
+
   console.log(`[Startup] الخادم يعمل على المنفذ ${port} — البيئة: ${nodeEnv}`);
   console.log('[Startup] تمت تهيئة Cron Jobs');
 
@@ -134,12 +150,21 @@ if (isDirectExecution) {
   });
 }
 
-export { closeResources, gracefulShutdown, registerProcessHandlers, runtime, shutdownAndExit, startServer };
+export {
+  closeResources,
+  gracefulShutdown,
+  registerProcessHandlers,
+  runtime,
+  shouldRunEmbeddedOutboxWorker,
+  shutdownAndExit,
+  startServer,
+};
 export default {
   closeResources,
   gracefulShutdown,
   registerProcessHandlers,
   runtime,
+  shouldRunEmbeddedOutboxWorker,
   shutdownAndExit,
   startServer,
 };

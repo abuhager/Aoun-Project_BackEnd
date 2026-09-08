@@ -12,7 +12,10 @@ process.env.JWT_ACCESS_EXPIRE = '15m';
 process.env.JWT_REFRESH_EXPIRE = '7d';
 
 const AppError = require('../utils/AppError').default;
-const { validateEnvironment } = require('../config/env');
+const {
+  shouldRunEmbeddedOutboxWorker,
+  validateEnvironment,
+} = require('../config/env');
 const {
   requireTrustedBrowserRequest,
 } = require('../middlewares/requestSecurity');
@@ -105,6 +108,21 @@ test('بيئة production تفرض HTTPS وفصل الأسرار ومدداً م
     }),
     /بين دقيقة وساعة/
   );
+});
+
+test('خدمة single تشغّل Outbox داخل Web بينما distributed ينتظر Worker مستقلاً', () => {
+  assert.equal(shouldRunEmbeddedOutboxWorker({
+    RUNTIME_TOPOLOGY: 'single',
+    OUTBOX_WORKER_REQUIRED: 'true',
+  }), true);
+  assert.equal(shouldRunEmbeddedOutboxWorker({
+    RUNTIME_TOPOLOGY: 'single',
+    OUTBOX_WORKER_REQUIRED: 'false',
+  }), false);
+  assert.equal(shouldRunEmbeddedOutboxWorker({
+    RUNTIME_TOPOLOGY: 'distributed',
+    OUTBOX_WORKER_REQUIRED: 'true',
+  }), false);
 });
 
 test('بوابة production ترفض البريد أو Firebase الناقص وتفرض Redis للتوسع الأفقي', () => {
