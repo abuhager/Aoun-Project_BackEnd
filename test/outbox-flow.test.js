@@ -25,8 +25,13 @@ test('محتوى Outbox السري مشفر ومحمٍ من العبث', () => {
   assert.match(encrypted, /^v1\./);
   assert.doesNotMatch(encrypted, /private@example\.test|843921/);
   assert.deepEqual(decryptOutboxPayload(encrypted), payload);
+
+  const tamperedParts = encrypted.split('.');
+  const tamperedCiphertext = Buffer.from(tamperedParts[3], 'base64url');
+  tamperedCiphertext[0] ^= 1;
+  tamperedParts[3] = tamperedCiphertext.toString('base64url');
   assert.throws(
-    () => decryptOutboxPayload(`${encrypted.slice(0, -1)}x`),
+    () => decryptOutboxPayload(tamperedParts.join('.')),
     /OUTBOX_PAYLOAD_DECRYPT_FAILED/
   );
 });
