@@ -49,7 +49,11 @@ const deliveryErrorCode = (error: unknown): string => {
     const record = error as { code?: unknown; response?: { status?: unknown }; name?: unknown };
     const status = Number(record.response?.status);
     if (Number.isInteger(status)) return `EMAIL_HTTP_${status}`;
-    if (typeof record.code === 'string') return `EMAIL_${record.code}`;
+    if (typeof record.code === 'string') {
+      return record.code.startsWith('EMAIL_')
+        ? record.code
+        : `EMAIL_${record.code}`;
+    }
     if (typeof record.name === 'string') return record.name.slice(0, 160);
   }
   return 'OUTBOX_DELIVERY_FAILED';

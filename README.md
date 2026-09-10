@@ -41,6 +41,18 @@ npm run dev
 أنشئ `.env` محليًا واضبط MongoDB وأسرار المصادقة وOrigins المسموحة وCloudinary وBrevo. لا ترفع `.env` أو أي مفتاح أو كلمة مرور إلى Git.
 مرجع متغيرات الإنتاج غير السرية موجود في `.env.production.example`؛ استبدل كل القيم التجريبية داخل لوحة الاستضافة فقط.
 
+لإرسال رمز التحقق فعليًا أثناء التطوير، يجب أن يحتوي `.env` على مفتاح Brevo وعنوان مرسل موثّق:
+
+```env
+BREVO_API_KEY=replace-with-your-brevo-key
+PLATFORM_EMAIL=replace-with-a-verified-sender@example.com
+```
+
+في `NODE_ENV=development` يعمل عامل Outbox المدمج تلقائيًا بنمط `single` حتى لو لم تضع
+`RUNTIME_TOPOLOGY` و`OUTBOX_WORKER_REQUIRED`. إذا ضبطت أحدهما صراحةً على
+`distributed` أو `false`، شغّل العامل في نافذة ثانية باستخدام `npm run worker:dev`.
+عند رفض Brevo للطلب سيظهر في الطرفية رمز واضح مثل `EMAIL_HTTP_401` بدل نجاح صامت.
+
 ### مستوى الثقة للحسابات الجديدة
 
 - القيمة الافتراضية `NEW_USER_DEFAULT_TRUST_LEVEL_2=false` تُبقي الحساب العادي الجديد في المستوى 1.

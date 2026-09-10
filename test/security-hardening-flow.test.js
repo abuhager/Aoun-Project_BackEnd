@@ -124,6 +124,16 @@ test('بيئة production تفرض HTTPS وفصل الأسرار ومدداً م
 
 test('خدمة single تشغّل Outbox داخل Web بينما distributed ينتظر Worker مستقلاً', () => {
   assert.equal(shouldRunEmbeddedOutboxWorker({
+    NODE_ENV: 'development',
+  }), true);
+  assert.equal(shouldRunEmbeddedOutboxWorker({
+    NODE_ENV: 'development',
+    OUTBOX_WORKER_REQUIRED: 'false',
+  }), false);
+  assert.equal(shouldRunEmbeddedOutboxWorker({
+    NODE_ENV: 'production',
+  }), false);
+  assert.equal(shouldRunEmbeddedOutboxWorker({
     RUNTIME_TOPOLOGY: 'single',
     OUTBOX_WORKER_REQUIRED: 'true',
   }), true);

@@ -119,3 +119,49 @@ test('تدفقات التفعيل والاستعادة تحفظ الحالة وO
   assert.match(authSource, /forgotPasswordLogic[\s\S]*runMongoTransaction[\s\S]*enqueuePasswordResetEmail/);
   assert.match(notifySource, /runMongoTransaction[\s\S]*enqueueCriticalNotificationEmail/);
 });
+
+test('رمز خطأ مزود البريد لا يحصل على بادئة EMAIL مكررة', async (t) => {
+  const originals = {
+    claimNext: outboxRepository.claimNext,
+    fail: outboxRepository.fail,
+    sendVerificationEmail: emailService.sendVerificationEmail,
+  };
+  t.after(() => {
+    outboxRepository.claimNext = originals.claimNext;
+    outboxRepository.fail = originals.fail;
+    emailService.sendVerificationEmail = originals.sendVerificationEmail;
+  });
+
+  const encryptedPayload = encryptOutboxPayload({
+    to: 'member@example.test',
+    otp: '123456',
+    name: 'Member',
+    isStudent: false,
+    expiryMinutes: 10,
+  });
+  let claimed = false;
+  let errorCode;
+  outboxRepository.claimNext = async () => {
+    if (claimed) return null;
+    claimed = true;
+    return {
+      _id: 'event-provider-missing',
+      type: 'verification_email',
+      encryptedPayload,
+      attempts: 1,
+      maxAttempts: 5,
+    };
+  };
+  outboxRepository.fail = async (_id, _workerId, _attempts, _maxAttempts, code) => {
+    errorCode = code;
+  };
+  emailService.sendVerificationEmail = async () => {
+    throw Object.assign(new Error('provider missing'), {
+      code: 'EMAIL_PROVIDER_NOT_CONFIGURED',
+    });
+  };
+  t.mock.method(console, 'error', () => undefined);
+
+  assert.equal(await outboxWorker.processOutboxBatch(), 0);
+  assert.equal(errorCode, 'EMAIL_PROVIDER_NOT_CONFIGURED');
+});

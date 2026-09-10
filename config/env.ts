@@ -35,10 +35,16 @@ const isEnabled = (value: unknown): boolean => (
 
 const shouldRunEmbeddedOutboxWorker = (
   env: NodeJS.ProcessEnv = process.env
-): boolean => (
-  env.RUNTIME_TOPOLOGY?.trim().toLowerCase() === 'single'
-  && isEnabled(env.OUTBOX_WORKER_REQUIRED)
-);
+): boolean => {
+  const nodeEnv = env.NODE_ENV?.trim().toLowerCase();
+  const topology = env.RUNTIME_TOPOLOGY?.trim().toLowerCase()
+    || (nodeEnv === 'development' ? 'single' : '');
+  const workerRequired = env.OUTBOX_WORKER_REQUIRED?.trim()
+    ? isEnabled(env.OUTBOX_WORKER_REQUIRED)
+    : nodeEnv === 'development';
+
+  return topology === 'single' && workerRequired;
+};
 
 const validateOptionalBoolean = (
   env: NodeJS.ProcessEnv,

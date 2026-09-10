@@ -129,10 +129,27 @@ const startServer = async () => {
     });
   });
 
+  if (nodeEnv === 'development') {
+    const missingEmailSettings = [
+      !process.env.BREVO_API_KEY?.trim() && 'BREVO_API_KEY',
+      !(process.env.SMTP_USER?.trim() || process.env.PLATFORM_EMAIL?.trim())
+        && 'PLATFORM_EMAIL أو SMTP_USER',
+    ].filter(Boolean);
+    if (missingEmailSettings.length > 0) {
+      console.warn(
+        `[Startup] إرسال OTP غير جاهز محلياً؛ اضبط: ${missingEmailSettings.join(', ')}`
+      );
+    }
+  }
+
   if (shouldRunEmbeddedOutboxWorker()) {
     await startOutboxWorker();
     embeddedOutboxWorkerStarted = true;
     console.log('[Startup] عامل Outbox يعمل داخل Web Service (single topology)');
+  } else if (nodeEnv === 'development') {
+    console.warn(
+      '[Startup] عامل Outbox متوقف محلياً؛ لن تُرسل رسائل OTP حتى تفعّله'
+    );
   }
 
   console.log(`[Startup] الخادم يعمل على المنفذ ${port} — البيئة: ${nodeEnv}`);
