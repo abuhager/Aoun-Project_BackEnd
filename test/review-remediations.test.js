@@ -9,11 +9,16 @@ process.env.CLOUDINARY_API_KEY = 'test-key';
 process.env.CLOUDINARY_API_SECRET = 'test-secret';
 
 const Item = require('../models/Item').default;
+const User = require('../models/User').default;
 const SafeHub = require('../models/SafeHub').default;
 const Conversation = require('../models/Conversation').default;
 const { OUTBOX_EVENT_TYPES } = require('../models/OutboxEvent');
 const { getBusinessMonthKey, BUSINESS_TIME_ZONE } = require('../utils/businessTime');
-const { deriveTrustLevel, phoneVerificationPromotesTrust } = require('../utils/trustPolicy');
+const {
+  deriveTrustLevel,
+  newUserDefaultTrustLevel2Enabled,
+  phoneVerificationPromotesTrust,
+} = require('../utils/trustPolicy');
 const {
   normalizeSearchText,
   buildSearchPrefixes,
@@ -48,6 +53,18 @@ test('ملكية الهاتف دليل مستقل ولا ترفع tier افتر�
   assert.equal(deriveTrustLevel(phoneOnly), 1);
   assert.equal(deriveTrustLevel(phoneOnly, { phonePromotesTrust: true }), 2);
   assert.equal(deriveTrustLevel({ ...phoneOnly, studentVerified: true }), 2);
+  assert.equal(
+    deriveTrustLevel({ ...phoneOnly, phoneVerified: false, registrationPolicyLevel2: true }),
+    2
+  );
+  assert.equal(User.schema.path('trustEvidence.registrationPolicyLevel2').options.default, false);
+});
+
+test('سياسة المستوى 2 للحساب الجديد مغلقة افتراضياً ولا تقبل إلا true صريحة', () => {
+  assert.equal(newUserDefaultTrustLevel2Enabled({}), false);
+  assert.equal(newUserDefaultTrustLevel2Enabled({ NEW_USER_DEFAULT_TRUST_LEVEL_2: 'false' }), false);
+  assert.equal(newUserDefaultTrustLevel2Enabled({ NEW_USER_DEFAULT_TRUST_LEVEL_2: ' TRUE ' }), true);
+  assert.equal(newUserDefaultTrustLevel2Enabled({ NEW_USER_DEFAULT_TRUST_LEVEL_2: '1' }), false);
 });
 
 test('حذف الغرض يحفظ tombstone ويرحّل حذف الصورة إلى Outbox', () => {

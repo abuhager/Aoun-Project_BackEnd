@@ -83,6 +83,18 @@ const secureProductionEnv = () => ({
 
 test('بيئة production تفرض HTTPS وفصل الأسرار ومدداً محدودة', () => {
   assert.doesNotThrow(() => validateEnvironment(secureProductionEnv()));
+  assert.doesNotThrow(() => validateEnvironment({
+    ...secureProductionEnv(),
+    NEW_USER_DEFAULT_TRUST_LEVEL_2: 'true',
+  }));
+
+  assert.throws(
+    () => validateEnvironment({
+      ...secureProductionEnv(),
+      NEW_USER_DEFAULT_TRUST_LEVEL_2: 'yes',
+    }),
+    /NEW_USER_DEFAULT_TRUST_LEVEL_2/
+  );
 
   assert.throws(
     () => validateEnvironment({

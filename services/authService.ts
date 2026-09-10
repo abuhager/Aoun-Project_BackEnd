@@ -13,6 +13,7 @@ import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '.
 import { generateOtp, hashOtp, verifyOtp } from '../utils/otp.js';
 import { hashToken } from '../utils/cryptoUtils.js';
 import runMongoTransaction from '../utils/mongoTransaction.js';
+import { newUserDefaultTrustLevel2Enabled } from '../utils/trustPolicy.js';
 import type { ClientSession } from 'mongoose';
 import type { EntityId, ServicePayload } from './serviceTypes.js';
 import { getErrorMessage } from './serviceTypes.js';
@@ -208,6 +209,7 @@ export const registerLogic = async ({ name, email, password, phone }: Registrati
     Math.max(1, Number(settings?.studentDefaultTrustLevel ?? 2))
   );
   const isStudent          = await isUniversityEmail(email);
+  const newUserStartsAtLevel2 = newUserDefaultTrustLevel2Enabled();
 
 
   // الحساب الجديد وغير المفعَّل يتابعان إلى OTP. الحساب المفعَّل يعود بخطأ
@@ -237,11 +239,18 @@ export const registerLogic = async ({ name, email, password, phone }: Registrati
     }
 
 
-    // مستخدم موجود لكن غير مُفعَّل — نخزن OTP قبل الرد، وإرسال البريد نفسه غير حاجب
+    // مستخدم موجود لكن غير مُفعَّل — نخزن OTP قبل الرد، وإرسال البريد نفسه غير حاجب.
+    // لا نطبّق سياسة الحسابات الجديدة بأثر رجعي عند إعادة محاولة التسجيل.
+    const currentTrustLevel = Math.min(2, Math.max(1, Number(exists.trustLevel ?? 1)));
+    const currentQuota = Math.max(0, Number(exists.quota ?? defaultQuota));
     const extraFields = {
       isVerifiedStudent: isStudent,
-      trustLevel:        isStudent ? studentTrustLevel : 1,
-      quota:             isStudent ? (settings?.studentQuota ?? 5) : defaultQuota,
+      trustLevel:        isStudent
+        ? Math.max(currentTrustLevel, studentTrustLevel)
+        : currentTrustLevel,
+      quota:             isStudent
+        ? Math.max(currentQuota, settings?.studentQuota ?? 5)
+        : currentQuota,
     };
     await runMongoTransaction((session) => _issueVerificationOtp(
       exists._id,
@@ -258,6 +267,9 @@ export const registerLogic = async ({ name, email, password, phone }: Registrati
 
   // مستخدم جديد تماماً
   const hashed  = await bcrypt.hash(password, BCRYPT_ROUNDS);
+  const initialTrustLevel = newUserStartsAtLevel2
+    ? 2
+    : (isStudent ? studentTrustLevel : 1);
   await runMongoTransaction(async (session) => {
     const newUser = await userRepository.createUser({
       name,
@@ -266,7 +278,10 @@ export const registerLogic = async ({ name, email, password, phone }: Registrati
       phone,
       otpAttempts:       0,
       isVerifiedStudent: isStudent,
-      trustLevel:        isStudent ? studentTrustLevel : 1,
+      trustLevel:        initialTrustLevel,
+      trustEvidence: {
+        registrationPolicyLevel2: newUserStartsAtLevel2,
+      },
       quota:             isStudent ? (settings?.studentQuota ?? 5) : defaultQuota,
     }, session);
 
@@ -760,7 +775,8 @@ export const updateMeLogic = async (
         currentUser.phoneVerified
         && currentUser.trustLevel === 2
         && !currentUser.isVerifiedStudent
-        && !currentUser.promotedByAdmin;
+        && !currentUser.promotedByAdmin
+        && !currentUser.trustEvidence?.registrationPolicyLevel2;
 
       if (wasPhoneOnlyLevel2) {
         updates.trustLevel = 1;

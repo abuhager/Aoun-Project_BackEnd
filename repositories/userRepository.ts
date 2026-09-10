@@ -161,6 +161,8 @@ export const setTrustLevelAndQuota = (
       quota,
       promotedByAdmin,
       'trustEvidence.adminApproved': promotedByAdmin,
+      // أي قرار إداري لاحق يلغي سبب المنح الآلي القديم ويصبح هو مصدر الحقيقة.
+      'trustEvidence.registrationPolicyLevel2': false,
     },
     { returnDocument: 'after', session: session ?? undefined }
   ).select(
@@ -179,7 +181,8 @@ export const findByIdWithPassword = (id: EntityId) =>
 export const findProfileUpdateState = (id: EntityId) =>
   User.findById(id)
     .select(
-      'phone phoneVerified trustLevel isVerifiedStudent promotedByAdmin avatar +avatarPublicId'
+      'phone phoneVerified trustLevel isVerifiedStudent promotedByAdmin avatar ' +
+      'trustEvidence.registrationPolicyLevel2 +avatarPublicId'
     )
     .lean();
 

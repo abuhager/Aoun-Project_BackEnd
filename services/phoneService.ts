@@ -49,7 +49,10 @@ export const verifyPhoneWithFirebase = async (userId: EntityId, idToken: string)
   let updated;
   try {
     const current = await User.findById(userId)
-      .select('isVerified isVerifiedStudent promotedByAdmin trustLevel')
+      .select(
+        'isVerified isVerifiedStudent promotedByAdmin trustLevel ' +
+        'trustEvidence.registrationPolicyLevel2'
+      )
       .lean();
     if (!current) {
       throw serviceError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
@@ -59,6 +62,9 @@ export const verifyPhoneWithFirebase = async (userId: EntityId, idToken: string)
       studentVerified: Boolean(current.isVerifiedStudent),
       phoneVerified: true,
       adminApproved: Boolean(current.promotedByAdmin),
+      registrationPolicyLevel2: Boolean(
+        current.trustEvidence?.registrationPolicyLevel2
+      ),
     }, { phonePromotesTrust: phoneVerificationPromotesTrust() });
 
     updated = await User.findByIdAndUpdate(

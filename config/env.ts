@@ -96,6 +96,7 @@ const validateEnvironment = (env: NodeJS.ProcessEnv = process.env): {
 
   validateOptionalBoolean(env, 'PHONE_VERIFICATION_ENABLED', errors);
   validateOptionalBoolean(env, 'PHONE_VERIFICATION_PROMOTES_TRUST', errors);
+  validateOptionalBoolean(env, 'NEW_USER_DEFAULT_TRUST_LEVEL_2', errors);
   validateOptionalBoolean(env, 'REDIS_REQUIRED', errors);
   validateOptionalBoolean(env, 'BACKGROUND_JOBS_REQUIRED', errors);
   validateOptionalBoolean(env, 'OUTBOX_WORKER_REQUIRED', errors);

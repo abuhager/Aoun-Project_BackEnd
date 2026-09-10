@@ -3,7 +3,14 @@ export type TrustEvidence = {
   studentVerified: boolean;
   phoneVerified: boolean;
   adminApproved: boolean;
+  registrationPolicyLevel2?: boolean;
 };
+
+export const newUserDefaultTrustLevel2Enabled = (
+  env: NodeJS.ProcessEnv = process.env
+): boolean => String(
+  env.NEW_USER_DEFAULT_TRUST_LEVEL_2 ?? 'false'
+).trim().toLowerCase() === 'true';
 
 export const phoneVerificationPromotesTrust = (
   env: NodeJS.ProcessEnv = process.env
@@ -12,8 +19,9 @@ export const phoneVerificationPromotesTrust = (
 ).trim().toLowerCase() === 'true';
 
 /**
- * Tier 2 requires student evidence or an explicit admin approval. Phone
- * ownership is evidence, but is not sufficient unless deployment opts in.
+ * Tier 2 requires student evidence, an explicit admin approval, or the
+ * deployment's registration policy. Phone ownership is evidence, but is not
+ * sufficient unless deployment opts in.
  */
 export const deriveTrustLevel = (
   evidence: TrustEvidence,
@@ -21,9 +29,14 @@ export const deriveTrustLevel = (
 ): 1 | 2 => (
   evidence.studentVerified
   || evidence.adminApproved
+  || Boolean(evidence.registrationPolicyLevel2)
   || (Boolean(options.phonePromotesTrust) && evidence.phoneVerified)
     ? 2
     : 1
 );
 
-export default { deriveTrustLevel, phoneVerificationPromotesTrust };
+export default {
+  deriveTrustLevel,
+  newUserDefaultTrustLevel2Enabled,
+  phoneVerificationPromotesTrust,
+};

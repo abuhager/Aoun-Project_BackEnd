@@ -46,6 +46,8 @@ const userSchema = new mongoose.Schema(
       studentVerified: { type: Boolean, default: false },
       phoneVerified:   { type: Boolean, default: false },
       adminApproved:   { type: Boolean, default: false },
+      // يحفظ سبب منح المستوى 2 وقت التسجيل حتى لا تُسقطه إعادة احتساب لاحقة.
+      registrationPolicyLevel2: { type: Boolean, default: false },
     },
     quota:             { type: Number, default: 2 },
     totalDonations:    { type: Number, default: 0 },

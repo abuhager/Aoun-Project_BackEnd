@@ -37,7 +37,7 @@
 | AOU-023 | جزئي | Socket server generics وعقد JSON مشترك يتحقق منه الطرفان في CI، وتقوية DTOs للمسارات المعدلة | OpenAPI/JSON Schema كامل، generated API types، وتقليل `unknown` تدريجيًا لكل vertical slice |
 | AOU-024 | جزئي | توحيد عميل Brevo والtimeout/error codes، Outbox ports، وحدود معمارية موثقة | تقسيم الخدمات الكبيرة وتوحيد كل controller/result styles تدريجيًا مع characterization tests |
 | AOU-025 | مغلق كسياسة | Actions مثبتة على commit SHA، Dependabot، audit وCycloneDX SBOM في CI | مراجعة PRs الدورية؛ لا ترقية major تلقائية لـ`rate-limit-redis` |
-| AOU-026 | مغلق افتراضيًا بقرار محافظ | evidence منفصلة وtier مشتق؛ الهاتف لا يرفع Level 2 افتراضيًا، ويمكن تفعيله بمتغير واضح | اعتماد Product decision table النهائي وشرحها في UI |
+| AOU-026 | مغلق برمجيًا وقابل للضبط | evidence منفصلة وtier مشتق؛ الهاتف لا يرفع Level 2 افتراضيًا. يتيح `NEW_USER_DEFAULT_TRUST_LEVEL_2` منح الحسابات الجديدة فقط Level 2 مع حفظ سبب السياسة، من دون تعديل الحسابات القديمة | اعتماد Product decision table النهائي وشرحها في UI |
 | AOU-027 | مغلق برمجيًا | Web Locks باسم ثابت ينسق refresh بين التبويبات مع fallback | multi-context Playwright لحالة lost/reordered response |
 
 ## بوابات الإصدار التي لا يمكن استبدالها بالكود
@@ -48,4 +48,3 @@
 4. نشر Worker أولًا والتأكد من heartbeat، ثم نشر Web.
 5. تشغيل smoke وE2E على Preview/Staging، واختبار عقدتين إذا كان topology موزعًا.
 6. عدم وصف النظام بأنه جاهز مؤسسيًا قبل اعتماد AOU-011 وربط التنبيهات/الاستعادة الفعلية في AOU-010.
-

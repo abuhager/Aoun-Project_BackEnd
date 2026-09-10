@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const mongoose = require('mongoose');
 
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'test-access-secret-that-is-long-enough-123456';
@@ -201,6 +202,91 @@ test('التسجيل ببريد مفعّل يعيد الرد العام ويرس
   assert.equal(result.body.code, undefined);
   assert.equal(mailCalls, 0);
   assert.equal(guidanceCalls, 1);
+});
+
+test('متغير البيئة يمنح المستوى 2 للحسابات الجديدة فقط', async (t) => {
+  const originals = {
+    startSession: mongoose.startSession,
+    getCached: SystemSettings.getCached,
+    findByEmail: userRepository.findByEmail,
+    createUser: userRepository.createUser,
+    updateUser: userRepository.updateUser,
+    enqueueVerification: outboxService.enqueueVerificationEmail,
+  };
+  const previousFlag = process.env.NEW_USER_DEFAULT_TRUST_LEVEL_2;
+  t.after(() => {
+    mongoose.startSession = originals.startSession;
+    SystemSettings.getCached = originals.getCached;
+    userRepository.findByEmail = originals.findByEmail;
+    userRepository.createUser = originals.createUser;
+    userRepository.updateUser = originals.updateUser;
+    outboxService.enqueueVerificationEmail = originals.enqueueVerification;
+    if (previousFlag === undefined) delete process.env.NEW_USER_DEFAULT_TRUST_LEVEL_2;
+    else process.env.NEW_USER_DEFAULT_TRUST_LEVEL_2 = previousFlag;
+  });
+
+  mongoose.startSession = async () => ({
+    async withTransaction(work) { await work(); },
+    async endSession() {},
+  });
+  SystemSettings.getCached = async () => ({
+    otpExpiryMinutes: 10,
+    defaultUserQuota: 2,
+    studentQuota: 5,
+    studentDefaultTrustLevel: 2,
+    universityEmailDomains: [],
+  });
+
+  const createdPayloads = [];
+  const updatedPayloads = [];
+  userRepository.findByEmail = async () => null;
+  userRepository.createUser = async (payload) => {
+    createdPayloads.push(payload);
+    return { _id: `507f1f77bcf86cd7994390${createdPayloads.length}` };
+  };
+  userRepository.updateUser = async (_id, payload) => {
+    updatedPayloads.push(payload);
+    return payload;
+  };
+  outboxService.enqueueVerificationEmail = async () => {};
+
+  process.env.NEW_USER_DEFAULT_TRUST_LEVEL_2 = 'true';
+  await authService.registerLogic({
+    name: 'New Level Two',
+    email: 'new-level-two@example.com',
+    password: 'StrongPass1',
+    phone: '+962791234567',
+  });
+  assert.equal(createdPayloads[0].trustLevel, 2);
+  assert.equal(createdPayloads[0].trustEvidence.registrationPolicyLevel2, true);
+
+  process.env.NEW_USER_DEFAULT_TRUST_LEVEL_2 = 'false';
+  await authService.registerLogic({
+    name: 'New Level One',
+    email: 'new-level-one@example.com',
+    password: 'StrongPass1',
+    phone: '+962791234568',
+  });
+  assert.equal(createdPayloads[1].trustLevel, 1);
+  assert.equal(createdPayloads[1].trustEvidence.registrationPolicyLevel2, false);
+
+  process.env.NEW_USER_DEFAULT_TRUST_LEVEL_2 = 'true';
+  userRepository.findByEmail = async () => ({
+    _id: '507f1f77bcf86cd799439099',
+    name: 'Existing Unverified',
+    email: 'existing-unverified@example.com',
+    isVerified: false,
+    isVerifiedStudent: false,
+    trustLevel: 1,
+    quota: 2,
+  });
+  await authService.registerLogic({
+    name: 'Existing Unverified',
+    email: 'existing-unverified@example.com',
+    password: 'StrongPass1',
+    phone: '+962791234569',
+  });
+  assert.equal(updatedPayloads.at(-1).trustLevel, 1);
 });
 
 test('لا يوجد fallback لهوية ثابتة في Socket chat', () => {

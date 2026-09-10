@@ -24,18 +24,19 @@ Web، بينما يلزم النمط `distributed` خدمة Background Worker م
    اضبط `RUNTIME_TOPOLOGY=distributed` و`REDIS_REQUIRED=true` واختبر عقدتين.
 5. اضبط `MONGO_INDEXES_REQUIRED=true` و`MONGO_SYNC_INDEXES_ON_STARTUP=false`.
 6. اضبط `REDIS_REQUIRED=true` عند الاعتماد على Redis؛ عند فشل الاتصال سيفشل startup بدل الرجوع الصامت إلى MemoryStore.
-7. لا تفعّل `PHONE_VERIFICATION_ENABLED=true` قبل ضبط متغيرات Firebase الثلاثة واختبارها.
-8. تحقق أن Brevo sender موثّق وأن `CLIENT_URL` و`ALLOWED_ORIGINS` يستخدمان HTTPS الصحيح.
-9. أنشئ `OUTBOX_ENCRYPTION_KEY` ثابتًا بـ`openssl rand -hex 32`، واضبط `OUTBOX_WORKER_REQUIRED=true`. في `single` يعمل العامل داخل Web؛ وفي `distributed` اضبط المفتاح نفسه على Web وWorker المستقل. لا تغيّر المفتاح قبل تفريغ كل أحداث Outbox المعلقة.
-10. اضبط `METRICS_ENABLED=true` و`METRICS_TOKEN` عشوائيًا (32 محرفًا على الأقل)، ثم اربط Prometheus أو منصة المراقبة بـ`GET /metrics` مع `Authorization: Bearer <token>`.
-11. عند `RUNTIME_TOPOLOGY=single` لا تنشئ خدمة أخرى؛ يبدأ Web عامل Outbox المدمج تلقائيًا. عند `RUNTIME_TOPOLOGY=distributed` شغّل خدمة Background Worker مستقلة بنفس نسخة الكود ومتغيرات البيئة:
+7. قرر سياسة التسجيل: اترك `NEW_USER_DEFAULT_TRUST_LEVEL_2=false` للمستوى 1، أو اضبطها `true` كي تبدأ الحسابات المنشأة بعد التفعيل فقط بالمستوى 2. لا تتجاوز هذه القيمة التحقق من البريد ولا تعدّل الحسابات الموجودة.
+8. لا تفعّل `PHONE_VERIFICATION_ENABLED=true` قبل ضبط متغيرات Firebase الثلاثة واختبارها.
+9. تحقق أن Brevo sender موثّق وأن `CLIENT_URL` و`ALLOWED_ORIGINS` يستخدمان HTTPS الصحيح.
+10. أنشئ `OUTBOX_ENCRYPTION_KEY` ثابتًا بـ`openssl rand -hex 32`، واضبط `OUTBOX_WORKER_REQUIRED=true`. في `single` يعمل العامل داخل Web؛ وفي `distributed` اضبط المفتاح نفسه على Web وWorker المستقل. لا تغيّر المفتاح قبل تفريغ كل أحداث Outbox المعلقة.
+11. اضبط `METRICS_ENABLED=true` و`METRICS_TOKEN` عشوائيًا (32 محرفًا على الأقل)، ثم اربط Prometheus أو منصة المراقبة بـ`GET /metrics` مع `Authorization: Bearer <token>`.
+12. عند `RUNTIME_TOPOLOGY=single` لا تنشئ خدمة أخرى؛ يبدأ Web عامل Outbox المدمج تلقائيًا. عند `RUNTIME_TOPOLOGY=distributed` شغّل خدمة Background Worker مستقلة بنفس نسخة الكود ومتغيرات البيئة:
 
    ```text
    Build Command: npm ci && npm run build
    Start Command: npm run worker
    ```
 
-12. عند أول نشر لهذه الدفعة: طبّق الفهارس. في `single` انشر Web ثم تأكد من heartbeat المدمج؛ وفي `distributed` انشر Worker وتأكد من heartbeat ثم انشر Web. استمرار عامل واحد على الأقل شرط readiness.
+13. عند أول نشر لهذه الدفعة: طبّق الفهارس. في `single` انشر Web ثم تأكد من heartbeat المدمج؛ وفي `distributed` انشر Worker وتأكد من heartbeat ثم انشر Web. استمرار عامل واحد على الأقل شرط readiness.
 
 ## فحص النشر
 
