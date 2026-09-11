@@ -1,14 +1,35 @@
-# Aoun Backend
+# عون — Aoun Backend
+
+**الخادم الخلفي لمنصة عون لطلب وتنسيق التبرعات العينية**
+
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
+![Express](https://img.shields.io/badge/Express-000000?style=for-the-badge&logo=express&logoColor=white)
+![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white)
+![Socket.IO](https://img.shields.io/badge/Socket.IO-010101?style=for-the-badge&logo=socketdotio&logoColor=white)
+![Brevo](https://img.shields.io/badge/Brevo-0B996E?style=for-the-badge&logo=brevo&logoColor=white)
+![Render](https://img.shields.io/badge/Render-000000?style=for-the-badge&logo=render&logoColor=white)
 
 [![Backend CI](https://github.com/abuhager/Aoun-Project_BackEnd/actions/workflows/ci.yml/badge.svg)](https://github.com/abuhager/Aoun-Project_BackEnd/actions/workflows/ci.yml)
 
-- **Live application:** https://aoun-project-theta.vercel.app/
-- **Frontend repository:** https://github.com/abuhager/Aoun-Project_FrontEnd
-- **Health check:** https://aoun-project-backend.onrender.com/health/live
+[تجربة المنصة](https://aoun-project-theta.vercel.app/) · [مستودع الواجهة](https://github.com/abuhager/Aoun-Project_FrontEnd) · [فحص حياة الخدمة](https://aoun-project-backend.onrender.com/health/live)
 
 خدمة REST وSocket.IO لمنصة **عون**، وهي منصة عربية لتنظيم التبرعات العينية وطلبات الاحتياج والحجز والتسليم والمحادثات والإشراف.
 
-> حالة المشروع: MVP منشور، واجتاز فحوصات CI، وجاهز لتجربة Pilot محدودة. بيانات Demo مخصصة للاختبار والعرض ولا تمثل مستخدمين أو شراكات حقيقية.
+> حالة المشروع: MVP منشور يستهدف تجربة Pilot محدودة. تعرض شارة CI أعلاه حالة سير العمل؛ نجاحها لا يغني عن التحقق التشغيلي قبل التجربة. بيانات Demo مخصصة للاختبار والعرض ولا تمثل مستخدمين أو شراكات حقيقية.
+
+## المشكلة والحل
+
+عندما تتوزع عروض التبرع وطلبات الاحتياج بين منشورات ومحادثات منفصلة، يصبح تتبع توفر الغرض والحجز والتسليم أصعب على الأطراف والجهات المشرفة.
+
+تجمع **عون** هذه الخطوات في رحلة واحدة: عرض أو طلب، ثم حجز وتواصل وتسليم وتقييم، مع صلاحيات واضحة وإشراف إداري. تركز المنصة على **التبرعات العينية**، ولا تجمع تبرعات مالية أو تنفذ عمليات دفع.
+
+| الطرف | القيمة التي تقدمها عون |
+| --- | --- |
+| المتبرع | عرض الأغراض ومتابعة الحجز والتواصل حتى التسليم |
+| طالب الاحتياج | تصفح الأغراض أو نشر طلب ومتابعة الاستجابة |
+| الجهة المشرفة | إدارة البلاغات والإعدادات ومراجعة النشاط من لوحة موحدة |
 
 ## ما الذي يقدمه الخادم؟
 
@@ -18,6 +39,88 @@
 - معاملات MongoDB للعمليات الحساسة وفهارس مدارة وأدوات تدقيق وترحيل آمنة.
 - Durable Outbox مشفر للبريد الحرج مع retry وdead-letter handling.
 - إعدادات ديناميكية، Rate Limiting، health checks، metrics اختيارية، واختبارات آلية.
+
+## التقنيات والقرارات الهندسية
+
+| الطبقة | التقنيات | الغرض |
+| --- | --- | --- |
+| اللغة والتشغيل | TypeScript، Native ESM، Node.js | فحص الأنواع وبناء نسخة تشغيل داخل `dist/` |
+| واجهات الخدمة | Express 5، Socket.IO | REST والتواصل الفوري |
+| البيانات | MongoDB، Mongoose | نمذجة البيانات والمعاملات والفهارس |
+| حدود الطلبات | Redis، express-rate-limit | حفظ عدادات التقييد المشتركة عند تفعيل Redis |
+| التكاملات | Brevo، Cloudinary | البريد الإلكتروني ورفع الصور |
+| التحقق والتشغيل | Node Test Runner، GitHub Actions، Render | الاختبارات والبناء والنشر |
+
+## المعمارية وتدفق البيانات
+
+يوضح المخطط مسار HTTP والتواصل الفوري، ومسار حفظ البريد الحرج وإرساله في الخلفية. MongoDB هو مخزن الـOutbox؛ يستخدم Redis لتقييد الطلبات، وليس لتخزين طابور البريد في هذا التصميم.
+
+```mermaid
+flowchart TD
+    client["Next.js Client"]
+    api["Express API"]
+    socket["Socket.IO"]
+    redis[("Redis Rate Limiting")]
+    services["Services and Repositories"]
+
+    subgraph persistence["MongoDB - Replica Set"]
+        tx["MongoDB Transactions"]
+        data[("Business Data")]
+        outbox[("Encrypted Durable Outbox")]
+        tx -->|"Atomic write"| data
+        tx -->|"Critical email event"| outbox
+    end
+
+    worker["Durable Outbox Worker"]
+    brevo["Brevo Email API"]
+
+    client -->|"HTTPS / REST"| api
+    client <-->|"Authenticated events"| socket
+    api <-->|"Request counters"| redis
+    api --> services
+    socket --> services
+    services -->|"Sensitive operations"| tx
+    services -->|"Other reads and writes"| data
+    outbox -->|"Claim pending event"| worker
+    worker -->|"Send email"| brevo
+    worker -->|"Complete / Retry / Dead-letter"| outbox
+
+    classDef app fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e
+    classDef storage fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef background fill:#fef3c7,stroke:#d97706,color:#78350f
+    class client,api,socket,services app
+    class redis,tx,data,outbox storage
+    class worker,brevo background
+```
+
+- **اتساق البيانات:** تُنفّذ العمليات الحساسة داخل معاملات MongoDB؛ يُحفظ حدث البريد الحرج مع تغيير البيانات داخل المعاملة نفسها.
+- **الإرسال الخلفي:** يلتقط العامل الحدث المحفوظ، ويفك تشفير محتواه ويرسله عبر Brevo، ثم يسجل النجاح أو إعادة المحاولة أو حالة الفشل النهائي.
+- **التشغيل:** يعمل العامل مدمجًا في نمط `single`، أو مستقلًا في نمط `distributed`.
+- **التواصل الفوري:** يستخدم Socket.IO المصادقة وصلاحيات المحادثات؛ يضاف Redis adapter عند التشغيل الموزع وفق إعدادات الإنتاج.
+- **نطاق الرسم:** يركز على البيانات والبريد؛ تبقى تفاصيل Cloudinary وبقية المهام المجدولة في الكود ووثائق التشغيل.
+
+## لقطات الشاشة
+
+مساحة جاهزة لإضافة صور فعلية من بيئة العرض. أضف الصور إلى `docs/screenshots/` في هذا المستودع، أو استبدل المسارات بروابط الصور.
+
+| اللقطة | ما الذي توضحه؟ | المسار المقترح |
+| --- | --- | --- |
+| استكشاف الأغراض | التصفح والبحث والتصفية | `docs/screenshots/browse.png` |
+| تفاصيل الغرض والحجز | حالة الغرض وإجراء الحجز | `docs/screenshots/booking.png` |
+| المحادثة | تنسيق التسليم بين الطرفين | `docs/screenshots/chat.png` |
+| لوحة المتبرع | متابعة الأغراض والحجوزات | `docs/screenshots/donor-dashboard.png` |
+| لوحة الإدارة | الإشراف والبلاغات والإعدادات | `docs/screenshots/admin-dashboard.png` |
+
+<!--
+بعد رفع الصور، أخرج أسطر الصور المطلوبة من هذا التعليق لتظهر في GitHub.
+استخدم بيانات عرض خالية من معلومات المستخدمين الشخصية.
+
+![استكشاف الأغراض في منصة عون](docs/screenshots/browse.png)
+![تفاصيل الغرض والحجز](docs/screenshots/booking.png)
+![محادثة لتنسيق التسليم](docs/screenshots/chat.png)
+![لوحة المتبرع ومتابعة الحجوزات](docs/screenshots/donor-dashboard.png)
+![لوحة الإدارة والإشراف](docs/screenshots/admin-dashboard.png)
+-->
 
 ## المتطلبات
 
@@ -213,3 +316,7 @@ Start Command: npm run worker
 transactions مع قفل كتابة داخلي على المستخدم. لذلك يجب أن يكون `MONGO_URI`
 متصلًا بـAtlas أو Replica Set. الحقل الداخلي `operationVersion` يُنشأ تلقائيًا
 عند أول عملية ولا يحتاج backfill أو migration بيانات منفصلة.
+
+## التطوير والتواصل
+
+طوّر المشروع [أدهم أبو حجر — Adham Abu Hager](https://github.com/abuhager). لاستكشاف تجربة المستخدم راجع [مستودع الواجهة](https://github.com/abuhager/Aoun-Project_FrontEnd)، وللاستفسار عن التعاون: [aoun.help.center@gmail.com](mailto:aoun.help.center@gmail.com).
