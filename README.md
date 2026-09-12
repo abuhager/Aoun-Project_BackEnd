@@ -19,6 +19,8 @@
 
 > حالة المشروع: MVP منشور يستهدف تجربة Pilot محدودة. تعرض شارة CI أعلاه حالة سير العمل؛ نجاحها لا يغني عن التحقق التشغيلي قبل التجربة. بيانات Demo مخصصة للاختبار والعرض ولا تمثل مستخدمين أو شراكات حقيقية.
 
+![الصفحة الرئيسية لمنصة عون](https://raw.githubusercontent.com/abuhager/Aoun-Project_FrontEnd/main/docs/screenshots/hero.webp)
+
 ## المشكلة والحل
 
 عندما تتوزع عروض التبرع وطلبات الاحتياج بين منشورات ومحادثات منفصلة، يصبح تتبع توفر الغرض والحجز والتسليم أصعب على الأطراف والجهات المشرفة.
@@ -99,34 +101,28 @@ flowchart TD
 - **التواصل الفوري:** يستخدم Socket.IO المصادقة وصلاحيات المحادثات؛ يضاف Redis adapter عند التشغيل الموزع وفق إعدادات الإنتاج.
 - **نطاق الرسم:** يركز على البيانات والبريد؛ تبقى تفاصيل Cloudinary وبقية المهام المجدولة في الكود ووثائق التشغيل.
 
-## لقطات الشاشة
+## المنتج الذي يخدمه هذا الـ API
 
-مساحة جاهزة لإضافة صور فعلية من بيئة العرض. أضف الصور إلى `docs/screenshots/` في هذا المستودع، أو استبدل المسارات بروابط الصور.
+الـBackend يدعم رحلة المنتج كاملة من عرض الغرض والحجز وحتى التواصل والإشراف. اللقطات التالية مأخوذة من بيئة العرض ببيانات Demo.
 
-| اللقطة | ما الذي توضحه؟ | المسار المقترح |
-| --- | --- | --- |
-| استكشاف الأغراض | التصفح والبحث والتصفية | `docs/screenshots/browse.png` |
-| تفاصيل الغرض والحجز | حالة الغرض وإجراء الحجز | `docs/screenshots/booking.png` |
-| المحادثة | تنسيق التسليم بين الطرفين | `docs/screenshots/chat.png` |
-| لوحة المتبرع | متابعة الأغراض والحجوزات | `docs/screenshots/donor-dashboard.png` |
-| لوحة الإدارة | الإشراف والبلاغات والإعدادات | `docs/screenshots/admin-dashboard.png` |
+### الحجز
 
-<!--
-بعد رفع الصور، أخرج أسطر الصور المطلوبة من هذا التعليق لتظهر في GitHub.
-استخدم بيانات عرض خالية من معلومات المستخدمين الشخصية.
+![تفاصيل الغرض والحجز](https://raw.githubusercontent.com/abuhager/Aoun-Project_FrontEnd/main/docs/screenshots/booking.webp)
 
-![استكشاف الأغراض في منصة عون](docs/screenshots/browse.png)
-![تفاصيل الغرض والحجز](docs/screenshots/booking.png)
-![محادثة لتنسيق التسليم](docs/screenshots/chat.png)
-![لوحة المتبرع ومتابعة الحجوزات](docs/screenshots/donor-dashboard.png)
-![لوحة الإدارة والإشراف](docs/screenshots/admin-dashboard.png)
--->
+### المحادثة المرتبطة بالمعاملة
+
+![محادثة عون](https://raw.githubusercontent.com/abuhager/Aoun-Project_FrontEnd/main/docs/screenshots/chat.webp)
+
+### الإشراف الإداري
+
+![لوحة إدارة عون](https://raw.githubusercontent.com/abuhager/Aoun-Project_FrontEnd/main/docs/screenshots/admin-dashboard.webp)
+
+> توجد الجولة المرئية الكاملة وصور الواجهة الأخرى في [مستودع الـFrontend](https://github.com/abuhager/Aoun-Project_FrontEnd).
 
 ## المتطلبات
 
 - Node.js 20.19 أو أحدث.
-- MongoDB Atlas أو MongoDB يعمل كـReplica Set؛ معاملات الحصص والحجز لا تدعم
-  خادم MongoDB محليًا بوضع Standalone.
+- MongoDB Atlas أو MongoDB يعمل كـReplica Set؛ معاملات الحصص والحجز لا تدعم خادم MongoDB محليًا بوضع Standalone.
 - Cloudinary لرفع الصور.
 - Brevo للتحقق من البريد واستعادة كلمة المرور.
 - Redis مُدار لتثبيت Rate Limiting وإدخاله ضمن readiness عند ضبط `REDIS_REQUIRED=true`.
@@ -151,9 +147,7 @@ BREVO_API_KEY=replace-with-your-brevo-key
 PLATFORM_EMAIL=replace-with-a-verified-sender@example.com
 ```
 
-في `NODE_ENV=development` يعمل عامل Outbox المدمج تلقائيًا بنمط `single` حتى لو لم تضع
-`RUNTIME_TOPOLOGY` و`OUTBOX_WORKER_REQUIRED`. إذا ضبطت أحدهما صراحةً على
-`distributed` أو `false`، شغّل العامل في نافذة ثانية باستخدام `npm run worker:dev`.
+في `NODE_ENV=development` يعمل عامل Outbox المدمج تلقائيًا بنمط `single` حتى لو لم تضع `RUNTIME_TOPOLOGY` و`OUTBOX_WORKER_REQUIRED`. إذا ضبطت أحدهما صراحةً على `distributed` أو `false`، شغّل العامل في نافذة ثانية باستخدام `npm run worker:dev`.
 عند رفض Brevo للطلب سيظهر في الطرفية رمز واضح مثل `EMAIL_HTTP_401` بدل نجاح صامت.
 
 ### مستوى الثقة للحسابات الجديدة
@@ -265,18 +259,14 @@ Build Command: npm ci && npm run build
 Start Command: npm start
 ```
 
-مع `RUNTIME_TOPOLOGY=single` يعمل Outbox Worker داخل Web Service نفسه، وهذا يناسب
-خدمة Render واحدة. عند استخدام `RUNTIME_TOPOLOGY=distributed` فقط، أضف Background
-Worker مستقلًا من نفس المستودع:
+مع `RUNTIME_TOPOLOGY=single` يعمل Outbox Worker داخل Web Service نفسه، وهذا يناسب خدمة Render واحدة. عند استخدام `RUNTIME_TOPOLOGY=distributed` فقط، أضف Background Worker مستقلًا من نفس المستودع:
 
 ```text
 Build Command: npm ci && npm run build
 Start Command: npm run worker
 ```
 
-- استخدم `RUNTIME_TOPOLOGY=single` و`WEB_CONCURRENCY=1` لنسخة واحدة. للتوسع
-  الأفقي استخدم `RUNTIME_TOPOLOGY=distributed` مع `REDIS_REQUIRED=true`؛ عندها
-  يعمل Socket.IO Redis adapter وdistributed invalidation وCron leadership.
+- استخدم `RUNTIME_TOPOLOGY=single` و`WEB_CONCURRENCY=1` لنسخة واحدة. للتوسع الأفقي استخدم `RUNTIME_TOPOLOGY=distributed` مع `REDIS_REQUIRED=true`؛ عندها يعمل Socket.IO Redis adapter وdistributed invalidation وCron leadership.
 - يبدأ HTTP فقط بعد نجاح اتصال MongoDB وتهيئة Cron Jobs. فشل jobs لم يعد يسمح بخادم يبدو جاهزًا.
 - اضبط `OUTBOX_WORKER_REQUIRED=true` و`OUTBOX_ENCRYPTION_KEY` ثابتًا من 32 بايت. في نمط `single` يشغّل Web العامل المدمج؛ وفي `distributed` يجب أن تتطابق القيمة على Web وWorker المستقل. بريد OTP واستعادة كلمة المرور والتنبيهات الإدارية الحرجة يُحفظ مشفرًا مع تغيير قاعدة البيانات داخل transaction واحدة، ثم يرسله Worker مع retry وdead-letter state.
 - `/health/ready` يفحص MongoDB وRedis وجدولة background jobs وheartbeat عامل Outbox عندما تكون مطلوبة، بينما `/health/live` يثبت فقط أن عملية Web تعمل.
@@ -287,8 +277,7 @@ Start Command: npm run worker
 - راجع سياسات الخصوصية والشروط قانونيًا قبل أي تبنٍ مؤسسي واسع.
 
 خطوات النشر والفحص والاسترجاع موثقة في [Production Runbook](docs/PRODUCTION-RUNBOOK.md).
-وحالة تنفيذ كل بند من المراجعة موثقة في
-[Review Remediation Status](docs/REVIEW-REMEDIATION-STATUS.md).
+وحالة تنفيذ كل بند من المراجعة موثقة في [Review Remediation Status](docs/REVIEW-REMEDIATION-STATUS.md).
 
 ### تحقق CI الحقيقي
 
@@ -296,26 +285,18 @@ Start Command: npm run worker
 
 ### ترحيل الفهارس بأمان
 
-تعريفات الفهارس داخل `models/` هي المصدر الوحيد للحقيقة. التشغيل العادي في الإنتاج
-لا ينشئ أو يحذف فهارس تلقائيًا، لذلك نفّذ الترحيل مرة واحدة قبل تفعيل بوابة التشغيل:
+تعريفات الفهارس داخل `models/` هي المصدر الوحيد للحقيقة. التشغيل العادي في الإنتاج لا ينشئ أو يحذف فهارس تلقائيًا، لذلك نفّذ الترحيل مرة واحدة قبل تفعيل بوابة التشغيل:
 
 1. خذ نسخة احتياطية حديثة من قاعدة الإنتاج، ويفضّل التنفيذ في نافذة صيانة.
-2. شغّل `npm run db:indexes` مع `MONGO_URI` الخاص بالإنتاج. تفحص المهمة التكرارات
-   قبل إنشاء الفهارس الفريدة، وتتوقف من دون طباعة قيم البيانات المتكررة.
+2. شغّل `npm run db:indexes` مع `MONGO_URI` الخاص بالإنتاج. تفحص المهمة التكرارات قبل إنشاء الفهارس الفريدة، وتتوقف من دون طباعة قيم البيانات المتكررة.
 3. شغّل `npm run db:indexes:verify` للتأكد من تطابق القاعدة مع جميع الـschemas.
 4. اضبط `MONGO_INDEXES_REQUIRED=true` و`MONGO_SYNC_INDEXES_ON_STARTUP=false` في الإنتاج.
 
-إذا أبلغت المهمة عن بيانات مكررة، لا تحذف شرط `unique` ولا تجبر النشر. أوقف
-الترحيل ونظّف السجلات المتعارضة يدويًا ثم أعد المحاولة. لا تفعّل
-`MONGO_SYNC_INDEXES_ON_STARTUP=true` بشكل دائم في الإنتاج؛ المزامنة عملية ترحيل
-مقصودة، بينما بوابة التشغيل تستخدم فحصًا للقراءة فقط.
+إذا أبلغت المهمة عن بيانات مكررة، لا تحذف شرط `unique` ولا تجبر النشر. أوقف الترحيل ونظّف السجلات المتعارضة يدويًا ثم أعد المحاولة. لا تفعّل `MONGO_SYNC_INDEXES_ON_STARTUP=true` بشكل دائم في الإنتاج؛ المزامنة عملية ترحيل مقصودة، بينما بوابة التشغيل تستخدم فحصًا للقراءة فقط.
 
 ### حماية الحدود من الطلبات المتزامنة
 
-إنشاء الأغراض والطلبات والعروض والحجز وترقية قائمة الانتظار تستخدم MongoDB
-transactions مع قفل كتابة داخلي على المستخدم. لذلك يجب أن يكون `MONGO_URI`
-متصلًا بـAtlas أو Replica Set. الحقل الداخلي `operationVersion` يُنشأ تلقائيًا
-عند أول عملية ولا يحتاج backfill أو migration بيانات منفصلة.
+إنشاء الأغراض والطلبات والعروض والحجز وترقية قائمة الانتظار تستخدم MongoDB transactions مع قفل كتابة داخلي على المستخدم. لذلك يجب أن يكون `MONGO_URI` متصلًا بـAtlas أو Replica Set. الحقل الداخلي `operationVersion` يُنشأ تلقائيًا عند أول عملية ولا يحتاج backfill أو migration بيانات منفصلة.
 
 ## التطوير والتواصل
 
