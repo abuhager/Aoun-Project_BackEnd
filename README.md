@@ -1,6 +1,8 @@
-# عون — Aoun Backend
+# عون | Aoun Backend
 
-**الخادم الخلفي لمنصة عون لطلب وتنسيق التبرعات العينية**
+**REST API وخدمات الـBackend لمنصة عون لتنسيق التبرعات العينية.**
+
+يوفر هذا المستودع منطق الأعمال، المصادقة والصلاحيات، الوصول إلى البيانات، الحجز وطلبات الاحتياج، المحادثات الفورية، الإشعارات والعمليات الإدارية التي تعتمد عليها واجهة عون.
 
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
 ![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
@@ -13,291 +15,315 @@
 
 [![Backend CI](https://github.com/abuhager/Aoun-Project_BackEnd/actions/workflows/ci.yml/badge.svg)](https://github.com/abuhager/Aoun-Project_BackEnd/actions/workflows/ci.yml)
 
-[تجربة المنصة](https://aoun-project-theta.vercel.app/) · [مستودع الواجهة](https://github.com/abuhager/Aoun-Project_FrontEnd) · [فحص حياة الخدمة](https://aoun-project-backend.onrender.com/health/live)
+## روابط المشروع
 
-خدمة REST وSocket.IO لمنصة **عون**، وهي منصة عربية لتنظيم التبرعات العينية وطلبات الاحتياج والحجز والتسليم والمحادثات والإشراف.
+- **Frontend Repository:** https://github.com/abuhager/Aoun-Project_FrontEnd
+- **Live Application:** https://aoun-project-theta.vercel.app/
+- **Backend Health Check:** https://aoun-project-backend.onrender.com/health/live
 
-> حالة المشروع: MVP منشور يستهدف تجربة Pilot محدودة. تعرض شارة CI أعلاه حالة سير العمل؛ نجاحها لا يغني عن التحقق التشغيلي قبل التجربة. بيانات Demo مخصصة للاختبار والعرض ولا تمثل مستخدمين أو شراكات حقيقية.
+> المشروع MVP منشور. بيانات Demo المستخدمة للاختبار والعرض لا تمثل مستخدمين أو شراكات مؤسسية فعلية.
 
-![الصفحة الرئيسية لمنصة عون](https://raw.githubusercontent.com/abuhager/Aoun-Project_FrontEnd/main/docs/screenshots/hero.webp)
+## نظرة معمارية
 
-## المشكلة والحل
+يتبع المشروع فصلًا واضحًا للمسؤوليات:
 
-عندما تتوزع عروض التبرع وطلبات الاحتياج بين منشورات ومحادثات منفصلة، يصبح تتبع توفر الغرض والحجز والتسليم أصعب على الأطراف والجهات المشرفة.
+```text
+HTTP Request
+    ↓
+Route
+    ↓
+Middleware
+    ↓
+Controller
+    ↓
+Service
+    ↓
+Repository
+    ↓
+MongoDB
+```
 
-تجمع **عون** هذه الخطوات في رحلة واحدة: عرض أو طلب، ثم حجز وتواصل وتسليم وتقييم، مع صلاحيات واضحة وإشراف إداري. تركز المنصة على **التبرعات العينية**، ولا تجمع تبرعات مالية أو تنفذ عمليات دفع.
+- **Routes:** تعريف endpoints وربط middleware والـcontrollers.
+- **Middlewares:** المصادقة، validation، rate limiting، الرفع ومعالجة جوانب الطلب المشتركة.
+- **Controllers:** طبقة HTTP وإدارة request/response وcookies.
+- **DTOs:** تحديد حدود البيانات الداخلة والخارجة.
+- **Services:** تنفيذ use cases وقواعد الأعمال.
+- **Repositories:** عزل استعلامات البيانات المتكررة عن منطق الأعمال.
+- **Models:** نماذج Mongoose.
+- **Transactions:** العمليات التي تحتاج إلى اتساق بين عدة مستندات تستخدم MongoDB transactions.
 
-| الطرف | القيمة التي تقدمها عون |
-| --- | --- |
-| المتبرع | عرض الأغراض ومتابعة الحجز والتواصل حتى التسليم |
-| طالب الاحتياج | تصفح الأغراض أو نشر طلب ومتابعة الاستجابة |
-| الجهة المشرفة | إدارة البلاغات والإعدادات ومراجعة النشاط من لوحة موحدة |
-
-## ما الذي يقدمه الخادم؟
-
-- مصادقة آمنة وصلاحيات متعددة مع Access/Refresh tokens وتدوير رموز التجديد.
-- دورة كاملة للأغراض والطلبات والعروض والحجز وقائمة الانتظار والتسليم والتقييم.
-- محادثات وإشعارات فورية، وإشراف وبلاغات واعتراضات وسجل إداري.
-- معاملات MongoDB للعمليات الحساسة وفهارس مدارة وأدوات تدقيق وترحيل آمنة.
-- Durable Outbox مشفر للبريد الحرج مع retry وdead-letter handling.
-- إعدادات ديناميكية، Rate Limiting، health checks، metrics اختيارية، واختبارات آلية.
-
-## التقنيات والقرارات الهندسية
-
-| الطبقة | التقنيات | الغرض |
-| --- | --- | --- |
-| اللغة والتشغيل | TypeScript، Native ESM، Node.js | فحص الأنواع وبناء نسخة تشغيل داخل `dist/` |
-| واجهات الخدمة | Express 5، Socket.IO | REST والتواصل الفوري |
-| البيانات | MongoDB، Mongoose | نمذجة البيانات والمعاملات والفهارس |
-| حدود الطلبات | Redis، express-rate-limit | حفظ عدادات التقييد المشتركة عند تفعيل Redis |
-| التكاملات | Brevo، Cloudinary | البريد الإلكتروني ورفع الصور |
-| التحقق والتشغيل | Node Test Runner، GitHub Actions، Render | الاختبارات والبناء والنشر |
-
-## المعمارية وتدفق البيانات
-
-يوضح المخطط مسار HTTP والتواصل الفوري، ومسار حفظ البريد الحرج وإرساله في الخلفية. MongoDB هو مخزن الـOutbox؛ يستخدم Redis لتقييد الطلبات، وليس لتخزين طابور البريد في هذا التصميم.
+### نظرة على البنية التشغيلية
 
 ```mermaid
 flowchart TD
-    client["Next.js Client"]
-    api["Express API"]
-    socket["Socket.IO"]
-    redis[("Redis Rate Limiting")]
-    services["Services and Repositories"]
+    FE["Next.js Frontend"]
+    API["Express REST API"]
+    SOCKET["Socket.IO"]
+    MW["Middleware"]
+    SERVICE["Services"]
+    REPO["Repositories"]
+    REDIS[("Redis")]
+    MONGO[("MongoDB")]
+    OUTBOX[("Durable Outbox")]
+    WORKER["Outbox Worker"]
+    BREVO["Brevo"]
+    CLOUDINARY["Cloudinary"]
 
-    subgraph persistence["MongoDB - Replica Set"]
-        tx["MongoDB Transactions"]
-        data[("Business Data")]
-        outbox[("Encrypted Durable Outbox")]
-        tx -->|"Atomic write"| data
-        tx -->|"Critical email event"| outbox
-    end
-
-    worker["Durable Outbox Worker"]
-    brevo["Brevo Email API"]
-
-    client -->|"HTTPS / REST"| api
-    client <-->|"Authenticated events"| socket
-    api <-->|"Request counters"| redis
-    api --> services
-    socket --> services
-    services -->|"Sensitive operations"| tx
-    services -->|"Other reads and writes"| data
-    outbox -->|"Claim pending event"| worker
-    worker -->|"Send email"| brevo
-    worker -->|"Complete / Retry / Dead-letter"| outbox
-
-    classDef app fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e
-    classDef storage fill:#dcfce7,stroke:#16a34a,color:#14532d
-    classDef background fill:#fef3c7,stroke:#d97706,color:#78350f
-    class client,api,socket,services app
-    class redis,tx,data,outbox storage
-    class worker,brevo background
+    FE -->|HTTPS| API
+    FE <-->|Realtime| SOCKET
+    API --> MW
+    MW --> SERVICE
+    SOCKET --> SERVICE
+    SERVICE --> REPO
+    REPO --> MONGO
+    API <-->|Rate limiting| REDIS
+    SERVICE --> OUTBOX
+    OUTBOX --> WORKER
+    WORKER --> BREVO
+    SERVICE --> CLOUDINARY
 ```
 
-- **اتساق البيانات:** تُنفّذ العمليات الحساسة داخل معاملات MongoDB؛ يُحفظ حدث البريد الحرج مع تغيير البيانات داخل المعاملة نفسها.
-- **الإرسال الخلفي:** يلتقط العامل الحدث المحفوظ، ويفك تشفير محتواه ويرسله عبر Brevo، ثم يسجل النجاح أو إعادة المحاولة أو حالة الفشل النهائي.
-- **التشغيل:** يعمل العامل مدمجًا في نمط `single`، أو مستقلًا في نمط `distributed`.
-- **التواصل الفوري:** يستخدم Socket.IO المصادقة وصلاحيات المحادثات؛ يضاف Redis adapter عند التشغيل الموزع وفق إعدادات الإنتاج.
-- **نطاق الرسم:** يركز على البيانات والبريد؛ تبقى تفاصيل Cloudinary وبقية المهام المجدولة في الكود ووثائق التشغيل.
+في العمليات الحساسة يمكن تنفيذ أكثر من تعديل داخل MongoDB transaction، بينما يستخدم Durable Outbox لفصل بعض التأثيرات الخارجية عن المعاملة الأساسية وإعادة محاولة تنفيذها عند الحاجة.
 
-## المنتج الذي يخدمه هذا الـ API
+## المجالات الرئيسية
 
-الـBackend يدعم رحلة المنتج كاملة من عرض الغرض والحجز وحتى التواصل والإشراف. اللقطات التالية مأخوذة من بيئة العرض ببيانات Demo.
+| المجال | المسؤولية |
+|---|---|
+| Authentication | التسجيل، تسجيل الدخول، OTP، refresh/logout، استعادة كلمة المرور والملف الشخصي |
+| Items | عرض الأغراض، إنشاؤها، تعديلها، الحجز وقائمة الانتظار والتسليم |
+| Donation Requests | إنشاء طلبات الاحتياج وإدارة العروض والاستجابات |
+| Conversations | إنشاء المحادثات، قراءة التاريخ وتحديث حالة القراءة |
+| Realtime | إرسال الرسائل والأحداث الفورية عبر Socket.IO |
+| Notifications | إدارة إشعارات المستخدم |
+| Ratings | تقييم الأطراف بعد العمليات المدعومة |
+| Reports | البلاغات ومتابعتها |
+| Hubs | نقاط/مراكز التسليم المستخدمة في رحلة التبرع |
+| Leaderboard | بيانات لوحة الترتيب |
+| Settings | إعدادات التشغيل العامة |
+| Admin | الإدارة والإشراف والتحكم بالوظائف الإدارية |
+| Phone Verification | مسار التحقق الهاتفي عند تفعيل الميزة |
 
-### الحجز
+## قرارات تقنية
 
-![تفاصيل الغرض والحجز](https://raw.githubusercontent.com/abuhager/Aoun-Project_FrontEnd/main/docs/screenshots/booking.webp)
+### TypeScript + Native ESM
 
-### المحادثة المرتبطة بالمعاملة
+المشروع مكتوب بـTypeScript ويستخدم Native ESM، ويتم بناء ملفات التشغيل إلى `dist/`.
 
-![محادثة عون](https://raw.githubusercontent.com/abuhager/Aoun-Project_FrontEnd/main/docs/screenshots/chat.webp)
+### Service / Repository separation
 
-### الإشراف الإداري
+منطق HTTP منفصل عن use cases واستعلامات قاعدة البيانات، مما يقلل اقتران Controllers مباشرة بـMongoose ويسهّل اختبار منطق الأعمال وتطويره.
 
-![لوحة إدارة عون](https://raw.githubusercontent.com/abuhager/Aoun-Project_FrontEnd/main/docs/screenshots/admin-dashboard.webp)
+### DTO boundaries
 
-> توجد الجولة المرئية الكاملة وصور الواجهة الأخرى في [مستودع الـFrontend](https://github.com/abuhager/Aoun-Project_FrontEnd).
+يحتوي المشروع على طبقة DTOs لتحديد شكل البيانات عند حدود النظام بدل تمرير Mongoose documents مباشرة إلى الواجهة.
+
+### MongoDB Transactions
+
+تستخدم العمليات التي تحتاج إلى تحديث حقائق مترابطة آلية transaction موحدة للحفاظ على اتساق البيانات.
+
+### Socket.IO
+
+المحادثات ليست REST polling فقط. يتم استخدام Socket.IO للرسائل والأحداث الفورية، بينما يوفر REST قراءة سجل المحادثة وإدارة حالتها.
+
+### Durable Outbox
+
+توجد آلية Outbox لمعالجة تأثيرات خارجية حرجة خارج المسار الأساسي للطلب، مع Worker ومعالجة retry/failure.
+
+### Redis
+
+يستخدم Redis لدعم rate limiting المشترك، كما يدعم المشروع Redis adapter لـSocket.IO عند الحاجة إلى تشغيل موزع.
+
+### Validation
+
+تستخدم طبقة validation مركزية، ويستخدم المشروع Joi للتحقق من البيانات.
+
+### Integrations
+
+- **Cloudinary:** تخزين الصور المرفوعة.
+- **Brevo:** إرسال البريد الإلكتروني.
+- **Firebase Admin:** دعم مسار Phone Verification عند تفعيله.
 
 ## المتطلبات
 
-- Node.js 20.19 أو أحدث.
-- MongoDB Atlas أو MongoDB يعمل كـReplica Set؛ معاملات الحصص والحجز لا تدعم خادم MongoDB محليًا بوضع Standalone.
-- Cloudinary لرفع الصور.
-- Brevo للتحقق من البريد واستعادة كلمة المرور.
-- Redis مُدار لتثبيت Rate Limiting وإدخاله ضمن readiness عند ضبط `REDIS_REQUIRED=true`.
-- عامل Outbox مدمج عند تشغيل خدمة واحدة، أو Worker مستقل عند التشغيل الموزع.
+- Node.js `>= 20.19.0`
+- npm
+- MongoDB يدعم transactions للعمليات التي تعتمد عليها
+- إعدادات Cloudinary للوظائف التي ترفع الصور
+- إعدادات Brevo للوظائف التي ترسل البريد
+- Redis عند ضبط بيئة التشغيل بحيث يكون مطلوبًا
 
 ## التشغيل المحلي
 
 ```bash
+git clone https://github.com/abuhager/Aoun-Project_BackEnd.git
+cd Aoun-Project_BackEnd
 npm ci
+```
+
+أنشئ ملف `.env` محليًا اعتمادًا على `.env.production.example` مع استخدام قيم تطوير خاصة بك وعدم نسخ أسرار الإنتاج.
+
+ثم:
+
+```bash
 npm run dev
 ```
 
-التشغيل التطويري يستخدم `tsx` مباشرةً على ملفات TypeScript، ولا يحتاج بناء `dist` يدويًا.
-
-أنشئ `.env` محليًا واضبط MongoDB وأسرار المصادقة وOrigins المسموحة وCloudinary وBrevo. لا ترفع `.env` أو أي مفتاح أو كلمة مرور إلى Git.
-مرجع متغيرات الإنتاج غير السرية موجود في `.env.production.example`؛ استبدل كل القيم التجريبية داخل لوحة الاستضافة فقط.
-
-لإرسال رمز التحقق فعليًا أثناء التطوير، يجب أن يحتوي `.env` على مفتاح Brevo وعنوان مرسل موثّق:
-
-```env
-BREVO_API_KEY=replace-with-your-brevo-key
-PLATFORM_EMAIL=replace-with-a-verified-sender@example.com
-```
-
-في `NODE_ENV=development` يعمل عامل Outbox المدمج تلقائيًا بنمط `single` حتى لو لم تضع `RUNTIME_TOPOLOGY` و`OUTBOX_WORKER_REQUIRED`. إذا ضبطت أحدهما صراحةً على `distributed` أو `false`، شغّل العامل في نافذة ثانية باستخدام `npm run worker:dev`.
-عند رفض Brevo للطلب سيظهر في الطرفية رمز واضح مثل `EMAIL_HTTP_401` بدل نجاح صامت.
-
-### مستوى الثقة للحسابات الجديدة
-
-- القيمة الافتراضية `NEW_USER_DEFAULT_TRUST_LEVEL_2=false` تُبقي الحساب العادي الجديد في المستوى 1.
-- عند ضبطها على `true`، يبدأ **الحساب الذي يُنشأ بعد التفعيل فقط** في المستوى 2، مع بقاء التحقق من البريد إلزاميًا قبل تسجيل الدخول والحجز.
-- لا تتغير الحسابات الموجودة عند تبديل القيمة، ولا تنخفض الحسابات التي أُنشئت سابقًا بالمستوى 2 عند إعادتها إلى `false`. يستطيع المشرف لاحقًا تغيير المستوى من لوحة الإدارة.
-
-## التحقق
+للتشغيل المبني:
 
 ```bash
+npm run build
+npm start
+```
+
+### Worker
+
+```bash
+npm run worker:dev
+```
+
+وللنسخة المبنية:
+
+```bash
+npm run worker
+```
+
+الحاجة إلى تشغيله كعملية منفصلة تعتمد على `RUNTIME_TOPOLOGY` وإعدادات Outbox؛ في topology أحادي يمكن تشغيل العامل ضمن خدمة الويب.
+
+## متغيرات البيئة
+
+ملف `.env.production.example` هو المرجع الأساسي لإعدادات الإنتاج.
+
+| التصنيف | المتغيرات الرئيسية | الوظيفة |
+|---|---|---|
+| Server | `NODE_ENV`, `PORT`, `RUNTIME_TOPOLOGY`, `WEB_CONCURRENCY`, `BACKGROUND_JOBS_REQUIRED` | إعداد عملية الخادم والمهام الخلفية |
+| Observability | `METRICS_ENABLED`, `METRICS_TOKEN` | تفعيل وحماية المقاييس |
+| Database | `MONGO_URI`, `MONGO_AUTO_INDEX`, `MONGO_SYNC_INDEXES_ON_STARTUP`, `MONGO_INDEXES_REQUIRED` | الاتصال بـMongoDB وإدارة الفهارس |
+| Redis | `REDIS_URL`, `REDIS_REQUIRED` | Redis واشتراطه في بيئة التشغيل |
+| Auth | `JWT_SECRET`, `JWT_REFRESH_SECRET`, `COOKIE_SECRET`, `OTP_PEPPER`, `JWT_ACCESS_EXPIRE`, `JWT_REFRESH_EXPIRE` | التوقيع والجلسات وحماية OTP |
+| Client / CORS | `ALLOWED_ORIGINS`, `CLIENT_URL` | Origins وعنوان الواجهة |
+| Storage | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | رفع الصور |
+| Email | `BREVO_API_KEY`, `PLATFORM_EMAIL` | إرسال البريد |
+| Outbox | `OUTBOX_WORKER_REQUIRED`, `OUTBOX_ENCRYPTION_KEY`, `OUTBOX_POLL_MS`, `OUTBOX_LOCK_TIMEOUT_MS`, `OUTBOX_BATCH_SIZE`, `OUTBOX_HEARTBEAT_MAX_AGE_MS` | تشغيل وضبط Durable Outbox |
+| Phone Verification | `PHONE_VERIFICATION_ENABLED`, `PHONE_VERIFICATION_PROMOTES_TRUST`, `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` | التحقق الهاتفي عند تفعيله |
+| Product | `NEW_USER_DEFAULT_TRUST_LEVEL_2` | مستوى الثقة الابتدائي للحسابات الجديدة |
+
+> لا تضع القيم الحقيقية للأسرار داخل README أو Git.
+
+## API Overview
+
+جميع المسارات التالية تحت `/api`.
+
+| المجال | أمثلة فعلية | الوصف |
+|---|---|---|
+| Auth | `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/refresh` | المصادقة والجلسات |
+| Email verification | `POST /api/auth/verify-email`, `POST /api/auth/resend-otp` | التحقق من البريد |
+| Profile | `GET /api/auth/me`, `PUT /api/auth/me` | بيانات الحساب |
+| Items | `GET /api/items`, `POST /api/items` | عرض وإضافة الأغراض |
+| Booking | `PUT /api/items/book/:id`, `PUT /api/items/cancel/:id` | إدارة الحجز |
+| Delivery | `POST /api/items/:id/confirm-receipt`, `POST /api/items/:id/confirm-delivery` | تأكيد التسليم |
+| Donation Requests | `GET /api/donation-requests`, `POST /api/donation-requests` | طلبات الاحتياج |
+| Offers | `POST /api/donation-requests/:id/offer` | تقديم عرض على طلب |
+| Conversations | `GET /api/conversations`, `GET /api/conversations/:conversationId/messages` | المحادثات وسجل الرسائل |
+| Notifications | `/api/notifications` | إشعارات المستخدم |
+| Ratings | `/api/ratings` | التقييمات |
+| Reports | `/api/reports` | البلاغات |
+| Hubs | `/api/hubs` | نقاط التسليم |
+| Admin | `/api/admin` | العمليات الإدارية |
+| Settings | `/api/settings` | إعدادات النظام |
+
+إرسال رسالة جديدة في المحادثة يتم عبر Socket.IO؛ endpoint الرسائل في REST مخصص لقراءة التاريخ.
+
+## Scripts المهمة
+
+| الأمر | الوظيفة |
+|---|---|
+| `npm run dev` | تشغيل API في التطوير |
+| `npm run start` | تشغيل النسخة المبنية |
+| `npm run worker:dev` | تشغيل Worker باستخدام TypeScript/tsx |
+| `npm run worker` | تشغيل Worker المبني |
+| `npm run build` | بناء TypeScript |
+| `npm run typecheck` | فحص الأنواع دون build |
+| `npm test` | تشغيل الاختبارات |
+| `npm run verify` | typecheck + tests + build |
+| `npm run db:indexes` | تطبيق/ضمان indexes |
+| `npm run db:indexes:verify` | التحقق من indexes |
+| `npm run db:periods:check` | فحص backfill لفترات Donation Requests |
+| `npm run db:periods:apply` | تطبيق backfill للفترات |
+| `npm run db:orphans:audit` | تدقيق مراجع الأغراض |
+| `npm run db:search:check` | فحص backfill لبيانات البحث |
+| `npm run db:search:apply` | تطبيق backfill لبيانات البحث |
+| `npm run db:seed:mock` | إنشاء بيانات Mock |
+| `npm run perf:smoke` | تشغيل Performance Smoke Test |
+
+## الاختبارات
+
+```bash
+npm test
 npm run verify
 ```
 
-- `typecheck` و`check`: فحص أنواع TypeScript من دون إنشاء ملفات.
-- `test`: اختبارات العقود والمسارات والأمان والانحدار.
-- `build`: يبني JavaScript القابل للتشغيل داخل `dist/`.
-- `verify`: يشغّل فحص الأنواع والاختبارات ونسخة الإنتاج بالتتابع.
-- `db:indexes`: يزامن فهارس MongoDB المطلوبة بعد فحص التكرارات قبل إنشاء أي فهرس فريد.
-- `db:indexes:verify`: يفحص الفهارس قراءةً فقط ولا يغيّر قاعدة البيانات.
+`verify` يجمع فحص TypeScript والاختبارات وبناء نسخة الإنتاج وفق scripts المشروع.
 
-## فحص أداء قصير وغير هدّام
+## ملاحظات أمنية
 
-```bash
-npm run perf:smoke
+- JWT-based authentication مع Access وRefresh Tokens.
+- صلاحيات على المسارات والعمليات المحمية.
+- Rate limiting عام وعلى عمليات حساسة.
+- Redis-backed limiting عند تفعيله.
+- Helmet security headers.
+- CORS مع Origins محددة.
+- التحقق المركزي من request bodies وMongoDB Object IDs.
+- تنظيف مفاتيح الإدخال الخطرة مثل `$` و`.` ومعالجة duplicate parameters.
+- حدود لأحجام JSON وURL-encoded requests.
+- التحقق من الملفات والصور المرفوعة.
+- معالجة أخطاء مركزية وعدم الاعتماد على رسائل أخطاء خام للعميل.
+- استخدام environment variables للأسرار.
+- حماية `/metrics` بواسطة token في production عند تفعيلها.
+
+هذه الضوابط تقلل المخاطر، لكنها لا تعني أن التطبيق خضع لتدقيق أمني مستقل.
+
+## Health & Observability
+
+يوفر الخادم:
+
+```text
+GET /health/live
+GET /health
+GET /health/ready
+GET /metrics
 ```
 
-يفحص قوائم الأغراض العامة على `http://127.0.0.1:5000`، بعد تشغيل Backend محليًا. لا يحتاج بيانات حساب، ولا يُرسل POST، ولا يمسح قاعدة البيانات. افتراضيًا يرسل 73 طلبًا كحد أقصى على مراحل تزامن `1,5,10,20`، ويتوقف عن بدء جولات إضافية عند الخطأ أو 429 أو تجاوز عتبة التأخير.
-
-لفحص Render من PowerShell على جهازك، مع تأكيد الخادم المقصود:
-
-```powershell
-$env:LOAD_TEST_BASE_URL="https://aoun-project-backend.onrender.com"
-$env:LOAD_TEST_CONFIRM_ORIGIN=$env:LOAD_TEST_BASE_URL
-npm run perf:smoke
-```
-
-لا تشغّل الفحص أثناء استخدام حقيقي كثيف. ظهور 429 يعني احترام فترة التقييد، وليس تعطيل Rate Limiting أو تغيير IP لتجاوزه. الفحص لا يحدد عدد المستخدمين الأقصى ولا يغطي الجلسات والمحادثات والكتابة. التفاصيل والنتائج في [تقرير الأداء](docs/PERFORMANCE-SMOKE-REPORT.md)، وخطوات تطبيق الملفات في [دليل التنظيف الأخير](docs/FINAL-CLEANUP.md).
-
-## بيانات Demo شاملة
-
-الملف `scripts/seed-mock-data.ts` يتحقق أولًا من كل سجل باستخدام Mongoose ومن سلامة العلاقات، ثم يمسح قاعدة Demo كاملة ويعيد إنشاء الإعدادات والفهارس والبيانات.
-
-يغطي الـSeed حسابات المستخدمين ونقاط التسليم والأغراض بكل حالاتها والطلبات والعروض والمحادثات والرسائل والإشعارات والتقييمات والبلاغات والاعتراضات وسجل الإدارة. يبقى حسابا الطالب والمتبرع الأساسيان بلا معاملات مسبقة حتى تعمل اختبارات QA04 عليهما.
-
-**هذا الأمر هدّام لكل بيانات القاعدة المحددة في `.env`، بما فيها `SystemSettings`. لا تستخدمه على قاعدة حقيقية أو على بيانات تريد الاحتفاظ بها.**
-
-ضع في `.env` لقاعدة Demo فقط:
-
-```env
-ALLOW_MOCK_RESET=true
-MOCK_RESET_DATABASE_NAME=اسم_قاعدة_Demo_حرفيا
-```
-
-يجب أن يطابق `MOCK_RESET_DATABASE_NAME` اسم القاعدة التي اتصل بها Mongoose حرفيًا؛ يرفض السكربت المسح عند غياب المتغير أو اختلاف الاسم.
-
-ثم شغّل:
-
-```bash
-npm run db:seed:mock
-```
-
-يعيد السكربت إنشاء:
-
-- 12 مستخدمًا، منها حسابات Demo الأربعة الأساسية.
-- 3 نقاط تسليم تجريبية و20 غرضًا تغطي `متاح/محجوز/تم التسليم/مخفي`.
-- 5 طلبات و6 عروض تغطي الحالات المستقرة في دورة الطلب.
-- 3 محادثات و7 رسائل و12 إشعارًا مقروءًا وغير مقروء.
-- تقييمًا بعد تسليم مؤكد، و3 بلاغات، و5 سجلات إدارة.
-- إعدادات النظام والفهارس المطلوبة بعد مسح القاعدة.
-
-حسابات Demo الأساسية تبقى كما هي:
-
-| الدور | البريد |
-| --- | --- |
-| المشرف | `mock.admin@aoun.test` |
-| الطالب | `mock.student@aoun.test` |
-| المتبرع | `mock.donor@aoun.test` |
-| متبرع العرض | `mock.donor2@aoun.test` |
-
-تُدار كلمة مرور Seed وحسابات العرض من بيئة الاختبار فقط. لا تضع بيانات الدخول أو الأسرار داخل ملفات المصدر أو README، ويمكن إدارة إظهار بطاقات الدخول من متغيرات بيئة الواجهة والخادم.
+تتحقق readiness من مكونات التشغيل ذات الصلة مثل قاعدة البيانات وRedis والمهام الخلفية والـOutbox Worker وفق إعدادات البيئة.
 
 ## بنية المشروع
 
 ```text
-app.ts / server.ts       تركيب Express وتشغيل HTTP وSocket.IO
-worker.ts                تشغيل عامل Outbox المستقل
-config/                  البيئة وMongoDB وCORS وCloudinary
-controllers/             معالجة طلبات HTTP
-dtos/                    عقود الاستجابة الآمنة للخصوصية
-integrations/            خدمات الطرف الثالث
-jobs/                    المهام المجدولة
-middlewares/             المصادقة والتحقق والأمان والرفع
-models/                  مخططات Mongoose
-repositories/            الوصول إلى البيانات
-routes/                  مسارات REST
-services/                قواعد العمل
-socket/                  المصادقة والمحادثات الفورية
-test/                    اختبارات التدفق والانحدار
-utils/                   أدوات مشتركة
+controllers/     # HTTP controllers
+routes/          # REST routes
+middlewares/     # Auth, validation, rate limiting وغيرها
+services/        # Business use cases
+repositories/    # Data-access layer
+models/          # Mongoose models
+dtos/            # Input/output boundaries
+socket/          # Realtime / Socket.IO
+jobs/            # Background jobs
+integrations/    # External service adapters
+config/          # Configuration
+utils/           # Shared infrastructure utilities
+scripts/         # DB/backfill/performance scripts
+contracts/       # Shared machine-readable contracts
+docs/            # Architecture and production documentation
+test/            # Automated tests
 ```
 
-## الإنتاج
+## وثائق إضافية
 
-إعدادات Render المقترحة بعد انتقال الخادم إلى TypeScript:
+يحتوي `docs/` على وثائق تقنية إضافية، منها:
 
-```text
-Build Command: npm ci && npm run build
-Start Command: npm start
-```
+- `ARCHITECTURE-BOUNDARIES.md`
+- `PRODUCTION-RUNBOOK.md`
+- `PRIVACY-DATA-MAP.md`
+- `PERFORMANCE-SMOKE-REPORT.md`
+- `ITEM-DELETION-POLICY.md`
 
-مع `RUNTIME_TOPOLOGY=single` يعمل Outbox Worker داخل Web Service نفسه، وهذا يناسب خدمة Render واحدة. عند استخدام `RUNTIME_TOPOLOGY=distributed` فقط، أضف Background Worker مستقلًا من نفس المستودع:
-
-```text
-Build Command: npm ci && npm run build
-Start Command: npm run worker
-```
-
-- استخدم `RUNTIME_TOPOLOGY=single` و`WEB_CONCURRENCY=1` لنسخة واحدة. للتوسع الأفقي استخدم `RUNTIME_TOPOLOGY=distributed` مع `REDIS_REQUIRED=true`؛ عندها يعمل Socket.IO Redis adapter وdistributed invalidation وCron leadership.
-- يبدأ HTTP فقط بعد نجاح اتصال MongoDB وتهيئة Cron Jobs. فشل jobs لم يعد يسمح بخادم يبدو جاهزًا.
-- اضبط `OUTBOX_WORKER_REQUIRED=true` و`OUTBOX_ENCRYPTION_KEY` ثابتًا من 32 بايت. في نمط `single` يشغّل Web العامل المدمج؛ وفي `distributed` يجب أن تتطابق القيمة على Web وWorker المستقل. بريد OTP واستعادة كلمة المرور والتنبيهات الإدارية الحرجة يُحفظ مشفرًا مع تغيير قاعدة البيانات داخل transaction واحدة، ثم يرسله Worker مع retry وdead-letter state.
-- `/health/ready` يفحص MongoDB وRedis وجدولة background jobs وheartbeat عامل Outbox عندما تكون مطلوبة، بينما `/health/live` يثبت فقط أن عملية Web تعمل.
-- عند `METRICS_ENABLED=true` يوفّر `/metrics` عدادات HTTP وزمن الاستجابة وذاكرة العملية بصيغة Prometheus؛ في Production يلزم `METRICS_TOKEN` وإرساله كـBearer token.
-- استخدم HTTPS وأسرارًا طويلة ومنفصلة لكل بيئة.
-- اضبط Redis وCORS وCookie domains حسب النطاق المنشور.
-- فعّل نسخ MongoDB الاحتياطية ومراقبة الأخطاء قبل Pilot حقيقي.
-- راجع سياسات الخصوصية والشروط قانونيًا قبل أي تبنٍ مؤسسي واسع.
-
-خطوات النشر والفحص والاسترجاع موثقة في [Production Runbook](docs/PRODUCTION-RUNBOOK.md).
-وحالة تنفيذ كل بند من المراجعة موثقة في [Review Remediation Status](docs/REVIEW-REMEDIATION-STATUS.md).
-
-### تحقق CI الحقيقي
-
-يشغّل GitHub Actions الآن MongoDB كـReplica Set وRedis حقيقيًا، ثم يطبق الفهارس ويفحصها ويثبت rollback/commit لمعاملة MongoDB و`PING/PONG` من Redis قبل نجاح `verify`. الاختبار المحلي يتخطى فحص الخدمات الخارجية افتراضيًا، ويمكن تشغيله على بيئة اختبار معزولة بضبط `RUN_RUNTIME_INTEGRATION=true`.
-
-### ترحيل الفهارس بأمان
-
-تعريفات الفهارس داخل `models/` هي المصدر الوحيد للحقيقة. التشغيل العادي في الإنتاج لا ينشئ أو يحذف فهارس تلقائيًا، لذلك نفّذ الترحيل مرة واحدة قبل تفعيل بوابة التشغيل:
-
-1. خذ نسخة احتياطية حديثة من قاعدة الإنتاج، ويفضّل التنفيذ في نافذة صيانة.
-2. شغّل `npm run db:indexes` مع `MONGO_URI` الخاص بالإنتاج. تفحص المهمة التكرارات قبل إنشاء الفهارس الفريدة، وتتوقف من دون طباعة قيم البيانات المتكررة.
-3. شغّل `npm run db:indexes:verify` للتأكد من تطابق القاعدة مع جميع الـschemas.
-4. اضبط `MONGO_INDEXES_REQUIRED=true` و`MONGO_SYNC_INDEXES_ON_STARTUP=false` في الإنتاج.
-
-إذا أبلغت المهمة عن بيانات مكررة، لا تحذف شرط `unique` ولا تجبر النشر. أوقف الترحيل ونظّف السجلات المتعارضة يدويًا ثم أعد المحاولة. لا تفعّل `MONGO_SYNC_INDEXES_ON_STARTUP=true` بشكل دائم في الإنتاج؛ المزامنة عملية ترحيل مقصودة، بينما بوابة التشغيل تستخدم فحصًا للقراءة فقط.
-
-### حماية الحدود من الطلبات المتزامنة
-
-إنشاء الأغراض والطلبات والعروض والحجز وترقية قائمة الانتظار تستخدم MongoDB transactions مع قفل كتابة داخلي على المستخدم. لذلك يجب أن يكون `MONGO_URI` متصلًا بـAtlas أو Replica Set. الحقل الداخلي `operationVersion` يُنشأ تلقائيًا عند أول عملية ولا يحتاج backfill أو migration بيانات منفصلة.
-
-## التطوير والتواصل
-
-طوّر المشروع [أدهم أبو حجر — Adham Abu Hager](https://github.com/abuhager). لاستكشاف تجربة المستخدم راجع [مستودع الواجهة](https://github.com/abuhager/Aoun-Project_FrontEnd)، وللاستفسار عن التعاون: [aoun.help.center@gmail.com](mailto:aoun.help.center@gmail.com).
+هذه الملفات تكمل README بالتفاصيل التشغيلية والمعمارية التي لا تحتاج إلى وضعها كلها في الصفحة الرئيسية.
