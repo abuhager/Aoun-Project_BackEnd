@@ -1,6 +1,7 @@
 import type { ClientSession } from 'mongoose';
 import outboxRepository from '../repositories/outboxRepository.js';
 import { encryptOutboxPayload } from '../utils/outboxCrypto.js';
+import type { OutboxEventType } from '../models/OutboxEvent.js';
 
 type VerificationEmailPayload = {
   to: string;
@@ -30,13 +31,21 @@ export type RegistrationGuidanceEmailPayload = {
   name: string;
 };
 
+export type LoginAlertEmailPayload = {
+  to: string;
+  name: string;
+  occurredAt: string;
+  ipAddress: string;
+  userAgent: string;
+};
+
 export type CloudinaryDeletePayload = {
   publicId: string;
   itemId: string;
 };
 
 const enqueueEncrypted = (
-  type: 'verification_email' | 'password_reset_email' | 'critical_notification_email' | 'registration_guidance_email' | 'cloudinary_delete',
+  type: OutboxEventType,
   payload: unknown,
   idempotencyKey: string,
   session?: ClientSession | null
@@ -74,6 +83,16 @@ export const enqueueRegistrationGuidanceEmail = (
   idempotencyKey: string
 ) => enqueueEncrypted('registration_guidance_email', payload, idempotencyKey);
 
+export const enqueueLoginAlertEmail = (
+  payload: LoginAlertEmailPayload,
+  userId: unknown,
+  sessionVersion: number
+) => enqueueEncrypted(
+  'login_alert_email',
+  payload,
+  `login-alert:${String(userId)}:${sessionVersion}`
+);
+
 export const enqueueCloudinaryDelete = (
   payload: CloudinaryDeletePayload,
   session?: ClientSession | null
@@ -89,5 +108,6 @@ export default {
   enqueuePasswordResetEmail,
   enqueueCriticalNotificationEmail,
   enqueueRegistrationGuidanceEmail,
+  enqueueLoginAlertEmail,
   enqueueCloudinaryDelete,
 };

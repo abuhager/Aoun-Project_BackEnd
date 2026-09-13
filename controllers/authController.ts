@@ -65,7 +65,11 @@ export const resendOtp = asyncHandler(async (req, res) => {
 });
 
 export const login = asyncHandler(async (req, res) => {
-  const result = await authService.loginLogic(req.body as LoginInput);
+  const result = await authService.loginLogic(req.body as LoginInput, {
+    ipAddress: req.ip ?? req.socket?.remoteAddress ?? 'غير معروف',
+    userAgent: req.get('user-agent') ?? 'غير معروف',
+    occurredAt: new Date().toISOString(),
+  });
 
   if (result.statusCode === 200 && result.refreshToken) {
     setSessionCookies(res, result.refreshToken);

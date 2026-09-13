@@ -39,6 +39,11 @@ export type RegistrationInput = EmailInput & {
 };
 export type VerificationInput = EmailInput & { otp: string };
 export type LoginInput = EmailInput & { password: string };
+export type LoginSecurityContext = {
+  ipAddress: string;
+  userAgent: string;
+  occurredAt: string;
+};
 type PasswordUpdateInput = {
   currentPassword: string;
   newPassword: string;
@@ -65,6 +70,7 @@ const _rawRefreshGrace = Number.parseInt(
 const REFRESH_REUSE_GRACE_MS = Number.isInteger(_rawRefreshGrace)
   ? Math.min(Math.max(_rawRefreshGrace, 1000), 10_000)
   : 5000;
+const LOGIN_ALERT_EMAIL_ENABLED = process.env.LOGIN_ALERT_EMAIL_ENABLED !== 'false';
 
 const constantTimeHashEqual = (
   left: string | null | undefined,
@@ -390,7 +396,14 @@ export const verifyEmailLogic = async ({ email, otp }: VerificationInput) => {
   };
 };
 
-export const loginLogic = async ({ email, password }: LoginInput) => {
+export const loginLogic = async (
+  { email, password }: LoginInput,
+  securityContext: LoginSecurityContext = {
+    ipAddress: 'غير معروف',
+    userAgent: 'غير معروف',
+    occurredAt: new Date().toISOString(),
+  }
+) => {
   const user = await userRepository.findByEmailWithPassword(email);
 
   const isMatch = await bcrypt.compare(
@@ -506,6 +519,21 @@ export const loginLogic = async ({ email, password }: LoginInput) => {
 
   sessionCache.invalidate(savedSession._id);
   const accessToken = generateAccessToken(savedSession);
+
+  // التنبيه دفاع إضافي ولا يجوز أن يحوّل تسجيل دخول ناجح إلى فشل إذا تعطل البريد.
+  if (LOGIN_ALERT_EMAIL_ENABLED) {
+    try {
+      await outboxService.enqueueLoginAlertEmail({
+        to: String(savedSession.email ?? finalUser.email),
+        name: String(savedSession.name ?? finalUser.name ?? ''),
+        occurredAt: securityContext.occurredAt,
+        ipAddress: securityContext.ipAddress.slice(0, 64),
+        userAgent: securityContext.userAgent.slice(0, 512),
+      }, savedSession._id, Number(savedSession.sessionVersion ?? 0));
+    } catch {
+      console.error('[SEC-AUTH] تعذر جدولة تنبيه تسجيل الدخول');
+    }
+  }
 
   return {
     statusCode: 200,

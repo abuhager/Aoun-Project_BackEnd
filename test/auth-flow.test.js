@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+const axios = require('axios').default;
 
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'test-access-secret-that-is-long-enough-123456';
@@ -160,6 +162,95 @@ test('فهرس الهاتف فريد فقط بعد إثبات ملكية الر�
 test('قالب البريد يهرب HTML ويبني رابط reset من Origin موثوق', () => {
   assert.equal(escapeHtml('<b>Adham</b>'), '&lt;b&gt;Adham&lt;/b&gt;');
   assert.equal(getClientOrigin(), 'https://frontend.example');
+});
+
+test('تسجيل الدخول يجدول تنبيهاً أمنياً ولا يفشل إذا تعذر حفظ التنبيه', async (t) => {
+  const originals = {
+    compare: bcrypt.compare,
+    getCached: SystemSettings.getCached,
+    findByEmailWithPassword: userRepository.findByEmailWithPassword,
+    beginUserSession: userRepository.beginUserSession,
+    storeRefreshToken: userRepository.storeRefreshToken,
+    enqueueLoginAlertEmail: outboxService.enqueueLoginAlertEmail,
+  };
+  t.after(() => {
+    bcrypt.compare = originals.compare;
+    SystemSettings.getCached = originals.getCached;
+    userRepository.findByEmailWithPassword = originals.findByEmailWithPassword;
+    userRepository.beginUserSession = originals.beginUserSession;
+    userRepository.storeRefreshToken = originals.storeRefreshToken;
+    outboxService.enqueueLoginAlertEmail = originals.enqueueLoginAlertEmail;
+  });
+
+  const user = {
+    _id: '507f1f77bcf86cd799439088',
+    name: 'Security User',
+    email: 'security@example.test',
+    password: 'stored-hash',
+    role: 'user',
+    trustLevel: 1,
+    quota: 2,
+    isVerified: true,
+    isVerifiedStudent: false,
+    isBanned: false,
+    isFrozen: false,
+    sessionVersion: 4,
+  };
+  bcrypt.compare = async () => true;
+  SystemSettings.getCached = async () => ({ universityEmailDomains: [] });
+  userRepository.findByEmailWithPassword = async () => user;
+  userRepository.beginUserSession = async () => ({ ...user, sessionVersion: 5 });
+  userRepository.storeRefreshToken = async () => ({ ...user, sessionVersion: 5 });
+
+  let alertPayload = null;
+  outboxService.enqueueLoginAlertEmail = async (payload, userId, sessionVersion) => {
+    alertPayload = { payload, userId, sessionVersion };
+    throw new Error('simulated-outbox-failure');
+  };
+  t.mock.method(console, 'error', () => undefined);
+
+  const result = await authService.loginLogic({
+    email: user.email,
+    password: 'StrongPass1',
+  }, {
+    occurredAt: '2026-09-13T18:00:00.000Z',
+    ipAddress: '203.0.113.10',
+    userAgent: 'Mozilla/5.0 Chrome/140.0 Windows NT 10.0',
+  });
+
+  assert.equal(result.statusCode, 200);
+  assert.equal(alertPayload.userId, user._id);
+  assert.equal(alertPayload.sessionVersion, 5);
+  assert.equal(alertPayload.payload.to, user.email);
+  assert.equal(alertPayload.payload.ipAddress, '203.0.113.10');
+});
+
+test('قالب تنبيه الدخول يهرب بيانات الطلب ويربط بصفحة تأمين الحساب', async (t) => {
+  const savedKey = process.env.BREVO_API_KEY;
+  process.env.BREVO_API_KEY = 'test-only-key';
+  t.after(() => {
+    if (savedKey === undefined) delete process.env.BREVO_API_KEY;
+    else process.env.BREVO_API_KEY = savedKey;
+  });
+  t.mock.method(SystemSettings, 'getCached', async () => ({ platformName: 'عون' }));
+  let sentBody = null;
+  t.mock.method(axios, 'post', async (_url, body) => {
+    sentBody = body;
+    return { status: 201, data: null };
+  });
+
+  await emailService.sendLoginAlertEmail({
+    to: 'security@example.test',
+    name: '<img src=x onerror=alert(1)>',
+    occurredAt: '2026-09-13T18:00:00.000Z',
+    ipAddress: '<script>alert(1)</script>',
+    userAgent: '<svg onload=alert(1)> Chrome/140.0 Windows NT 10.0',
+  });
+
+  assert.ok(sentBody);
+  assert.doesNotMatch(sentBody.htmlContent, /<img src=x|<script>alert|<svg onload/);
+  assert.match(sentBody.htmlContent, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(sentBody.htmlContent, /https:\/\/frontend\.example\/forgot-password/);
 });
 
 test('التسجيل ببريد مفعّل يعيد الرد العام ويرسل إرشاداً دون OTP', async (t) => {

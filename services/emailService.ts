@@ -10,6 +10,14 @@ type SendEmailInput = {
   replyTo?: string;
 };
 
+type LoginAlertInput = {
+  to: string;
+  name: string;
+  occurredAt: string;
+  ipAddress: string;
+  userAgent: string;
+};
+
 const BREVO_URL = 'https://api.brevo.com/v3/smtp/email';
 
 const escapeHtml = (value: unknown) => String(value ?? '')
@@ -33,6 +41,43 @@ const getClientOrigin = () => {
     throw new Error('[emailService] CLIENT_URL يجب أن يستخدم http أو https');
   }
   return parsed.origin;
+};
+
+const describeUserAgent = (value: string): string => {
+  const userAgent = value.slice(0, 512);
+  const browser = /Edg\//.test(userAgent)
+    ? 'Microsoft Edge'
+    : /OPR\//.test(userAgent)
+      ? 'Opera'
+      : /Chrome\//.test(userAgent)
+        ? 'Google Chrome'
+        : /Firefox\//.test(userAgent)
+          ? 'Mozilla Firefox'
+          : /Safari\//.test(userAgent)
+            ? 'Safari'
+            : 'متصفح غير معروف';
+  const operatingSystem = /Windows NT/.test(userAgent)
+    ? 'Windows'
+    : /Android/.test(userAgent)
+      ? 'Android'
+      : /iPhone|iPad/.test(userAgent)
+        ? 'iPhone أو iPad'
+        : /Mac OS X/.test(userAgent)
+          ? 'macOS'
+          : /Linux/.test(userAgent)
+            ? 'Linux'
+            : 'نظام غير معروف';
+  return `${browser} على ${operatingSystem}`;
+};
+
+const formatLoginTime = (value: string): string => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'وقت غير معروف';
+  return new Intl.DateTimeFormat('ar-JO-u-nu-latn', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Amman',
+  }).format(date);
 };
 
 const send = async ({
@@ -193,6 +238,44 @@ export const sendRegistrationGuidanceEmail = async (
   });
 };
 
+export const sendLoginAlertEmail = async ({
+  to,
+  name,
+  occurredAt,
+  ipAddress,
+  userAgent,
+}: LoginAlertInput) => {
+  const platformName = await getPlatformName();
+  const safePlatform = escapeHtml(platformName);
+  const safeName = escapeHtml(name);
+  const safeTime = escapeHtml(formatLoginTime(occurredAt));
+  const safeIp = escapeHtml(ipAddress.slice(0, 64) || 'غير معروف');
+  const safeDevice = escapeHtml(describeUserAgent(userAgent));
+  const recoveryUrl = escapeHtml(`${getClientOrigin()}/forgot-password`);
+
+  await send({
+    to,
+    platformName,
+    subject: `تنبيه تسجيل دخول جديد — منصة ${platformName}`,
+    htmlContent: `
+      <div dir="rtl" style="font-family:Arial,sans-serif;max-width:520px;margin:auto;border:1px solid #e5e7eb;border-radius:12px;padding:32px;line-height:1.8;">
+        <h2 style="color:#b45309;margin-top:0;">تسجيل دخول جديد إلى حسابك</h2>
+        <p>مرحباً ${safeName}، تم تسجيل دخول ناجح إلى حسابك في ${safePlatform}.</p>
+        <div style="background:#f8fafc;border-radius:10px;padding:16px;margin:20px 0;">
+          <p style="margin:0 0 6px;"><strong>الوقت:</strong> ${safeTime}</p>
+          <p style="margin:0 0 6px;"><strong>الجهاز:</strong> ${safeDevice}</p>
+          <p style="margin:0;"><strong>عنوان IP:</strong> <span dir="ltr">${safeIp}</span></p>
+        </div>
+        <p>إذا كنت أنت من سجل الدخول، لا يلزمك فعل أي شيء.</p>
+        <p style="color:#991b1b;font-weight:bold;">إذا لم تكن أنت، غيّر كلمة المرور فوراً؛ سيؤدي ذلك إلى إبطال الجلسة الحالية.</p>
+        <div style="text-align:center;margin:24px 0;">
+          <a href="${recoveryUrl}" style="background:#b91c1c;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">تأمين الحساب</a>
+        </div>
+      </div>
+    `,
+  });
+};
+
 export { escapeHtml };
 
 export { getClientOrigin };
@@ -201,6 +284,7 @@ export default {
   sendVerificationEmail,
   sendPasswordResetEmail,
   sendRegistrationGuidanceEmail,
+  sendLoginAlertEmail,
   sendCustomEmail,
   escapeHtml,
   getClientOrigin,

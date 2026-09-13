@@ -202,7 +202,7 @@ npm run worker
 | Auth | `JWT_SECRET`, `JWT_REFRESH_SECRET`, `COOKIE_SECRET`, `OTP_PEPPER`, `JWT_ACCESS_EXPIRE`, `JWT_REFRESH_EXPIRE` | التوقيع والجلسات وحماية OTP |
 | Client / CORS | `ALLOWED_ORIGINS`, `CLIENT_URL` | Origins وعنوان الواجهة |
 | Storage | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | رفع الصور |
-| Email | `BREVO_API_KEY`, `PLATFORM_EMAIL` | إرسال البريد |
+| Email | `BREVO_API_KEY`, `PLATFORM_EMAIL`, `LOGIN_ALERT_EMAIL_ENABLED` | إرسال البريد وتنبيه تسجيل الدخول الأمني |
 | Outbox | `OUTBOX_WORKER_REQUIRED`, `OUTBOX_ENCRYPTION_KEY`, `OUTBOX_POLL_MS`, `OUTBOX_LOCK_TIMEOUT_MS`, `OUTBOX_BATCH_SIZE`, `OUTBOX_HEARTBEAT_MAX_AGE_MS` | تشغيل وضبط Durable Outbox |
 | Phone Verification | `PHONE_VERIFICATION_ENABLED`, `PHONE_VERIFICATION_PROMOTES_TRUST`, `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` | التحقق الهاتفي عند تفعيله |
 | Product | `NEW_USER_DEFAULT_TRUST_LEVEL_2` | مستوى الثقة الابتدائي للحسابات الجديدة |

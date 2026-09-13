@@ -107,6 +107,7 @@ const validateEnvironment = (env: NodeJS.ProcessEnv = process.env): {
   validateOptionalBoolean(env, 'BACKGROUND_JOBS_REQUIRED', errors);
   validateOptionalBoolean(env, 'OUTBOX_WORKER_REQUIRED', errors);
   validateOptionalBoolean(env, 'METRICS_ENABLED', errors);
+  validateOptionalBoolean(env, 'LOGIN_ALERT_EMAIL_ENABLED', errors);
 
   if (env.ALLOWED_ORIGINS) {
     try {

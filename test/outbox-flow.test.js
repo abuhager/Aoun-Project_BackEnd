@@ -47,6 +47,52 @@ test('Outbox يملك فهرس idempotency وفهارس claim وTTL', () => {
     createdAt: 1,
   });
   assert.equal(byName('completed_outbox_ttl')[1].expireAfterSeconds, 30 * 24 * 60 * 60);
+  assert.ok(OutboxEvent.OUTBOX_EVENT_TYPES?.includes?.('login_alert_email')
+    ?? OutboxEvent.schema.path('type').enumValues.includes('login_alert_email'));
+});
+
+test('عامل Outbox يسلّم تنبيه تسجيل الدخول المشفر', async (t) => {
+  const originals = {
+    claimNext: outboxRepository.claimNext,
+    complete: outboxRepository.complete,
+    fail: outboxRepository.fail,
+    sendLoginAlertEmail: emailService.sendLoginAlertEmail,
+  };
+  t.after(() => {
+    outboxRepository.claimNext = originals.claimNext;
+    outboxRepository.complete = originals.complete;
+    outboxRepository.fail = originals.fail;
+    emailService.sendLoginAlertEmail = originals.sendLoginAlertEmail;
+  });
+
+  const payload = {
+    to: 'security@example.test',
+    name: 'Security User',
+    occurredAt: '2026-09-13T18:00:00.000Z',
+    ipAddress: '203.0.113.10',
+    userAgent: 'Mozilla/5.0 Chrome/140.0 Windows NT 10.0',
+  };
+  let claimed = false;
+  let delivered = null;
+  let completed = 0;
+  outboxRepository.claimNext = async () => {
+    if (claimed) return null;
+    claimed = true;
+    return {
+      _id: 'login-alert-event',
+      type: 'login_alert_email',
+      encryptedPayload: encryptOutboxPayload(payload),
+      attempts: 1,
+      maxAttempts: 5,
+    };
+  };
+  outboxRepository.complete = async () => { completed += 1; };
+  outboxRepository.fail = async () => assert.fail('login alert delivery must not fail');
+  emailService.sendLoginAlertEmail = async (received) => { delivered = received; };
+
+  assert.equal(await outboxWorker.processOutboxBatch(), 1);
+  assert.deepEqual(delivered, payload);
+  assert.equal(completed, 1);
 });
 
 test('عامل Outbox يؤكد النجاح ويعيد جدولة الفشل دون تسريب المحتوى', async (t) => {

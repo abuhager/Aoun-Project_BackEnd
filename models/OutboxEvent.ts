@@ -5,8 +5,10 @@ export const OUTBOX_EVENT_TYPES = Object.freeze([
   'password_reset_email',
   'critical_notification_email',
   'registration_guidance_email',
+  'login_alert_email',
   'cloudinary_delete',
 ] as const);
+export type OutboxEventType = (typeof OUTBOX_EVENT_TYPES)[number];
 
 export const OUTBOX_STATUSES = Object.freeze([
   'pending',

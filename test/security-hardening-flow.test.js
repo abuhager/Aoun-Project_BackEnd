@@ -99,6 +99,14 @@ test('بيئة production تفرض HTTPS وفصل الأسرار ومدداً م
   assert.throws(
     () => validateEnvironment({
       ...secureProductionEnv(),
+      LOGIN_ALERT_EMAIL_ENABLED: 'yes',
+    }),
+    /LOGIN_ALERT_EMAIL_ENABLED/
+  );
+
+  assert.throws(
+    () => validateEnvironment({
+      ...secureProductionEnv(),
       ALLOWED_ORIGINS: 'http://frontend.example',
       CLIENT_URL: 'http://frontend.example',
     }),

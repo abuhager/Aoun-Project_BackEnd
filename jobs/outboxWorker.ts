@@ -6,6 +6,7 @@ import { sendCriticalNotificationEmail } from '../services/criticalNotificationE
 import { decryptOutboxPayload } from '../utils/outboxCrypto.js';
 import type { CriticalNotificationEmailPayload } from '../services/outboxService.js';
 import type { RegistrationGuidanceEmailPayload } from '../services/outboxService.js';
+import type { LoginAlertEmailPayload } from '../services/outboxService.js';
 import type { CloudinaryDeletePayload } from '../services/outboxService.js';
 
 type VerificationPayload = {
@@ -93,6 +94,11 @@ const deliver = async (event: ClaimedEvent) => {
       event.encryptedPayload
     );
     await emailService.sendRegistrationGuidanceEmail(payload.to, payload.name);
+    return;
+  }
+  if (event.type === 'login_alert_email') {
+    const payload = decryptOutboxPayload<LoginAlertEmailPayload>(event.encryptedPayload);
+    await emailService.sendLoginAlertEmail(payload);
     return;
   }
   if (event.type === 'cloudinary_delete') {
