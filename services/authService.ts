@@ -70,7 +70,20 @@ const _rawRefreshGrace = Number.parseInt(
 const REFRESH_REUSE_GRACE_MS = Number.isInteger(_rawRefreshGrace)
   ? Math.min(Math.max(_rawRefreshGrace, 1000), 10_000)
   : 5000;
-const LOGIN_ALERT_EMAIL_ENABLED = process.env.LOGIN_ALERT_EMAIL_ENABLED !== 'false';
+const RESERVED_EMAIL_TLDS = new Set(['test', 'invalid', 'example', 'localhost']);
+
+export const shouldSendLoginAlertEmail = (
+  email: unknown,
+  env: NodeJS.ProcessEnv = process.env
+): boolean => {
+  if (env.LOGIN_ALERT_EMAIL_ENABLED === 'false' || typeof email !== 'string') return false;
+  const normalized = email.trim().toLowerCase();
+  const atIndex = normalized.lastIndexOf('@');
+  if (atIndex <= 0 || atIndex === normalized.length - 1) return false;
+  const domain = normalized.slice(atIndex + 1);
+  const topLevelDomain = domain.split('.').at(-1) ?? '';
+  return !RESERVED_EMAIL_TLDS.has(topLevelDomain);
+};
 
 const constantTimeHashEqual = (
   left: string | null | undefined,
@@ -521,10 +534,11 @@ export const loginLogic = async (
   const accessToken = generateAccessToken(savedSession);
 
   // التنبيه دفاع إضافي ولا يجوز أن يحوّل تسجيل دخول ناجح إلى فشل إذا تعطل البريد.
-  if (LOGIN_ALERT_EMAIL_ENABLED) {
+  const loginEmail = String(savedSession.email ?? finalUser.email);
+  if (shouldSendLoginAlertEmail(loginEmail)) {
     try {
       await outboxService.enqueueLoginAlertEmail({
-        to: String(savedSession.email ?? finalUser.email),
+        to: loginEmail,
         name: String(savedSession.name ?? finalUser.name ?? ''),
         occurredAt: securityContext.occurredAt,
         ipAddress: securityContext.ipAddress.slice(0, 64),

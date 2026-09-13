@@ -23,7 +23,9 @@ const tokenUtils = require('../utils/tokenUtils').default;
 const sessionCache = require('../utils/sessionCache').default;
 const userRepository = require('../repositories/userRepository').default;
 const authMiddleware = require('../middlewares/auth').default;
-const authService = require('../services/authService').default;
+const authServiceModule = require('../services/authService');
+const authService = authServiceModule.default;
+const { shouldSendLoginAlertEmail } = authServiceModule;
 const emailService = require('../services/emailService').default;
 const outboxService = require('../services/outboxService').default;
 const SystemSettings = require('../models/SystemSettings').default;
@@ -164,6 +166,15 @@ test('قالب البريد يهرب HTML ويبني رابط reset من Origin 
   assert.equal(getClientOrigin(), 'https://frontend.example');
 });
 
+test('تنبيه الدخول يتجاهل حسابات العرض ونطاقات الاختبار المحجوزة', () => {
+  assert.equal(shouldSendLoginAlertEmail('real.user@gmail.com', {}), true);
+  assert.equal(shouldSendLoginAlertEmail('mock.admin@aoun.test', {}), false);
+  assert.equal(shouldSendLoginAlertEmail('probe@aoun.invalid', {}), false);
+  assert.equal(shouldSendLoginAlertEmail('real.user@gmail.com', {
+    LOGIN_ALERT_EMAIL_ENABLED: 'false',
+  }), false);
+});
+
 test('تسجيل الدخول يجدول تنبيهاً أمنياً ولا يفشل إذا تعذر حفظ التنبيه', async (t) => {
   const originals = {
     compare: bcrypt.compare,
@@ -185,7 +196,7 @@ test('تسجيل الدخول يجدول تنبيهاً أمنياً ولا يف
   const user = {
     _id: '507f1f77bcf86cd799439088',
     name: 'Security User',
-    email: 'security@example.test',
+    email: 'security@example.com',
     password: 'stored-hash',
     role: 'user',
     trustLevel: 1,
