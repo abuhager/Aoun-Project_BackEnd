@@ -18,7 +18,7 @@
 ## روابط المشروع
 
 - **Frontend Repository:** https://github.com/abuhager/Aoun-Project_FrontEnd
-- **Live Application:** https://aoun-project-theta.vercel.app/
+- **Live Application:** https://www.aoun.website/
 - **Backend Health Check:** https://aoun-project-backend.onrender.com/health/live
 
 > المشروع MVP منشور. بيانات Demo المستخدمة للاختبار والعرض لا تمثل مستخدمين أو شراكات مؤسسية فعلية.
@@ -226,7 +226,7 @@ npm run worker
 | Conversations | `GET /api/conversations`, `GET /api/conversations/:conversationId/messages` | المحادثات وسجل الرسائل |
 | Notifications | `/api/notifications` | إشعارات المستخدم |
 | Ratings | `/api/ratings` | التقييمات |
-| Reports | `/api/reports` | البلاغات |
+| Reports | `/api/reports` | البلاغات ومتابعتها |
 | Hubs | `/api/hubs` | نقاط التسليم |
 | Admin | `/api/admin` | العمليات الإدارية |
 | Settings | `/api/settings` | إعدادات النظام |
