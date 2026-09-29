@@ -415,13 +415,17 @@ test('إلغاء الحجز مع waitlist لا يشغل عمليات Mongo ال�
   Item.countDocuments = async () => 0;
 
   Item.findOneAndUpdate = () => ({
-    populate: async () => ({
-      _id: ITEM_ID,
-      title: 'كتاب',
-      status: 'محجوز',
-      donor: { _id: OWNER_ID, name: 'Owner' },
-      bookedBy: candidate,
-    }),
+    populate() { return this; },
+    then(resolve) {
+      resolve({
+        _id: ITEM_ID,
+        title: 'كتاب',
+        status: 'محجوز',
+        donor: { _id: OWNER_ID, name: 'Owner' },
+        bookedBy: candidate,
+      });
+    },
+    catch() { return this; },
   });
 
   const session = {
