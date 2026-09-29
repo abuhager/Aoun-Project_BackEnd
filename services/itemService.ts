@@ -116,6 +116,10 @@ const findNextEligibleWaitlistCandidate = async (
   // No waitlist candidate means there is nothing to evaluate inside the transaction.
   // Returning early avoids starting an unnecessary MongoDB transaction for this path.
   if (candidateIds.length === 0) {
+    for (const entry of waitlist ?? []) {
+      const candidateId = resolveEntityId(entry.user);
+      if (candidateId) skippedUserIds.push(candidateId);
+    }
     return { candidate: null, skippedUserIds };
   }
 
