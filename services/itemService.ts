@@ -802,8 +802,8 @@ export const cancelBookingLogic = async (itemId: EntityId, userId: EntityId) => 
       },
       { returnDocument: 'after', session }
     )
-      .populate('donor', 'name email')
-      .populate('bookedBy', 'name');
+      .populate({ path: 'donor', select: 'name email', ordered: true })
+      .populate({ path: 'bookedBy', select: 'name', ordered: true });
 
     return { ...next, promoted: updatedItem };
   });

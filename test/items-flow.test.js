@@ -753,3 +753,69 @@ test('Schema والإجراءات المجدولة متوافقة مع التأ�
   assert.match(cronSource, /claim\.modifiedCount !== 1/);
   assert.match(cronSource, /recipientConfirmed:\s*\{ \$ne: true \}/);
 });
+
+for (const hasCandidate of [false, true]) {
+  test(`cancellation serializes transaction queries (waitlist candidate: ${hasCandidate})`, async (t) => {
+    const session = createSessionStub();
+    let pending = false;
+    const guardedRead = async (value) => {
+      assert.equal(pending, false, 'parallel operations on the transaction session');
+      pending = true;
+      await new Promise((resolve) => setImmediate(resolve));
+      pending = false;
+      return value;
+    };
+    t.mock.method(mongoose, 'startSession', async () => session);
+    t.mock.method(SystemSettings, 'getCached', async () => ({ maxBookingsPerUser: 3 }));
+    t.mock.method(Item, 'findById', () => queryReturning({
+      _id: ITEM_ID, donor: OWNER_ID, bookedBy: BOOKER_ID,
+      status: 'محجوز', recipientConfirmed: false, cancelledBy: [],
+      waitlist: hasCandidate ? [{ user: OTHER_ID }] : [],
+    }));
+    t.mock.method(User, 'find', () => ({
+      select() { return this; },
+      session(actual) { assert.equal(actual, session); return this; },
+      lean() { return guardedRead(hasCandidate ? [{ _id: OTHER_ID, name: 'Next' }] : []); },
+    }));
+    t.mock.method(Item, 'aggregate', () => ({
+      session(actual) { assert.equal(actual, session); return guardedRead([]); },
+    }));
+    t.mock.method(User, 'updateOne', async (_filter, _update, options) => {
+      assert.equal(options.session, session);
+      return { matchedCount: 1 };
+    });
+    t.mock.method(Item, 'countDocuments', async (_filter, options) => {
+      assert.equal(options.session, session);
+      return 0;
+    });
+    let persisted;
+    t.mock.method(Item, 'findOneAndUpdate', (_filter, update, options) => {
+      persisted = update;
+      const populated = [];
+      return {
+        populate(option) { populated.push(option); return this; },
+        then(resolve, reject) {
+          return Promise.resolve().then(() => {
+            if (hasCandidate) {
+              assert.equal(options.session, session);
+              assert.deepEqual(populated.map((p) => [p.path, p.ordered]),
+                [['donor', true], ['bookedBy', true]]);
+            }
+            return {
+              _id: ITEM_ID, title: 'Book', status: update.$set.status,
+              donor: { _id: OWNER_ID }, bookedBy: hasCandidate ? { _id: OTHER_ID, name: 'Next' } : null,
+            };
+          }).then(resolve, reject);
+        },
+      };
+    });
+    t.mock.method(Notification, 'create', async (data) => ({ ...data, _id: HUB_ID }));
+    const result = await itemService.cancelBookingLogic(ITEM_ID, BOOKER_ID);
+    assert.equal(result.promoted, hasCandidate);
+    assert.equal(result.status, hasCandidate ? 'محجوز' : 'متاح');
+    assert.equal(persisted.$set.bookedBy, hasCandidate ? OTHER_ID : null);
+    assert.equal(persisted.$addToSet.cancelledBy, BOOKER_ID);
+    assert.equal(session.inTransaction(), false);
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+}
