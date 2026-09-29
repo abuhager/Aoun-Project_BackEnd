@@ -281,6 +281,170 @@ test('لا يمكن نقل أو إلغاء الحجز بعد تأكيد المس
   }
 });
 
+test('إلغاء حجز بدون قائمة انتظار لا يفتح MongoDB transaction ويحرر الغرض ذرياً', async (t) => {
+  const originals = {
+    findById: Item.findById,
+    findOneAndUpdate: Item.findOneAndUpdate,
+    startSession: mongoose.startSession,
+  };
+  const originalSetImmediate = global.setImmediate;
+
+  t.after(() => {
+    Item.findById = originals.findById;
+    Item.findOneAndUpdate = originals.findOneAndUpdate;
+    mongoose.startSession = originals.startSession;
+    global.setImmediate = originalSetImmediate;
+  });
+
+  let transactionStarted = false;
+  let updateFilter;
+  let updateBody;
+
+  global.setImmediate = () => ({});
+
+  Item.findById = () => queryReturning({
+    _id: ITEM_ID,
+    donor: OWNER_ID,
+    bookedBy: BOOKER_ID,
+    status: 'محجوز',
+    waitlist: [],
+    cancelledBy: [],
+    recipientConfirmed: false,
+    linkedRequestId: null,
+  });
+
+  mongoose.startSession = async () => {
+    transactionStarted = true;
+    throw new Error('cancel without waitlist must not open a transaction');
+  };
+
+  Item.findOneAndUpdate = (filter, update) => {
+    updateFilter = filter;
+    updateBody = update;
+    return {
+      populate: async () => ({
+        _id: ITEM_ID,
+        title: 'كتاب',
+        donor: { _id: OWNER_ID, name: 'Owner', email: 'owner@example.test' },
+        status: 'متاح',
+      }),
+    };
+  };
+
+  const result = await itemService.cancelBookingLogic(ITEM_ID, BOOKER_ID);
+
+  assert.equal(transactionStarted, false);
+  assert.equal(result.status, 'متاح');
+  assert.equal(result.promoted, false);
+  assert.equal(result.bookedBy, null);
+  assert.equal(updateFilter.status, 'محجوز');
+  assert.equal(updateFilter.linkedRequestId, null);
+  assert.equal(updateFilter.recipientConfirmed, false);
+  assert.equal(updateFilter.bookedBy.toString(), BOOKER_ID);
+  assert.equal(updateBody.$set.status, 'متاح');
+  assert.equal(updateBody.$set.bookedBy, null);
+});
+
+test('إلغاء الحجز مع waitlist لا يشغل عمليات Mongo المتاحة للجلسة بالتوازي', async (t) => {
+  const originals = {
+    findById: Item.findById,
+    findOne: Item.findOne,
+    aggregate: Item.aggregate,
+    findOneAndUpdate: Item.findOneAndUpdate,
+    countDocuments: Item.countDocuments,
+    userUpdateOne: User.updateOne,
+    getCached: SystemSettings.getCached,
+    startSession: mongoose.startSession,
+  };
+  const originalSetImmediate = global.setImmediate;
+
+  t.after(() => {
+    Item.findById = originals.findById;
+    Item.findOne = originals.findOne;
+    Item.aggregate = originals.aggregate;
+    Item.findOneAndUpdate = originals.findOneAndUpdate;
+    Item.countDocuments = originals.countDocuments;
+    User.updateOne = originals.userUpdateOne;
+    SystemSettings.getCached = originals.getCached;
+    mongoose.startSession = originals.startSession;
+    global.setImmediate = originalSetImmediate;
+  });
+
+  global.setImmediate = () => ({});
+
+  const candidate = {
+    _id: OTHER_ID,
+    name: 'Next',
+    email: 'next@example.test',
+  };
+  let userQueryResolved = false;
+  let aggregateStartedBeforeUserQueryResolved = false;
+
+  Item.findById = () => queryReturning({
+    _id: ITEM_ID,
+    donor: OWNER_ID,
+    bookedBy: BOOKER_ID,
+    status: 'محجوز',
+    waitlist: [{ user: OTHER_ID }],
+    cancelledBy: [],
+    recipientConfirmed: false,
+    linkedRequestId: null,
+  });
+
+  SystemSettings.getCached = async () => ({ maxBookingsPerUser: 3 });
+
+  User.find = () => ({
+    select() { return this; },
+    session() { return this; },
+    async lean() {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      userQueryResolved = true;
+      return [candidate];
+    },
+  });
+
+  User.updateOne = async () => ({ matchedCount: 1 });
+
+  Item.aggregate = () => {
+    aggregateStartedBeforeUserQueryResolved = !userQueryResolved;
+    return {
+      session: async () => [],
+    };
+  };
+
+  Item.countDocuments = async () => 0;
+
+  Item.findOneAndUpdate = () => ({
+    populate() { return this; },
+    then(resolve) {
+      resolve({
+        _id: ITEM_ID,
+        title: 'كتاب',
+        status: 'محجوز',
+        donor: { _id: OWNER_ID, name: 'Owner' },
+        bookedBy: candidate,
+      });
+    },
+    catch() { return this; },
+  });
+
+  const session = {
+    async withTransaction(work) {
+      return work(session);
+    },
+    async endSession() {},
+  };
+
+  mongoose.startSession = async () => session;
+
+  const result = await itemService.cancelBookingLogic(ITEM_ID, BOOKER_ID);
+
+  assert.equal(aggregateStartedBeforeUserQueryResolved, false);
+  assert.equal(result.promoted, true);
+  assert.equal(result.status, 'محجوز');
+  assert.equal(result.bookedBy._id, OTHER_ID);
+});
+
 test('مسار العناصر العام لا يمنح الأدمن تجاوز مسار الحذف المدقق', () => {
   const controllerSource = fs.readFileSync(
     path.join(__dirname, '../controllers/itemController.ts'),
@@ -589,3 +753,69 @@ test('Schema والإجراءات المجدولة متوافقة مع التأ�
   assert.match(cronSource, /claim\.modifiedCount !== 1/);
   assert.match(cronSource, /recipientConfirmed:\s*\{ \$ne: true \}/);
 });
+
+for (const hasCandidate of [false, true]) {
+  test(`cancellation serializes transaction queries (waitlist candidate: ${hasCandidate})`, async (t) => {
+    const session = createSessionStub();
+    let pending = false;
+    const guardedRead = async (value) => {
+      assert.equal(pending, false, 'parallel operations on the transaction session');
+      pending = true;
+      await new Promise((resolve) => setImmediate(resolve));
+      pending = false;
+      return value;
+    };
+    t.mock.method(mongoose, 'startSession', async () => session);
+    t.mock.method(SystemSettings, 'getCached', async () => ({ maxBookingsPerUser: 3 }));
+    t.mock.method(Item, 'findById', () => queryReturning({
+      _id: ITEM_ID, donor: OWNER_ID, bookedBy: BOOKER_ID,
+      status: 'محجوز', recipientConfirmed: false, cancelledBy: [],
+      waitlist: hasCandidate ? [{ user: OTHER_ID }] : [],
+    }));
+    t.mock.method(User, 'find', () => ({
+      select() { return this; },
+      session(actual) { assert.equal(actual, session); return this; },
+      lean() { return guardedRead(hasCandidate ? [{ _id: OTHER_ID, name: 'Next' }] : []); },
+    }));
+    t.mock.method(Item, 'aggregate', () => ({
+      session(actual) { assert.equal(actual, session); return guardedRead([]); },
+    }));
+    t.mock.method(User, 'updateOne', async (_filter, _update, options) => {
+      assert.equal(options.session, session);
+      return { matchedCount: 1 };
+    });
+    t.mock.method(Item, 'countDocuments', async (_filter, options) => {
+      assert.equal(options.session, session);
+      return 0;
+    });
+    let persisted;
+    t.mock.method(Item, 'findOneAndUpdate', (_filter, update, options) => {
+      persisted = update;
+      const populated = [];
+      return {
+        populate(option) { populated.push(option); return this; },
+        then(resolve, reject) {
+          return Promise.resolve().then(() => {
+            if (hasCandidate) {
+              assert.equal(options.session, session);
+              assert.deepEqual(populated.map((p) => [p.path, p.ordered]),
+                [['donor', true], ['bookedBy', true]]);
+            }
+            return {
+              _id: ITEM_ID, title: 'Book', status: update.$set.status,
+              donor: { _id: OWNER_ID }, bookedBy: hasCandidate ? { _id: OTHER_ID, name: 'Next' } : null,
+            };
+          }).then(resolve, reject);
+        },
+      };
+    });
+    t.mock.method(Notification, 'create', async (data) => ({ ...data, _id: HUB_ID }));
+    const result = await itemService.cancelBookingLogic(ITEM_ID, BOOKER_ID);
+    assert.equal(result.promoted, hasCandidate);
+    assert.equal(result.status, hasCandidate ? 'محجوز' : 'متاح');
+    assert.equal(persisted.$set.bookedBy, hasCandidate ? OTHER_ID : null);
+    assert.equal(persisted.$addToSet.cancelledBy, BOOKER_ID);
+    assert.equal(session.inTransaction(), false);
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+}
