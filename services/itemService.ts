@@ -112,20 +112,28 @@ const findNextEligibleWaitlistCandidate = async (
     .map((entry) => resolveEntityId(entry.user))
     .filter((id): id is EntityId => Boolean(id) && !excluded.has(id!.toString()))
     .slice(0, 50);
-  const [eligibleUsers, bookingCounts] = await Promise.all([
-    User.find({
-      _id: { $in: candidateIds },
-      role: { $nin: ['admin', 'super_admin'] },
-      isVerified: true,
-      isBanned: { $ne: true },
-      isFrozen: { $ne: true },
-      trustLevel: { $gte: 2 },
-    }).select('_id name email').session(session).lean(),
-    Item.aggregate([
-      { $match: { bookedBy: { $in: candidateIds }, status: 'محجوز', _id: { $ne: itemId } } },
-      { $group: { _id: '$bookedBy', count: { $sum: 1 } } },
-    ]).session(session),
-  ]);
+
+  // No waitlist candidate means there is nothing to evaluate inside the transaction.
+  // Returning early avoids starting an unnecessary MongoDB transaction for this path.
+  if (candidateIds.length === 0) {
+    return { candidate: null, skippedUserIds };
+  }
+
+  // MongoDB Node.js sessions do not support parallel operations inside one transaction.
+  // Keep all session-bound reads strictly sequential.
+  const eligibleUsers = await User.find({
+    _id: { $in: candidateIds },
+    role: { $nin: ['admin', 'super_admin'] },
+    isVerified: true,
+    isBanned: { $ne: true },
+    isFrozen: { $ne: true },
+    trustLevel: { $gte: 2 },
+  }).select('_id name email').session(session).lean();
+
+  const bookingCounts = await Item.aggregate([
+    { $match: { bookedBy: { $in: candidateIds }, status: 'محجوز', _id: { $ne: itemId } } },
+    { $group: { _id: '$bookedBy', count: { $sum: 1 } } },
+  ]).session(session);
   const eligibleById = new Map(
     eligibleUsers.map((candidate) => [candidate._id.toString(), candidate])
   );
@@ -691,9 +699,73 @@ export const cancelBookingLogic = async (itemId: EntityId, userId: EntityId) => 
       'HANDOVER_CONFIRMATION_IN_PROGRESS'
     );
 
+  const oldBookerId = snapshot.bookedBy;
+
+  // Common path: no waitlist means we only need one atomic item update.
+  // Do not open a MongoDB transaction for this path.
+  if ((snapshot.waitlist ?? []).length === 0) {
+    const releaseUpdate = {
+      $set: {
+        status: 'متاح',
+        bookedBy: null,
+        bookedAt: null,
+        ...resetDeliveryState(),
+      },
+      $addToSet: { cancelledBy: oldBookerId },
+    };
+
+    const released = await Item.findOneAndUpdate(
+      {
+        _id: itemId,
+        status: 'محجوز',
+        bookedBy: oldBookerId,
+        linkedRequestId: null,
+        recipientConfirmed: false,
+      },
+      releaseUpdate,
+      { returnDocument: 'after' }
+    ).populate('donor', 'name email');
+
+    if (!released)
+      throw new AppError('تعذّر إلغاء الحجز — حاول مرة أخرى', 409, 'CANCEL_CONFLICT');
+
+    emitToUser(released.donor._id, SOCKET_EVENTS.ITEM_BOOKING_CANCELLED, {
+      itemId: released._id,
+      status: released.status,
+    });
+    queueNotification(released.donor._id, {
+      type:      'booking_cancelled',
+      title:     'تم إلغاء الحجز',
+      body:      `عاد "${released.title}" متاحاً للحجز.`,
+      itemId:    released._id,
+      actionUrl: `/items/${released._id}`,
+    });
+
+    if (isDonor && oldBookerId.toString() !== userId.toString()) {
+      emitToUser(oldBookerId, SOCKET_EVENTS.ITEM_BOOKING_CANCELLED, {
+        itemId: released._id,
+        status: released.status,
+      });
+      queueNotification(oldBookerId, {
+        type:      'booking_cancelled',
+        title:     'تم إلغاء حجزك',
+        body:      `ألغى المتبرع حجز "${released.title}".`,
+        itemId:    released._id,
+        actionUrl: `/items/${released._id}`,
+      });
+    }
+
+    return {
+      msg: 'تم إلغاء الحجز وإعادة الغرض متاحاً ✅',
+      itemId: released._id,
+      status: released.status,
+      promoted: false,
+      bookedBy: null,
+    };
+  }
+
   const settings = await SystemSettings.getCached();
   const maxBookings = settings.maxBookingsPerUser ?? 3;
-  const oldBookerId = snapshot.bookedBy;
   const { candidate, skippedUserIds, promoted } = await runMongoTransaction(async (session) => {
     const next = await findNextEligibleWaitlistCandidate(
       snapshot.waitlist,
