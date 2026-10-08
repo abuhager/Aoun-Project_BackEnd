@@ -61,6 +61,7 @@ const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 const scheduledTasks = new Map<JobName, ScheduledTask>();
+const activeJobs = new Map<JobName, Promise<void>>();
 let initialized = false;
 let initializationPromise: Promise<CronStatusSnapshot> | null = null;
 let settingsInvalidatedHandler: SettingsInvalidatedHandler | null = null;
@@ -114,6 +115,25 @@ const getCronStatus = (): CronStatusSnapshot => Object.fromEntries(
   ])
 );
 
+const runScheduledWork = (
+  name: JobName,
+  handler: () => void | Promise<void>
+): Promise<void> => {
+  const active = activeJobs.get(name);
+  if (active) return active;
+  const execution = runWithDistributedLock(
+    `cron:${name}`,
+    30 * 60 * 1000,
+    async () => Promise.resolve(handler())
+  ).then((result) => {
+    if (!result.acquired) console.info(`[Cron] ⏭️ [${name}] ينفذها leader آخر`);
+  }).finally(() => {
+    activeJobs.delete(name);
+  });
+  activeJobs.set(name, execution);
+  return execution;
+};
+
 const replaceScheduledTask = (
   name: JobName,
   expression: string,
@@ -123,14 +143,7 @@ const replaceScheduledTask = (
   if (existing) existing.destroy();
 
   const task = cron.schedule(expression, async () => {
-    const execution = await runWithDistributedLock(
-      `cron:${name}`,
-      30 * 60 * 1000,
-      async () => Promise.resolve(handler())
-    );
-    if (!execution.acquired) {
-      console.info(`[Cron] ⏭️ [${name}] ينفذها leader آخر`);
-    }
+    await runScheduledWork(name, handler);
   }, {
     name,
     noOverlap: true,
@@ -219,12 +232,13 @@ async function findEligibleWaitlistCandidate(
   return { candidate: null, skippedUserIds };
 }
 
-async function processExpiredItem(
+export async function processExpiredItem(
   item: BookingItem,
   settings: BookingSettings
 ): Promise<void> {
   // عناصر تلبية الطلبات لها دورة حياة خاصة ولا تدخل انتهاء الحجز أو قائمة الانتظار العامة.
   if (item.linkedRequestId) return;
+  if (!item.bookedBy || !item.bookedAt) return;
 
   const previousBookerId = item.bookedBy;
   const resetConfirmation = {
@@ -249,6 +263,7 @@ async function processExpiredItem(
           _id: item._id,
           status: 'محجوز',
           bookedBy: previousBookerId,
+          bookedAt: item.bookedAt,
           linkedRequestId: null,
           recipientConfirmed: { $ne: true },
         },
@@ -294,6 +309,7 @@ async function processExpiredItem(
         _id: item._id,
         status: 'محجوز',
         bookedBy: previousBookerId,
+        bookedAt: item.bookedAt,
         linkedRequestId: null,
         recipientConfirmed: { $ne: true },
       },
@@ -398,6 +414,43 @@ async function processExpiredItem(
 // ══════════════════════════════════════════════════════════════
 // تهيئة كل الـ Cron Jobs
 // ══════════════════════════════════════════════════════════════
+export const expireOldBookings = async (): Promise<void> => {
+  const settings = await SystemSettings.getCached();
+  const expiryHours = Number(settings.bookingExpiryHours) || 72;
+  const threshold = new Date(Date.now() - expiryHours * 60 * 60 * 1000);
+  const expiredItems = await Item.find({
+    status: 'محجوز',
+    bookedBy: { $type: 'objectId' },
+    linkedRequestId: null,
+    bookedAt: { $exists: true, $type: 'date', $lte: threshold },
+    recipientConfirmed: { $ne: true },
+  })
+    .sort({ bookedAt: 1 })
+    .limit(MAX_BOOKING_JOB_BATCH)
+    .select('_id bookedBy bookedAt waitlist cancelledBy donor title linkedRequestId')
+    .lean() as unknown as BookingItem[];
+  if (!expiredItems.length) return;
+
+  console.log(`[Cron] 🔍 حجوزات منتهية: ${expiredItems.length}`);
+  const results = await Promise.allSettled(
+    expiredItems.map((item) => processExpiredItem(item, settings))
+  );
+  const failures = results.filter((result) => result.status === 'rejected');
+  console.log(`[Cron] اكتمل: نجح ${expiredItems.length - failures.length}/${expiredItems.length}`);
+  if (failures.length) {
+    failures.forEach((result) => console.error('[Cron] فشل الحجز:', getErrorMessage(result.reason)));
+    throw new AggregateError(
+      failures.map((result) => result.reason),
+      `فشلت معالجة ${failures.length} حجوزات منتهية`
+    );
+  }
+};
+
+export const runBookingExpiryJob = (): Promise<void> => runScheduledWork(
+  'expire-old-bookings',
+  () => runSafe('expire-old-bookings', expireOldBookings)
+);
+
 const stopCronJobs = async (): Promise<void> => {
   initialized = false;
 
@@ -411,6 +464,7 @@ const stopCronJobs = async (): Promise<void> => {
   await Promise.allSettled(
     tasks.map((task) => Promise.resolve(task.destroy()))
   );
+  await Promise.allSettled([...activeJobs.values()]);
 };
 
 const initCronJobs = (): Promise<CronStatusSnapshot> => {
@@ -442,53 +496,8 @@ const initCronJobs = (): Promise<CronStatusSnapshot> => {
       };
       settingsEvents.on('invalidated', settingsInvalidatedHandler);
 
-      replaceScheduledTask('expire-old-bookings', '0 * * * *', () =>
-        runSafe('expire-old-bookings', async () => {
-          const settings = await SystemSettings.getCached();
-          const expiryHours = Number(settings.bookingExpiryHours) || 24;
-          const threshold = new Date(
-            Date.now() - (expiryHours * 60 * 60 * 1000)
-          );
-
-          const expiredItems = await Item.find({
-            status: 'محجوز',
-            bookedBy: { $type: 'objectId' },
-            linkedRequestId: null,
-            bookedAt: { $exists: true, $type: 'date', $lt: threshold },
-            recipientConfirmed: { $ne: true },
-          })
-            .sort({ bookedAt: 1 })
-            .limit(MAX_BOOKING_JOB_BATCH)
-            .select('_id bookedBy waitlist cancelledBy donor title linkedRequestId')
-            .lean() as unknown as BookingItem[];
-
-          if (!expiredItems.length) return;
-
-          console.log(`[Cron] 🔍 حجوزات منتهية: ${expiredItems.length}`);
-          const results = await Promise.allSettled(
-            expiredItems.map((item) => processExpiredItem(item, settings))
-          );
-          const failed = results.filter(
-            (result) => result.status === 'rejected'
-          ).length;
-
-          console.log(
-            `[Cron] اكتمل: نجح ${expiredItems.length - failed}/${expiredItems.length}`
-          );
-          results
-            .filter((result) => result.status === 'rejected')
-            .forEach((result) =>
-              console.error('  > فشل:', result.reason?.message)
-            );
-          if (failed > 0) {
-            throw new AggregateError(
-              results
-                .filter((result) => result.status === 'rejected')
-                .map((result) => result.reason),
-              `فشلت معالجة ${failed} حجوزات منتهية`
-            );
-          }
-        })
+      replaceScheduledTask('expire-old-bookings', '* * * * *', () =>
+        runSafe('expire-old-bookings', expireOldBookings)
       );
 
       // تعمل كل 15 دقيقة وتغطي نافذة 15 دقيقة كاملة بلا فجوات.
@@ -602,6 +611,8 @@ const initCronJobs = (): Promise<CronStatusSnapshot> => {
       );
 
       initialized = true;
+      // Catch up after sleeping hosts/restarts instead of waiting for the next tick.
+      await runBookingExpiryJob();
       return getCronStatus();
     } catch (error) {
       await stopCronJobs();

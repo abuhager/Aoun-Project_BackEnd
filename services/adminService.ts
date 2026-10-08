@@ -212,7 +212,7 @@ export const listItems = async ({ page = 1 }) => {
     adminRepo.countItems(),
   ]);
   return {
-    items: items.map(adminDto.toAdminItem).filter(Boolean),
+    items: items.map((item) => adminDto.toAdminItem(item, settings.bookingExpiryHours ?? 72)).filter(Boolean),
     total,
     page: normalizedPage,
     pages: Math.ceil(total / PAGE_SIZE),
