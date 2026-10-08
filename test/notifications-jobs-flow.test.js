@@ -16,6 +16,7 @@ process.env.CLOUDINARY_API_SECRET = 'test-secret';
 
 const Notification = require('../models/Notification').default;
 const User = require('../models/User').default;
+const Item = require('../models/Item').default;
 const systemSettingsModule = require('../models/SystemSettings');
 const SystemSettings = systemSettingsModule.default;
 const notificationRepository = require('../repositories/notificationRepository').default;
@@ -217,6 +218,12 @@ test('notifyUser يوحد عقد Socket ويجلب البريد الحرج وي�
 
 test('تشغيل Cron متزامن لا يكرر المهام أو المستمع ويُغلقها بالكامل', async (t) => {
   const originalGetCached = SystemSettings.getCached;
+  const originalFind = Item.find;
+  let startupQueries = 0;
+  Item.find = () => {
+    startupQueries += 1;
+    return { sort() { return this; }, limit() { return this; }, select() { return this; }, lean: async () => [] };
+  };
   const { settingsEvents } = systemSettingsModule;
   const listenersBefore = settingsEvents.listenerCount('invalidated');
 
@@ -228,6 +235,7 @@ test('تشغيل Cron متزامن لا يكرر المهام أو المستم�
   t.after(async () => {
     await cronJobs.stopCronJobs();
     SystemSettings.getCached = originalGetCached;
+    Item.find = originalFind;
   });
 
   const [first, second] = await Promise.all([
@@ -236,6 +244,7 @@ test('تشغيل Cron متزامن لا يكرر المهام أو المستم�
   ]);
 
   assert.deepEqual(Object.keys(first), Object.keys(second));
+  assert.equal(startupQueries, 0, 'scheduling does not block startup on database processing');
   assert.equal(
     settingsEvents.listenerCount('invalidated'),
     listenersBefore + 1
@@ -297,6 +306,7 @@ test('عقد Flow 11 يغلق Cron بأمان ويزيل النسخة القدي
   assert.match(appSource, /health\.backgroundJobs\.jobs/);
   assert.match(serverSource, /await initCronJobs\(\)[\s\S]*server\.listen/);
   assert.match(serverSource, /server\.listen[\s\S]*await startOutboxWorker\(\)/);
+  assert.match(serverSource, /server\.listen[\s\S]*void runBookingExpiryJob\(\)/);
   assert.match(adminSource, /type:\s*'admin_ban'/);
   assert.equal(
     fs.existsSync(path.join(__dirname, '../utils/cronJobs.ts')),

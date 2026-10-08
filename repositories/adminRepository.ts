@@ -107,7 +107,7 @@ export const adjustTrustScore = (userId: EntityId, delta: number) =>
 
 export const findAllItems = ({ page = 1, limit = 20 }: PaginationOptions = {}) =>
   Item.find()
-    .select('title category status imageUrl donor createdAt bookedBy bookedAt waitlist')
+    .select('title category status imageUrl donor createdAt bookedBy bookedAt waitlist linkedRequestId recipientConfirmed donorConfirmed')
     .populate('bookedBy', 'name')
     .populate('waitlist.user', 'name')
     .populate('donor', 'name email')

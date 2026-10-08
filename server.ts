@@ -8,7 +8,7 @@ import {
 import { connectRedis, closeRedis } from './middlewares/rateLimiter.js';
 import app from './app.js';
 import connectDB from './config/db.js';
-import { initCronJobs, stopCronJobs } from './jobs/cronJobs.js';
+import { initCronJobs, runBookingExpiryJob, stopCronJobs } from './jobs/cronJobs.js';
 import { startOutboxWorker, stopOutboxWorker } from './jobs/outboxWorker.js';
 import { initSocket, resetIO } from './socket/index.js';
 import { attachSocketRedisAdapter, closeSocketRedisAdapter } from './socket/redisAdapter.js';
@@ -151,6 +151,11 @@ const startServer = async () => {
       '[Startup] عامل Outbox متوقف محلياً؛ لن تُرسل رسائل OTP حتى تفعّله'
     );
   }
+
+  // Catch up after restarts without delaying HTTP availability.
+  void runBookingExpiryJob().catch((error: unknown) => {
+    console.error('[Startup] فشل فحص الحجوزات القديمة:', error);
+  });
 
   console.log(`[Startup] الخادم يعمل على المنفذ ${port} — البيئة: ${nodeEnv}`);
   console.log('[Startup] تمت تهيئة Cron Jobs');
