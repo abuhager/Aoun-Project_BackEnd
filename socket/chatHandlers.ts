@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { assertDemoWritable } from '../utils/demoPolicy.js';
 import type {
   AounSocket,
   AounSocketServer,
@@ -58,6 +59,7 @@ const participantIds = (conversation: ConversationRecord): string[] => (
 
 const canSendInConversation = (conversation: ConversationRecord): boolean => {
   if (conversation.archivedAt) return false;
+  if (conversation.kind === 'admin' || conversation.kind === 'support') return conversation.supportStatus !== 'resolved';
   const item = asRecord(conversation.item);
   return asId(item?.donor) === asId(conversation.owner)
     && asId(item?.bookedBy) === asId(conversation.requester);
@@ -180,7 +182,7 @@ function registerChatHandlers(io: AounSocketServer, socket: AounSocket): void {
         cursor: null,
         limit: repo.DEFAULT_MESSAGE_PAGE_SIZE,
       });
-      await markReadAndBroadcast(io, conversation, conversationId, userId);
+      if (!socket.data.isDemo) await markReadAndBroadcast(io, conversation, conversationId, userId);
 
       safeAck(ack, {
         ok: true,
@@ -191,7 +193,7 @@ function registerChatHandlers(io: AounSocketServer, socket: AounSocket): void {
         totalPages: page.totalPages,
         hasMore: page.hasMore,
         nextCursor: page.nextCursor,
-        canSend: canSendInConversation(conversation),
+        canSend: !socket.data.isDemo && canSendInConversation(conversation),
       });
     } catch (error: unknown) {
       const socketError = asSocketError(error);
@@ -220,6 +222,7 @@ function registerChatHandlers(io: AounSocketServer, socket: AounSocket): void {
       ack?: SocketAck
     ) => {
     try {
+      assertDemoWritable(socket.data.isDemo);
       if (typeof text !== 'string') {
         throw chatError('نص الرسالة مطلوب', 'INVALID_MESSAGE');
       }
@@ -241,7 +244,7 @@ function registerChatHandlers(io: AounSocketServer, socket: AounSocket): void {
       const conversationId = String(conversation._id);
       if (!canSendInConversation(conversation)) {
         throw chatError(
-          'هذه المحادثة للقراءة فقط لأن الحجز لم يعد قائماً',
+          'هذه المحادثة للقراءة فقط لأن المحادثة مغلقة',
           'CHAT_BOOKING_ENDED',
           409
         );
@@ -337,6 +340,7 @@ function registerChatHandlers(io: AounSocketServer, socket: AounSocket): void {
         throw chatError('المحادثة غير مفتوحة', 'CHAT_ROOM_NOT_JOINED', 409);
       }
 
+      assertDemoWritable(socket.data.isDemo);
       const markedCount = await markReadAndBroadcast(
         io,
         conversation,
@@ -352,6 +356,7 @@ function registerChatHandlers(io: AounSocketServer, socket: AounSocket): void {
   socket.on(
     SOCKET_EVENTS.TYPING_STATUS,
     ({ convId, isTyping }: ChatEventPayload = {}) => {
+    if (socket.data.isDemo) return;
     if (!mongoose.isObjectIdOrHexString(convId) || typeof isTyping !== 'boolean') return;
     const room = conversationRoom(convId);
     if (!socket.rooms.has(room)) return;

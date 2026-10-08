@@ -57,6 +57,12 @@ export const toAdminItem = (rawItem: unknown) => {
     status:    item.status,
     imageUrl:  item.imageUrl ?? null,
     createdAt: toDate(item.createdAt),
+    bookedBy: toPersonReference(item.bookedBy),
+    bookedAt: toDate(item.bookedAt),
+    waitlist: Array.isArray(item.waitlist) ? item.waitlist.map((raw, index) => {
+      const entry = asRecord(raw);
+      return { position: index + 1, user: toPersonReference(entry?.user), joinedAt: toDate(entry?.joinedAt) };
+    }) : [],
     donor: donor ? {
       _id:   toId(donor),
       name:  donor.name  ?? null,

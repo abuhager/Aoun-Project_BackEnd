@@ -1,4 +1,5 @@
 import express from 'express';
+import donationRequestsFeature from '../middlewares/donationRequestsFeature.js';
 import { requireAuth, optionalAuth } from '../middlewares/auth.js';
 import validateObjectId from '../middlewares/validateObjectId.js';
 import validateBody from '../middlewares/validateBody.js';
@@ -7,6 +8,7 @@ import { upload, verifyImageBuffer } from '../middlewares/upload.js';
 import { donationActionLimiter, uploadLimiter } from '../middlewares/rateLimiter.js';
 
 const router   = express.Router();
+router.use(donationRequestsFeature);
 
 // ── قراءة ────────────────────────────────────────────────────
 router.get('/',   optionalAuth, drController.getRequests);

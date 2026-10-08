@@ -2,6 +2,7 @@
 // أنشئ هذا الملف الجديد في مجلد routes/
 
 import { Router } from 'express';
+import supportRoutes from './support.js';
 import authRoutes from './auth.js';
 import itemRoutes from './items.js';
 import phoneRoutes from './phone.js';
@@ -17,6 +18,7 @@ import conversationRoutes from './conversationRoutes.js';
 
 const router = Router();
 
+router.use('/support', supportRoutes);
 router.use('/auth', authRoutes);
 router.use('/items', itemRoutes);
 router.use('/phone', phoneRoutes);

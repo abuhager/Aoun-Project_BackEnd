@@ -1,3 +1,4 @@
+import { isDemoAccount } from '../utils/demoPolicy.js';
 import { buildGamificationProfile } from '../utils/gamification.js';
 import { toId, toIsoDate, toPlainRecord } from './dtoTypes.js';
 
@@ -16,6 +17,7 @@ export const toAuthUser = (rawUser: unknown) => {
   phoneVerified:     Boolean(user.phoneVerified),
   avatar:            user.avatar            ?? '',
   role:              user.role,
+  isDemo:            isDemoAccount(user),
   trustScore:        user.trustScore        ?? 0,
   trustLevel:        user.trustLevel        ?? 1,
   quota:             user.quota             ?? 0,

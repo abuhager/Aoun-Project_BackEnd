@@ -146,6 +146,7 @@ const systemSettingsSchema = new mongoose.Schema(
     // ─── إعدادات النظام العامة ────────────────────────────────────────────
     quotaResetDayOfMonth: { type: Number,  default: 1,                min: 1, max: 28 },
     requireHubForBooking: { type: Boolean, default: false },
+    donationRequestsEnabled: { type: Boolean, default: true },
     maintenanceMode:      { type: Boolean, default: false },
     platformName: {
       type: String,

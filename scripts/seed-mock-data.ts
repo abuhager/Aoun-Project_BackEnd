@@ -139,7 +139,7 @@ function buildMockDataset(passwordHash: string, now = new Date()) {
     "expired",
     "cancelled",
   ]);
-  const conversationIds = createIds(["booked", "linked", "delivered"]);
+  const conversationIds = createIds(["booked", "linked", "delivered", "support"]);
   const reportIds = createIds(["pending", "actioned", "dismissed"]);
 
   const settings = [{
@@ -190,6 +190,7 @@ function buildMockDataset(passwordHash: string, now = new Date()) {
       _id: userIds.admin,
       name: "مشرف عون",
       email: "mock.admin@aoun.test",
+      isDemo: true,
       password: passwordHash,
       phone: "+962790000001",
       role: "super_admin",
@@ -609,6 +610,18 @@ function buildMockDataset(passwordHash: string, now = new Date()) {
 
   const conversations = [
     {
+      _id: conversationIds.support,
+      kind: 'support',
+      threadKey: `support:${userIds.yousef}`,
+      subject: 'مثال: أحتاج مساعدة في تأكيد الاستلام',
+      supportStatus: 'in_progress',
+      owner: userIds.admin,
+      requester: userIds.yousef,
+      participants: [userIds.admin, userIds.yousef],
+      lastMessage: 'أحتاج مساعدة في تأكيد الاستلام.',
+      lastMessageAt: addDays(now, -0.1),
+    },
+    {
       _id: conversationIds.booked,
       item: specialItemIds.booked,
       owner: userIds.donor2,
@@ -638,6 +651,14 @@ function buildMockDataset(passwordHash: string, now = new Date()) {
   ];
 
   const messages = [
+    {
+      conversation: conversationIds.support,
+      sender: userIds.yousef,
+      text: 'أحتاج مساعدة في تأكيد الاستلام.',
+      read: false,
+      clientMessageId: 'demo-support-1',
+      createdAt: addDays(now, -0.1),
+    },
     {
       conversation: conversationIds.booked,
       sender: userIds.donor2,
@@ -1015,7 +1036,7 @@ function assertDatasetIntegrity(dataset: MockDataset): void {
   }
 
   for (const conversation of dataset.conversations) {
-    requireRef(itemIds, conversation.item, "Conversation.item");
+    if (conversation.item) requireRef(itemIds, conversation.item, "Conversation.item");
     requireRef(userIds, conversation.owner, "Conversation.owner");
     requireRef(userIds, conversation.requester, "Conversation.requester");
     assert.deepEqual(

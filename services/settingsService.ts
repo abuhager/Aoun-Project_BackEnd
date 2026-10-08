@@ -17,6 +17,7 @@ const PUBLIC_SETTING_FIELDS = Object.freeze([
   'maxAvatarSizeMb',
   'requireHubForBooking',
   'maintenanceMode',
+  'donationRequestsEnabled',
   'updatedAt',
 ]);
 
@@ -65,6 +66,7 @@ const toPublicSettings = (settings: ServiceRecord | null | undefined) => {
       : 5,
     requireHubForBooking: Boolean(projected.requireHubForBooking),
     maintenanceMode: Boolean(projected.maintenanceMode),
+    donationRequestsEnabled: projected.donationRequestsEnabled !== false,
     updatedAt: projected.updatedAt
       ? new Date(String(projected.updatedAt)).toISOString()
       : null,

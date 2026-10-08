@@ -14,7 +14,7 @@ type LeaderboardUser = {
 
 // ✅ [DUP-REPO-01] ثوابت مشتركة — تعديل واحد يُحدِّث كل الدوال
 const BASE_USER_FIELDS =
-  'name email phone avatar role trustScore trustLevel ' +
+  'name email phone avatar role isDemo trustScore trustLevel ' +
   'quota isVerified isVerifiedStudent isBanned isFrozen ' + // ← isFrozen هنا للجميع
   'totalDonations badges createdAt';
 
@@ -71,7 +71,7 @@ export const findByIdWithRefreshToken = (id: EntityId) =>
 export const findAuthStateById = (id: EntityId) =>
   User.findById(id)
     .select(
-      'name role trustLevel phoneVerified isVerified isBanned isFrozen ' +
+      'name email role isDemo trustLevel phoneVerified isVerified isBanned isFrozen ' +
       '+sessionVersion +sessionIssuedAt'
     )
     .lean();
@@ -238,6 +238,10 @@ export const consumeResetToken = (hashedToken: string, hashedPassword: string) =
     {
       resetPasswordToken: hashedToken,
       resetPasswordExpire: { $gt: Date.now() },
+      isDemo: { $ne: true },
+      ...(process.env.DEMO_ADMIN_EMAIL?.trim()
+        ? { email: { $ne: process.env.DEMO_ADMIN_EMAIL.trim().toLowerCase() } }
+        : {}),
     },
     {
       $set: { password: hashedPassword, sessionIssuedAt: new Date() },

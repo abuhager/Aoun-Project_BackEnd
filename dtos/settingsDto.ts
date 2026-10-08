@@ -55,6 +55,7 @@ const EDITABLE_SETTING_FIELDS = Object.freeze([
   'quotaResetDayOfMonth',
   'requireHubForBooking',
   'maintenanceMode',
+  'donationRequestsEnabled',
   'platformName',
   'contactEmail',
 ]);
@@ -109,6 +110,7 @@ const updateSettings = Joi.object({
   quotaResetDayOfMonth:           Joi.number().integer().min(1).max(28),
   requireHubForBooking:           Joi.boolean(),
   maintenanceMode:                Joi.boolean(),
+  donationRequestsEnabled:        Joi.boolean(),
   platformName:                   Joi.string().trim().min(2).max(100),
   contactEmail:                   Joi.string().trim().lowercase().max(254)
     .email({ tlds: { allow: false } }),

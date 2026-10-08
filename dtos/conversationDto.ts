@@ -11,6 +11,9 @@ export const toConversationListItem = (rawConversation: unknown, unreadCount = 0
 
   return {
     _id: toId(conversation._id ?? conversation.id),
+    kind: conversation.kind ?? "booking",
+    subject: conversation.subject ?? null,
+    supportStatus: conversation.supportStatus ?? null,
     item: item
       ? {
           _id: toId(item),

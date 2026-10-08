@@ -13,6 +13,7 @@ const userSchema = new mongoose.Schema(
     isFrozen:          { type: Boolean, default: false },
     banReason:         { type: String, default: null, maxlength: 500 },
     bannedBy:          { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    isDemo: { type: Boolean, default: false },
     role:              { type: String, default: 'user', enum: ['user', 'admin', 'super_admin'] },
     isVerified:        { type: Boolean, default: false },
 
