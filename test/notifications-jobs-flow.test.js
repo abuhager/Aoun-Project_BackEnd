@@ -244,7 +244,7 @@ test('تشغيل Cron متزامن لا يكرر المهام أو المستم�
   ]);
 
   assert.deepEqual(Object.keys(first), Object.keys(second));
-  assert.equal(startupQueries, 1, 'startup catches up once even with concurrent initialization');
+  assert.equal(startupQueries, 0, 'scheduling does not block startup on database processing');
   assert.equal(
     settingsEvents.listenerCount('invalidated'),
     listenersBefore + 1
@@ -306,6 +306,7 @@ test('عقد Flow 11 يغلق Cron بأمان ويزيل النسخة القدي
   assert.match(appSource, /health\.backgroundJobs\.jobs/);
   assert.match(serverSource, /await initCronJobs\(\)[\s\S]*server\.listen/);
   assert.match(serverSource, /server\.listen[\s\S]*await startOutboxWorker\(\)/);
+  assert.match(serverSource, /server\.listen[\s\S]*void runBookingExpiryJob\(\)/);
   assert.match(adminSource, /type:\s*'admin_ban'/);
   assert.equal(
     fs.existsSync(path.join(__dirname, '../utils/cronJobs.ts')),

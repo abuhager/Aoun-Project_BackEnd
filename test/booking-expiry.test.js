@@ -19,16 +19,58 @@ const bookedAt = new Date('2026-09-22T10:00:00Z');
 const booking = { _id: ITEM, bookedBy: BOOKER, bookedAt, donor: DONOR, title: 'Laptop', waitlist: [] };
 const query = value => ({ sort() { return this; }, limit() { return this; }, select() { return this; }, session() { return this; }, lean: async () => value });
 function transaction(t) {
-  t.mock.method(mongoose, 'startSession', async () => ({ withTransaction: async work => work(), endSession: async () => {} }));
+  t.mock.method(mongoose, 'startSession', async () => ({ withTransaction: async work => work(), startTransaction() {}, inTransaction: () => true, async abortTransaction() {}, async commitTransaction() {}, endSession: async () => {} }));
 }
 
-test('expiry query uses the configured duration and exact boundary; linked/confirmed bookings are excluded', async t => {
+for (const confirmationType of ['recipient_confirm', 'donor_confirm']) {
+  test(`${confirmationType} cannot complete after the deadline while hourly cleanup is pending`, async t => {
+    transaction(t);
+    t.mock.method(Date, 'now', () => Date.parse('2026-10-08T10:00:00Z'));
+    const { completeDeliveryLogic } = require('../services/itemService');
+    t.mock.method(Settings, 'getCached', async () => ({ bookingExpiryHours: 72 }));
+    t.mock.method(Item, 'findOneAndUpdate', filter => {
+      assert.ok(filter.$or.some(condition => condition.bookedAt?.$gt instanceof Date));
+      return { populate: async () => null };
+    });
+    t.mock.method(Item, 'findById', () => query({
+      ...booking,
+      status: 'محجوز',
+      recipientConfirmed: confirmationType === 'donor_confirm',
+      donorConfirmed: false,
+    }));
+    t.mock.method(User, 'findByIdAndUpdate', async () => { assert.fail('no rewards for an expired booking'); });
+    await assert.rejects(
+      completeDeliveryLogic(ITEM, confirmationType === 'recipient_confirm' ? BOOKER : DONOR, confirmationType),
+      { code: 'BOOKING_EXPIRED' }
+    );
+  });
+}
+
+for (const [recipientConfirmed, donorConfirmed] of [[false, false], [true, false], [false, true], [true, true]]) {
+  test(`expiry remains eligible until both confirmations: recipient=${recipientConfirmed}, donor=${donorConfirmed}`, async t => {
+    transaction(t);
+    const notices = [];
+    const current = { ...booking, status: 'محجوز', recipientConfirmed, donorConfirmed };
+    t.mock.method(Notification, 'create', async payload => { notices.push(payload); return { ...payload, _id: ITEM }; });
+    t.mock.method(Item, 'findOneAndUpdate', async (filter, update) => {
+      assert.deepEqual(filter.$or, [{ recipientConfirmed: { $ne: true } }, { donorConfirmed: { $ne: true } }]);
+      if (current.recipientConfirmed && current.donorConfirmed) return null;
+      Object.assign(current, update.$set);
+      return current;
+    });
+    await processExpiredItem(booking, {});
+    assert.equal(current.status, recipientConfirmed && donorConfirmed ? 'محجوز' : 'متاح');
+    assert.equal(notices.length, recipientConfirmed && donorConfirmed ? 0 : 2);
+  });
+}
+
+test('expiry query uses the configured duration and exact boundary; linked/fully-confirmed bookings are excluded', async t => {
   const now = Date.parse('2026-10-08T10:00:00Z');
   t.mock.method(Date, 'now', () => now);
   t.mock.method(Settings, 'getCached', async () => ({ bookingExpiryHours: 48 }));
   t.mock.method(Item, 'find', filter => {
     assert.equal(filter.bookedAt.$lte.getTime(), now - 48 * 3600000);
-    assert.deepEqual(filter.recipientConfirmed, { $ne: true });
+    assert.deepEqual(filter.$or, [{ recipientConfirmed: { $ne: true } }, { donorConfirmed: { $ne: true } }]);
     assert.equal(filter.linkedRequestId, null);
     assert.equal(filter.status, 'محجوز');
     const q = query([]);
@@ -66,7 +108,7 @@ for (const promote of [false, true]) {
     t.mock.method(Item, 'findOneAndUpdate', async (filter, update) => {
       assert.equal(filter.bookedAt, bookedAt);
       assert.equal(filter.linkedRequestId, null);
-      assert.deepEqual(filter.recipientConfirmed, { $ne: true });
+      assert.deepEqual(filter.$or, [{ recipientConfirmed: { $ne: true } }, { donorConfirmed: { $ne: true } }]);
       assert.equal(update.$set.status, promote ? 'محجوز' : 'متاح');
       assert.equal(update.$set.bookedBy, promote ? NEXT : null);
       assert.equal(update.$addToSet.cancelledBy, BOOKER);
@@ -101,7 +143,9 @@ test('startup and scheduled expiry share one in-flight execution', async t => {
 test('admin exposes the configured deadline and explains recipient-confirmed bookings', () => {
   const raw = { ...booking, status: 'محجوز' };
   assert.equal(toAdminItem(raw, 48).bookingExpiresAt, '2026-09-24T10:00:00.000Z');
-  assert.equal(toAdminItem({ ...raw, recipientConfirmed: true }, 48).bookingExpiresAt, null);
+  assert.equal(toAdminItem({ ...raw, recipientConfirmed: true }, 48).bookingExpiresAt, '2026-09-24T10:00:00.000Z');
+  assert.equal(toAdminItem({ ...raw, donorConfirmed: true }, 48).bookingExpiresAt, '2026-09-24T10:00:00.000Z');
+  assert.equal(toAdminItem({ ...raw, recipientConfirmed: true, donorConfirmed: true }, 48).bookingExpiresAt, null);
   assert.equal(toAdminItem({ ...raw, recipientConfirmed: true }, 48).recipientConfirmed, true);
   assert.equal(toAdminItem({ ...raw, linkedRequestId: ITEM }, 48).bookingExpiresAt, null);
   assert.equal(toAdminItem({ ...raw, status: 'متاح' }, 48).bookingExpiresAt, null);

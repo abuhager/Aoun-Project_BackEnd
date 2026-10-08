@@ -265,7 +265,7 @@ export async function processExpiredItem(
           bookedBy: previousBookerId,
           bookedAt: item.bookedAt,
           linkedRequestId: null,
-          recipientConfirmed: { $ne: true },
+          $or: [{ recipientConfirmed: { $ne: true } }, { donorConfirmed: { $ne: true } }],
         },
         {
           $set: {
@@ -311,7 +311,7 @@ export async function processExpiredItem(
         bookedBy: previousBookerId,
         bookedAt: item.bookedAt,
         linkedRequestId: null,
-        recipientConfirmed: { $ne: true },
+        $or: [{ recipientConfirmed: { $ne: true } }, { donorConfirmed: { $ne: true } }],
       },
       releaseUpdate,
       { returnDocument: 'after', session }
@@ -423,7 +423,7 @@ export const expireOldBookings = async (): Promise<void> => {
     bookedBy: { $type: 'objectId' },
     linkedRequestId: null,
     bookedAt: { $exists: true, $type: 'date', $lte: threshold },
-    recipientConfirmed: { $ne: true },
+    $or: [{ recipientConfirmed: { $ne: true } }, { donorConfirmed: { $ne: true } }],
   })
     .sort({ bookedAt: 1 })
     .limit(MAX_BOOKING_JOB_BATCH)
@@ -432,9 +432,13 @@ export const expireOldBookings = async (): Promise<void> => {
   if (!expiredItems.length) return;
 
   console.log(`[Cron] 🔍 حجوزات منتهية: ${expiredItems.length}`);
-  const results = await Promise.allSettled(
-    expiredItems.map((item) => processExpiredItem(item, settings))
-  );
+  const results: PromiseSettledResult<void>[] = [];
+  // Limit concurrent transactions so catch-up does not saturate the DB pool.
+  for (let offset = 0; offset < expiredItems.length; offset += 5) {
+    results.push(...await Promise.allSettled(
+      expiredItems.slice(offset, offset + 5).map((item) => processExpiredItem(item, settings))
+    ));
+  }
   const failures = results.filter((result) => result.status === 'rejected');
   console.log(`[Cron] اكتمل: نجح ${expiredItems.length - failures.length}/${expiredItems.length}`);
   if (failures.length) {
@@ -496,7 +500,7 @@ const initCronJobs = (): Promise<CronStatusSnapshot> => {
       };
       settingsEvents.on('invalidated', settingsInvalidatedHandler);
 
-      replaceScheduledTask('expire-old-bookings', '* * * * *', () =>
+      replaceScheduledTask('expire-old-bookings', '0 * * * *', () =>
         runSafe('expire-old-bookings', expireOldBookings)
       );
 
@@ -529,7 +533,7 @@ const initCronJobs = (): Promise<CronStatusSnapshot> => {
               $gte: windowFrom,
               $lt: windowTo,
             },
-            recipientConfirmed: { $ne: true },
+            $or: [{ recipientConfirmed: { $ne: true } }, { donorConfirmed: { $ne: true } }],
             reminderSent: { $ne: true },
           })
             .sort({ bookedAt: 1 })
@@ -556,6 +560,7 @@ const initCronJobs = (): Promise<CronStatusSnapshot> => {
                 bookedBy: item.bookedBy._id,
                 bookedAt: item.bookedAt,
                 linkedRequestId: null,
+                $or: [{ recipientConfirmed: { $ne: true } }, { donorConfirmed: { $ne: true } }],
                 reminderSent: { $ne: true as const },
               };
               const claim = await Item.updateOne(
@@ -611,8 +616,6 @@ const initCronJobs = (): Promise<CronStatusSnapshot> => {
       );
 
       initialized = true;
-      // Catch up after sleeping hosts/restarts instead of waiting for the next tick.
-      await runBookingExpiryJob();
       return getCronStatus();
     } catch (error) {
       await stopCronJobs();

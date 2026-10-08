@@ -941,6 +941,29 @@ export const completeDeliveryLogic = async (
     : userId;
   const userIdStr = userId.toString();
 
+  const confirmationSettings = await SystemSettings.getCached();
+  const bookingThreshold = new Date(
+    Date.now() - (confirmationSettings.bookingExpiryHours ?? 72) * 60 * 60 * 1000
+  );
+  // Cleanup runs hourly, but confirmations must respect the actual deadline.
+  // Request-linked deliveries retain their own lifecycle.
+  const deadlineFilter = {
+    $or: [
+      { linkedRequestId: { $type: 'objectId' as const } },
+      { bookedAt: { $gt: bookingThreshold } },
+    ],
+  };
+  const assertWithinBookingDeadline = (item: {
+    status?: string;
+    linkedRequestId?: unknown;
+    bookedAt?: Date | null;
+  }) => {
+    if (item.status === 'محجوز' && !item.linkedRequestId && item.bookedAt
+      && new Date(item.bookedAt).getTime() <= bookingThreshold.getTime()) {
+      throw new AppError('انتهت مهلة الحجز؛ لم يكتمل تأكيد الطرفين ضمن المدة', 409, 'BOOKING_EXPIRED');
+    }
+  };
+
   // ── تأكيد المستلم ────────────────────────────────────────────────────────
   if (confirmationType === 'recipient_confirm') {
     const item = await Item.findOneAndUpdate(
@@ -949,6 +972,7 @@ export const completeDeliveryLogic = async (
         status:             'محجوز',
         bookedBy:           userObjectId,
         recipientConfirmed: false,
+        ...deadlineFilter,
       },
       {
         $set: {
@@ -961,7 +985,7 @@ export const completeDeliveryLogic = async (
 
     if (!item) {
       const exists = await Item.findById(itemId)
-        .select('status bookedBy recipientConfirmed').lean();
+        .select('status bookedBy recipientConfirmed bookedAt linkedRequestId').lean();
       if (!exists)
         throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
       if (exists.bookedBy?.toString() === userIdStr && exists.recipientConfirmed)
@@ -970,6 +994,7 @@ export const completeDeliveryLogic = async (
         throw new AppError('ليس لديك صلاحية تأكيد الاستلام', 403, 'FORBIDDEN');
       if (exists.status !== 'محجوز')
         throw new AppError('الغرض ليس في حالة الحجز', 400, 'INVALID_STATUS');
+      assertWithinBookingDeadline(exists);
       throw new AppError('تعذر تأكيد الاستلام', 400, 'CONFIRM_FAILED');
     }
 
@@ -1011,6 +1036,7 @@ export const completeDeliveryLogic = async (
           donor:              userObjectId,
           recipientConfirmed: true,
           donorConfirmed:     false,
+          ...deadlineFilter,
         },
         {
           $set: {
@@ -1025,11 +1051,12 @@ export const completeDeliveryLogic = async (
 
       if (!deliveredItem) {
         const exists = await Item.findById(itemId)
-          .select('status donor recipientConfirmed donorConfirmed bookedBy').lean();
+          .select('status donor recipientConfirmed donorConfirmed bookedBy bookedAt linkedRequestId').lean();
         if (!exists)
           throw new AppError('الغرض غير موجود', 404, 'ITEM_NOT_FOUND');
         if (exists.donor?.toString() !== userIdStr)
           throw new AppError('ليس لديك صلاحية تأكيد التسليم', 403, 'FORBIDDEN');
+        assertWithinBookingDeadline(exists);
         if (!exists.recipientConfirmed)
           throw new AppError('بانتظار تأكيد المستلم أولاً ⏳', 400, 'RECIPIENT_NOT_CONFIRMED');
         if (exists.donorConfirmed)

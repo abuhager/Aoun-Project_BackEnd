@@ -52,7 +52,7 @@ export const toAdminItem = (rawItem: unknown, bookingExpiryHours = 72) => {
   const bookedAt = toDate(item.bookedAt);
   const bookedAtMs = bookedAt ? new Date(bookedAt).getTime() : NaN;
   const bookingExpiresAt = item.status === 'محجوز'
-    && !item.linkedRequestId && item.recipientConfirmed !== true
+    && !item.linkedRequestId && !(item.recipientConfirmed === true && item.donorConfirmed === true)
     && Number.isFinite(bookedAtMs)
     ? new Date(bookedAtMs + bookingExpiryHours * 60 * 60 * 1000).toISOString()
     : null;
@@ -68,6 +68,7 @@ export const toAdminItem = (rawItem: unknown, bookingExpiryHours = 72) => {
     bookedAt,
     bookingExpiresAt,
     recipientConfirmed: item.recipientConfirmed === true,
+    donorConfirmed: item.donorConfirmed === true,
     waitlist: Array.isArray(item.waitlist) ? item.waitlist.map((raw, index) => {
       const entry = asRecord(raw);
       return { position: index + 1, user: toPersonReference(entry?.user), joinedAt: toDate(entry?.joinedAt) };
