@@ -4,6 +4,7 @@ declare global {
   namespace Express {
     interface AuthenticatedUser {
       id: string;
+      isDemo?: boolean;
       _id?: string | Types.ObjectId;
       name: string;
       role: "user" | "admin" | "super_admin";

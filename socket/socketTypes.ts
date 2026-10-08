@@ -3,6 +3,7 @@ import type { ExtendedError, Server, Socket } from 'socket.io';
 export type AounSocketData = {
   userId: string;
   userName: string;
+  isDemo?: boolean;
   userRole: Express.AuthenticatedUser['role'];
   tokenExpiresAt: number;
 };

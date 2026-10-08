@@ -11,10 +11,14 @@ import mongoose from "mongoose";
  */
 const conversationSchema = new mongoose.Schema(
   {
+    kind: { type: String, enum: ['booking', 'admin', 'support'], default: 'booking' },
+    threadKey: { type: String },
+    subject: { type: String, trim: true, maxlength: 150 },
+    supportStatus: { type: String, enum: ['open', 'in_progress', 'resolved'], default: 'open' },
     item: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Item",
-      required: true,
+      required: false,
       index: true,
     },
     owner: {
@@ -50,6 +54,7 @@ const conversationSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-conversationSchema.index({ item: 1, owner: 1, requester: 1 }, { unique: true });
+conversationSchema.index({ item: 1, owner: 1, requester: 1 }, { unique: true, partialFilterExpression: { item: { $type: 'objectId' } } });
+conversationSchema.index({ threadKey: 1 }, { unique: true, partialFilterExpression: { threadKey: { $type: 'string' } } });
 conversationSchema.index({ participants: 1, updatedAt: -1 });const Conversation = mongoose.model("Conversation", conversationSchema);
 export default Conversation;

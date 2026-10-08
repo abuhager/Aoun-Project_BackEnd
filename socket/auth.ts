@@ -54,6 +54,7 @@ const socketAuthMiddleware = async (socket: AounSocket, next: SocketNext) => {
       userId: identity.id,
       userName: identity.name,
       userRole: identity.role,
+      isDemo: identity.isDemo,
       tokenExpiresAt: verifiedToken.expiresAt,
     };
     return next();

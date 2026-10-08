@@ -18,9 +18,9 @@ type UserListOptions = {
 
 type AdminActionPayload = {
   adminId: EntityId;
-  action: 'PROMOTE' | 'DEMOTE' | 'BAN' | 'UNBAN' | 'REPORT_ACTION' | 'ITEM_HIDE' | 'HUB_MANAGE' | 'SETTINGS_UPDATE';
+  action: 'PROMOTE' | 'DEMOTE' | 'BAN' | 'UNBAN' | 'REPORT_ACTION' | 'ITEM_HIDE' | 'HUB_MANAGE' | 'SETTINGS_UPDATE' | 'ADMIN_CHAT_OPEN' | 'SUPPORT_CLAIM' | 'SUPPORT_RESOLVE';
   targetId?: EntityId | null;
-  targetModel?: 'User' | 'Item' | 'Report' | 'SafeHub' | null;
+  targetModel?: 'User' | 'Item' | 'Report' | 'SafeHub' | 'Conversation' | null;
   reason?: string | null;
   meta?: RepositoryRecord | null;
   targetName?: string | null;
@@ -107,7 +107,9 @@ export const adjustTrustScore = (userId: EntityId, delta: number) =>
 
 export const findAllItems = ({ page = 1, limit = 20 }: PaginationOptions = {}) =>
   Item.find()
-    .select('title category status imageUrl donor createdAt')
+    .select('title category status imageUrl donor createdAt bookedBy bookedAt waitlist')
+    .populate('bookedBy', 'name')
+    .populate('waitlist.user', 'name')
     .populate('donor', 'name email')
     .sort({ createdAt: -1 })
     .skip((page - 1) * limit)

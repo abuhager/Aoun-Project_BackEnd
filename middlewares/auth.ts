@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { isDemoAccount, assertDemoWritable } from '../utils/demoPolicy.js';
 import type { NextFunction, Request, Response } from 'express';
 import AppError from '../utils/AppError.js';
 import { verifyAccessToken } from '../utils/tokenUtils.js';
@@ -34,6 +35,7 @@ const loadAuthState = async (userId: unknown): Promise<AuthState | null> => {
 
   state = {
     id,
+    isDemo: isDemoAccount(user),
     name: typeof user.name === 'string' ? user.name : '',
     role: Object.values(ROLES).includes(user.role) ? user.role : ROLES.USER,
     trustLevel: Number(user.trustLevel ?? 1),
@@ -105,6 +107,9 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
 
   try {
     req.user = await resolveAccessIdentity(token);
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.originalUrl.split('?')[0] !== '/api/auth/logout') {
+      assertDemoWritable(req.user.isDemo);
+    }
     return next();
   } catch (error: unknown) {
     if (error instanceof AppError) return next(error);

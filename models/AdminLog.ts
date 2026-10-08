@@ -14,7 +14,7 @@ const adminLogSchema = new mongoose.Schema({
   },
   targetModel: {
     type: String,
-    enum: ['User', 'Item', 'Report', 'SafeHub', null],
+    enum: ['User', 'Item', 'Report', 'SafeHub', 'Conversation', null],
     default: null,
   },
 
@@ -29,6 +29,9 @@ const adminLogSchema = new mongoose.Schema({
       'ITEM_HIDE',
       'HUB_MANAGE',
       'SETTINGS_UPDATE',
+      'ADMIN_CHAT_OPEN',
+      'SUPPORT_CLAIM',
+      'SUPPORT_RESOLVE',
     ],
     required: true,
   },

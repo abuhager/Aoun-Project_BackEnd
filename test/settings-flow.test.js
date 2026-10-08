@@ -125,6 +125,7 @@ test('الإعدادات العامة لا تكشف إلا العقد الآمن
   assert.deepEqual(Object.keys(projected).sort(), [
     'categories',
     'contactEmail',
+    'donationRequestsEnabled',
     'locations',
     'maintenanceMode',
     'maxAvatarSizeMb',

@@ -1,3 +1,4 @@
+import { isDemoAccount } from '../utils/demoPolicy.js';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { Readable } from 'stream';
@@ -719,7 +720,7 @@ export const logoutLogic = async (userId: EntityId) => {
 export const forgotPasswordLogic = async ({ email }: EmailInput) => {
   const GENERIC = { statusCode: 200, body: { msg: 'إذا كان الإيميل مسجَّلاً، ستصلك رسالة لإعادة تعيين كلمة المرور 📧' } };
   const user    = await userRepository.findByEmail(email);
-  if (!user || !user.isVerified || user.isBanned || user.isFrozen) return GENERIC;
+  if (!user || !user.isVerified || user.isBanned || user.isFrozen || isDemoAccount(user)) return GENERIC;
 
   const settings = await SystemSettings.getCached();
   const expiryMinutes = settings?.resetPasswordExpiryMinutes ?? 15;
