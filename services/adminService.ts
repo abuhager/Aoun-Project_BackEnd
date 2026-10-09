@@ -17,6 +17,7 @@ import type { EntityId, ServicePayload, ServiceRecord } from './serviceTypes.js'
 import { getErrorMessage } from './serviceTypes.js';
 import type { ClientSession } from 'mongoose';
 import outboxService from './outboxService.js';
+import { applyBanConsequences, type BanEffect } from './banConsequencesService.js';
 
 export type AdminRole = 'admin' | 'super_admin';
 type ReportResolutionStatus = 'actioned' | 'reviewed' | 'dismissed';
@@ -68,45 +69,11 @@ const assertCanManageUser = async (
   return target;
 };
 
-const applyBanConsequences = async (
-  userId: EntityId,
-  session: ClientSession | null = null
-) => {
-  await Item.updateMany(
-    { donor: userId, status: { $in: ['متاح', 'محجوز'] } },
-    {
-      $set: {
-        status: 'مخفي',
-        bookedBy: null,
-        bookedAt: null,
-        recipientConfirmed: false,
-        donorConfirmed: false,
-        recipientConfirmedAt: null,
-        donorConfirmedAt: null,
-      },
-    },
-    { session: session ?? undefined }
-  );
-  await Item.updateMany(
-    { bookedBy: userId, status: 'محجوز' },
-    {
-      $set: {
-        status: 'متاح',
-        bookedBy: null,
-        bookedAt: null,
-        recipientConfirmed: false,
-        donorConfirmed: false,
-        recipientConfirmedAt: null,
-        donorConfirmedAt: null,
-      },
-    },
-    { session: session ?? undefined }
-  );
-  await Item.updateMany(
-    { 'waitlist.user': userId },
-    { $pull: { waitlist: { user: userId } } },
-    { session: session ?? undefined }
-  );
+const publishBanEffects = async (effects: BanEffect[]) => {
+  for (const effect of effects) {
+    emitToUser(effect.userId, effect.event, { itemId: String(effect.itemId), status: effect.status });
+    await notifyBestEffort(effect.userId, effect.notification, 'ban-consequences');
+  }
 };
 
 const disconnectBannedUserBestEffort = async (userId: EntityId) => {
@@ -149,22 +116,23 @@ export const banUser = async (
   reason: string | null,
   adminNote: string | null
 ) => {
-  const user = await runMongoTransaction(async (session) => {
+  const { user, effects } = await runMongoTransaction(async (session) => {
     const target = await assertCanManageUser(userId, adminId, adminRole, session);
     const updated = await adminRepo.banUser(userId, reason, adminId, session);
     if (!updated) throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
 
     await userRepository.invalidateUserSession(userId, session);
-    await applyBanConsequences(userId, session);
     await adminRepo.logAdminAction({
       adminId, action: 'BAN', targetId: userId, targetModel: 'User',
       targetName: target.name, reason: reason ?? 'حظر يدوي', adminNote: adminNote ?? null,
       meta: { targetName: target.name, targetEmail: target.email ?? null },
     }, session);
 
-    return updated;
+    const effects = await applyBanConsequences(userId, session);
+    return { user: updated, effects };
   });
 
+  await publishBanEffects(effects);
   await notifyBestEffort(user, {
     type:  'admin_ban',
     title: 'تم حظر حسابك',
@@ -388,6 +356,7 @@ export const resolveReport = async (
 
     let actionedCount = 0;
     let autoBannedUser = null;
+    let banEffects: BanEffect[] = [];
     let autoBanReason: string | null = null;
     if (resolutionStatus === 'actioned' && report.reportedUser) {
       actionedCount = await reportRepository.countActionedByReportedUser(
@@ -411,7 +380,7 @@ export const resolveReport = async (
           throw new AppError('المستخدم غير موجود', 404, 'USER_NOT_FOUND');
         }
         await userRepository.invalidateUserSession(report.reportedUser, session);
-        await applyBanConsequences(report.reportedUser, session);
+        banEffects = await applyBanConsequences(report.reportedUser, session);
         await adminRepo.logAdminAction({
           adminId,
           action: 'BAN',
@@ -439,6 +408,7 @@ export const resolveReport = async (
       relatedItem,
       autoBannedUser,
       autoBanReason,
+      banEffects,
     };
   });
 
@@ -450,7 +420,10 @@ export const resolveReport = async (
     relatedItem,
     autoBannedUser,
     autoBanReason,
+    banEffects,
   } = transactionResult;
+
+  await publishBanEffects(banEffects);
 
   const reporterMessage = {
     actioned:  'تمت مراجعة بلاغك واتخاذ إجراء مناسب.',

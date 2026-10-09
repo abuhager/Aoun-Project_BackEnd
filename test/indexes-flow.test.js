@@ -20,6 +20,7 @@ test('مهمة الإنتاج تغطي كل Models التي تملك فهارس 
 
   assert.deepEqual(modelNames, [
     'AdminLog',
+    'BackgroundJobState',
     'Conversation',
     'DonationOffer',
     'DonationRequest',

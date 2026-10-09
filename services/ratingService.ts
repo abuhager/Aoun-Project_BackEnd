@@ -137,23 +137,7 @@ export const getUserRatings = async (userId: EntityId) => {
 };
 
 export const getPendingRating = async (userId: EntityId) => {
-  // 1. جلب كافة الأغراض المسلمة التي يكون المستخدم طرفاً فيها (متبرع أو مستلم)
-  const [asDonor, asReceiver] = await Promise.all([
-    ratingRepository.findDeliveredItemsAsDonor(userId),
-    ratingRepository.findDeliveredItemsAsReceiver(userId),
-  ]);
-
-  const allItems = [...asDonor, ...asReceiver];
-  if (!allItems.length) return { pendingRating: null };
-
-  // 2. جلب جميع معرّفات الأغراض التي قام *هذا المستخدم تحديداً* بتقييمها سابقاً
-  const ratedItemIds = await ratingRepository.findRatedItemIdsByRater(userId);
-  const ratedSet = new Set(ratedItemIds.map(String));
-
-  // 3. البحث عن أول غرض مسلم لم يقم *هذا المستخدم* بتقييمه بعد (حتى لو كان الطرف الآخر قد قيم وأصبح isRated = true)
-  const pending = allItems.find((item) => !ratedSet.has(String(item._id)));
-
-  return { pendingRating: pending ?? null };
+  return { pendingRating: await ratingRepository.findNextPendingRating(userId) };
 };
 
 export default { submitRating, getUserRatings, getPendingRating };

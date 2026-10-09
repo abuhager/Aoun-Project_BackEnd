@@ -673,18 +673,10 @@ export const acceptOfferLogic = async (
   userId: EntityId
 ) => {
   const settings = await SystemSettings.getCached();
-  const session = await mongoose.startSession();
-  let request;
-  let offer;
-  let safeHub;
-  let item;
-  let rejectedOffers = [];
-
-  try {
-    session.startTransaction();
+  const transition = await runMongoTransaction(async (session) => {
     const now = new Date();
 
-    request = await DonationRequest.findOneAndUpdate(
+    const request = await DonationRequest.findOneAndUpdate(
       {
         _id: requestId,
         requester: userId,
@@ -703,7 +695,7 @@ export const acceptOfferLogic = async (
       );
     }
 
-    offer = await DonationOffer.findOneAndUpdate(
+    const offer = await DonationOffer.findOneAndUpdate(
       { _id: offerId, request: requestId, status: 'pending' },
       { $set: { status: 'accepted' } },
       { new: true, session, runValidators: true }
@@ -714,33 +706,26 @@ export const acceptOfferLogic = async (
 
     await acquireUserOperationLocks([userId, offer.donor], session);
 
-    const [requesterUser, donor, hub, requesterBookings, donorActiveItems, pendingOffers] = await Promise.all([
-      User.findOne({
-        _id: userId,
-        isVerified: true,
-        isBanned: { $ne: true },
-        isFrozen: { $ne: true },
-      }).select('_id trustLevel').session(session).lean(),
-      User.findOne({
-        _id: offer.donor,
-        isVerified: true,
-        isBanned: { $ne: true },
-        isFrozen: { $ne: true },
-      }).select('_id name trustLevel phoneVerified').session(session).lean(),
-      offer.safeHub
-        ? SafeHub.findOne({
-            _id: offer.safeHub,
-            isActive: { $ne: false },
-          }).select('_id name city address').session(session).lean()
-        : Promise.resolve(null),
-      Item.countDocuments({ bookedBy: userId, status: 'محجوز' }).session(session),
-      Item.countDocuments({ donor: offer.donor, status: { $in: ['متاح', 'محجوز'] } }).session(session),
-      DonationOffer.find({
-        request: requestId,
-        status: 'pending',
-        _id: { $ne: offerId },
-      }).select('_id donor cloudinaryId').session(session).lean(),
-    ]);
+    // The MongoDB driver does not support parallel operations on one session.
+    const requesterUser = await User.findOne({
+      _id: userId, isVerified: true, isBanned: { $ne: true }, isFrozen: { $ne: true },
+    }).select('_id trustLevel').session(session).lean();
+    const donor = await User.findOne({
+      _id: offer.donor, isVerified: true, isBanned: { $ne: true }, isFrozen: { $ne: true },
+    }).select('_id name trustLevel phoneVerified').session(session).lean();
+    const hub = offer.safeHub
+      ? await SafeHub.findOne({ _id: offer.safeHub, isActive: { $ne: false } })
+        .select('_id name city address').session(session).lean()
+      : null;
+    const requesterBookings = await Item.countDocuments({
+      bookedBy: userId, status: 'محجوز',
+    }).session(session);
+    const donorActiveItems = await Item.countDocuments({
+      donor: offer.donor, status: { $in: ['متاح', 'محجوز'] },
+    }).session(session);
+    const pendingOffers = await DonationOffer.find({
+      request: requestId, status: 'pending', _id: { $ne: offerId },
+    }).select('_id donor cloudinaryId').session(session).lean();
 
     if (!requesterUser || (requesterUser.trustLevel ?? 0) < getMinTrustLevel(asRequestSettings(settings)))
       throw new AppError('صاحب الطلب لم يعد مؤهلاً لإتمامه', 403, 'REQUESTER_NOT_ELIGIBLE');
@@ -783,10 +768,7 @@ export const acceptOfferLogic = async (
       );
     }
 
-    safeHub = hub;
-    rejectedOffers = pendingOffers;
-
-    [item] = await Item.create([{
+    const [item] = await Item.create([{
       title: request.title,
       description: offer.description || request.description,
       category: request.category,
@@ -805,7 +787,7 @@ export const acceptOfferLogic = async (
       reminderSent: false,
     }], { session });
 
-    if (rejectedOffers.length) {
+    if (pendingOffers.length) {
       await DonationOffer.updateMany(
         { request: requestId, status: 'pending', _id: { $ne: offerId } },
         { $set: { status: 'rejected' } },
@@ -821,9 +803,8 @@ export const acceptOfferLogic = async (
     if (fulfilled.modifiedCount !== 1)
       throw new AppError('تعذر إتمام قبول العرض', 409, 'REQUEST_FULFILLMENT_CONFLICT');
 
-    await session.commitTransaction();
-  } catch (error) {
-    if (session.inTransaction()) await session.abortTransaction();
+    return { request, offer, safeHub: hub, item, rejectedOffers: pendingOffers };
+  }).catch((error) => {
     if (isTransactionConflict(error)) {
       throw new AppError(
         'تمت معالجة الطلب من طرف آخر؛ حدّث الصفحة',
@@ -832,9 +813,8 @@ export const acceptOfferLogic = async (
       );
     }
     throw error;
-  } finally {
-    await endSession(session);
-  }
+  });
+  const { request, offer, safeHub, item, rejectedOffers } = transition;
 
   queueBackground('acceptDonationOffer', async () => {
     await cleanupOfferImages(rejectedOffers, 'acceptDonationOffer');

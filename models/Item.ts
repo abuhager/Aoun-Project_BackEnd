@@ -125,6 +125,8 @@ ItemSchema.index({ bookedBy: 1, createdAt: -1 });
 ItemSchema.index({ safeHub: 1, status: 1 });
 ItemSchema.index({ status: 1, bookedAt: 1 });
 ItemSchema.index({ status: 1, deliveredAt: -1 });
+ItemSchema.index({ donor: 1, status: 1, deliveredAt: 1, _id: 1 }, { name: 'donor_pending_rating_order' });
+ItemSchema.index({ bookedBy: 1, status: 1, deliveredAt: 1, _id: 1 }, { name: 'receiver_pending_rating_order' });
 ItemSchema.index({ location: 1, status: 1 });
 ItemSchema.index({ searchTokens: 1, status: 1, createdAt: -1 });
 ItemSchema.index({ searchPrefixes: 1, status: 1, createdAt: -1 });

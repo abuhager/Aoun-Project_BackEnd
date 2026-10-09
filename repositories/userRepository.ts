@@ -21,6 +21,23 @@ const BASE_USER_FIELDS =
 const USER_FIELDS  = BASE_USER_FIELDS + ' phoneVerified';       // للمستخدم نفسه
 const ADMIN_FIELDS = BASE_USER_FIELDS + ' reportedBy';          // للأدمن
 
+// Automatic identity updates must honor the administrative decision at write time.
+const automaticTrustFields = (fields: RepositoryPayload): RepositoryPayload => {
+  const values: RepositoryPayload = Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined)
+      .map(([field, value]) => [field, { $literal: value }])
+  );
+  if (typeof fields.trustLevel === 'number') {
+    values.trustLevel = { $ifNull: ['$trustLevelOverride', fields.trustLevel] };
+  }
+  if (typeof fields.quota === 'number') {
+    values.quota = { $cond: [
+      { $in: ['$trustLevelOverride', [1, 2]] }, '$quota', fields.quota,
+    ] };
+  }
+  return values;
+};
+
 const activeAccountEligibility = () => ({
   isVerified: true,
   // الحسابات القديمة قد لا تحتوي هذين الحقلين؛ نمنع true فقط.
@@ -88,8 +105,12 @@ export const updateUser = (
   session?: RepositorySession
 ) => User.findByIdAndUpdate(
   id,
-  update,
-  { returnDocument: 'after', ...(session ? { session } : {}) }
+  typeof update.trustLevel === 'number' ? [{ $set: automaticTrustFields(update) }] : update,
+  {
+    returnDocument: 'after',
+    ...(typeof update.trustLevel === 'number' ? { updatePipeline: true } : {}),
+    ...(session ? { session } : {}),
+  }
 );
 
 export const beginUserSession = (id: EntityId) =>
@@ -158,6 +179,7 @@ export const setTrustLevelAndQuota = (
     id,
     {
       trustLevel: level,
+      trustLevelOverride: level,
       quota,
       promotedByAdmin,
       'trustEvidence.adminApproved': promotedByAdmin,
@@ -175,6 +197,18 @@ export const setTrustLevel = (id: EntityId, level: number) =>
   User.findByIdAndUpdate(id, { trustLevel: level }, { returnDocument: 'after' })
     .select('name email trustLevel isVerifiedStudent phoneVerified isBanned');
 
+// Also honor a demotion committed after login's initial read.
+export const updateStudentTrust = (
+  id: EntityId,
+  input: { isVerifiedStudent?: boolean; trustLevel?: number; quota?: number }
+) => User.findByIdAndUpdate(id, [{ $set: automaticTrustFields({
+  isVerifiedStudent: Boolean(input.isVerifiedStudent),
+  'trustEvidence.emailVerified': true,
+  'trustEvidence.studentVerified': Boolean(input.isVerifiedStudent),
+  trustLevel: input.trustLevel ?? 1,
+  quota: input.quota ?? 2,
+}) }], { returnDocument: 'after', updatePipeline: true });
+
 export const findByIdWithPassword = (id: EntityId) =>
   User.findById(id).select('+password');
 
@@ -182,7 +216,7 @@ export const findProfileUpdateState = (id: EntityId) =>
   User.findById(id)
     .select(
       'phone phoneVerified trustLevel isVerifiedStudent promotedByAdmin avatar ' +
-      'trustEvidence.registrationPolicyLevel2 +avatarPublicId'
+      'trustEvidence.registrationPolicyLevel2 trustLevelOverride +avatarPublicId'
     )
     .lean();
 
@@ -210,12 +244,18 @@ export const atomicVerifyAndComplete = (
   userId: EntityId,
   currentOtpHash: string,
   updateData: RepositoryPayload
-) =>
-  User.findOneAndUpdate(
+) => {
+  const fields = automaticTrustFields((updateData.$set ?? {}) as RepositoryPayload);
+  for (const [field, amount] of Object.entries((updateData.$inc ?? {}) as RepositoryPayload)) {
+    fields[field] = { $add: [{ $ifNull: [`$${field}`, 0] }, amount] };
+  }
+  const removed = Object.keys((updateData.$unset ?? {}) as RepositoryPayload);
+  return User.findOneAndUpdate(
     { _id: userId, verificationOtp: currentOtpHash },
-    updateData,
-    { returnDocument: 'after' }
+    [{ $set: fields }, ...(removed.length ? [{ $unset: removed }] : [])],
+    { returnDocument: 'after', updatePipeline: true }
   ).select('+sessionVersion');
+};
 
 export const resetOtpAttemptsAfterLock = (email: string) =>
   User.updateOne(
@@ -326,4 +366,4 @@ export const countLeaderboardUsersAhead = (user: LeaderboardUser) =>
     ],
   });
 
-export default { findByEmail, findByEmailWithPassword, createUser, saveUser, findById, findByIdWithRefreshToken, findAuthStateById, findByResetToken, updateUser, beginUserSession, storeRefreshToken, rotateRefreshToken, findByIdWithSession, findByIdForAdmin, setTrustLevelAndQuota, setTrustLevel, findByIdWithPassword, findProfileUpdateState, findAndIncrementOtpAttempts, findEmailStatus, atomicVerifyAndComplete, resetOtpAttemptsAfterLock, findByPhoneExcluding, consumeResetToken, changePassword, invalidateUserSession, findPublicProfile, findLeaderboardUsers, findLeaderboardUser, countLeaderboardUsersAhead };
+export default { updateStudentTrust, findByEmail, findByEmailWithPassword, createUser, saveUser, findById, findByIdWithRefreshToken, findAuthStateById, findByResetToken, updateUser, beginUserSession, storeRefreshToken, rotateRefreshToken, findByIdWithSession, findByIdForAdmin, setTrustLevelAndQuota, setTrustLevel, findByIdWithPassword, findProfileUpdateState, findAndIncrementOtpAttempts, findEmailStatus, atomicVerifyAndComplete, resetOtpAttemptsAfterLock, findByPhoneExcluding, consumeResetToken, changePassword, invalidateUserSession, findPublicProfile, findLeaderboardUsers, findLeaderboardUser, countLeaderboardUsersAhead };

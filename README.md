@@ -145,7 +145,7 @@ flowchart TD
 
 ## المتطلبات
 
-- Node.js `>= 20.19.0`
+- Node.js 24 LTS (`24.19.0` in `.node-version`)
 - npm
 - MongoDB يدعم transactions للعمليات التي تعتمد عليها
 - إعدادات Cloudinary للوظائف التي ترفع الصور

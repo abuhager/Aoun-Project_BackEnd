@@ -11,7 +11,7 @@ import errorHandler from './middlewares/errorHandler.js';
 import AppError from './utils/AppError.js';
 import apiRoutes from './routes/index.js';
 import getRuntimeReadiness from './utils/runtimeHealth.js';
-import { recordHttpMetrics, renderPrometheusMetrics } from './utils/metrics.js';
+import { recordHttpMetrics, renderPrometheusMetrics, renderBackgroundJobMetrics } from './utils/metrics.js';
 
 const app = express();
 
@@ -147,6 +147,16 @@ app.get(['/health', '/health/ready'], publicLimiter, async (_req: Request, res: 
   });
 });
 
+// Monitor this endpoint for business-job failures. /health/ready remains the
+// HTTP routing probe, while /health/live remains the process restart probe.
+app.get('/health/jobs', publicLimiter, async (_req: Request, res: Response) => {
+  const health = await getRuntimeReadiness();
+  res.status(health.businessReady ? 200 : 503).json({
+    status: health.businessReady ? 'ok' : 'degraded',
+    checks: { backgroundJobs: health.backgroundJobs },
+  });
+});
+
 const metricsTokenMatches = (authorization: string | undefined): boolean => {
   const configured = process.env.METRICS_TOKEN;
   const provided = authorization?.startsWith('Bearer ')
@@ -158,7 +168,7 @@ const metricsTokenMatches = (authorization: string | undefined): boolean => {
   return timingSafeEqual(expectedHash, providedHash);
 };
 
-app.get('/metrics', publicLimiter, (req: Request, res: Response, next: NextFunction) => {
+app.get('/metrics', publicLimiter, async (req: Request, res: Response, next: NextFunction) => {
   if (process.env.METRICS_ENABLED !== 'true') {
     return next(AppError.notFound('المسار المطلوب غير موجود', 'ROUTE_NOT_FOUND'));
   }
@@ -170,7 +180,7 @@ app.get('/metrics', publicLimiter, (req: Request, res: Response, next: NextFunct
   }
 
   res.type('text/plain; version=0.0.4; charset=utf-8');
-  return res.status(200).send(renderPrometheusMetrics());
+  return res.status(200).send(renderPrometheusMetrics() + renderBackgroundJobMetrics((await getRuntimeReadiness()).backgroundJobs));
 });
 
 app.use('/api', apiRoutes);

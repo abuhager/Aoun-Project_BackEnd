@@ -22,6 +22,8 @@ import outboxService from './outboxService.js';
 import type { EntityId, ServicePayload, ServiceRecord, UploadedFile } from './serviceTypes.js';
 import { getErrorMessage } from './serviceTypes.js';
 import { buildSearchPrefixes, buildSearchTokens } from '../utils/searchText.js';
+import donationRequestRepository from '../repositories/donationRequestRepository.js';
+import { getBusinessMonthKey } from '../utils/businessTime.js';
 
 // ── ✅ ARCH-01: ثوابت مشتركة ────────────────────────────────────────────────
 const DEFAULT_MAX_WAITLIST = 10;
@@ -93,7 +95,7 @@ const resetDeliveryState = () => ({
   reminderSent:         false,
 });
 
-const findNextEligibleWaitlistCandidate = async (
+export const findNextEligibleWaitlistCandidate = async (
   waitlist: WaitlistEntry[] | null | undefined,
   itemId: EntityId,
   maxBookings: number,
@@ -252,15 +254,20 @@ export const getItemsLogic = async (query: ItemListQuery = {}) => {
 };
 
 export const getMyItemsLogic = async (userId: EntityId) => {
-  const [user, myDonations, myRequests] = await Promise.all([
+  const month = getBusinessMonthKey(new Date());
+  const [user, myDonations, myRequests, settings, activeBookings, monthlyRequests, donationsTotal] = await Promise.all([
     User.findById(userId)
       .select(
         'name email avatar trustScore trustLevel quota totalDonations ' +
-        'isVerifiedStudent badges'
+        'isVerifiedStudent badges isVerified isBanned isFrozen role'
       )
       .lean(),
     itemRepository.findDonationsByUser(userId),
     itemRepository.findReceivedByUser(userId),
+    SystemSettings.getCached(),
+    itemRepository.countActiveBookingsByUser(userId),
+    donationRequestRepository.countAllMonthlyRequests({ userId, month }),
+    Item.countDocuments({ donor: userId }),
   ]);
 
   const safeUser = user
@@ -272,6 +279,23 @@ export const getMyItemsLogic = async (userId: EntityId) => {
 
   return {
     user: safeUser,
+    usage: {
+      bookings: {
+        used: activeBookings,
+        limit: settings.maxBookingsPerUser ?? 3,
+        remaining: Math.max(0, (settings.maxBookingsPerUser ?? 3) - activeBookings),
+        eligible: Boolean(user?.isVerified && !user.isBanned && !user.isFrozen && user.role === 'user' && user.trustLevel >= 2),
+      },
+      requests: {
+        used: monthlyRequests,
+        limit: settings.maxActiveRequestsPerMonth ?? 1,
+        remaining: Math.max(0, (settings.maxActiveRequestsPerMonth ?? 1) - monthlyRequests),
+        enabled: settings.donationRequestsEnabled !== false,
+        eligible: Boolean(user?.isVerified && !user.isBanned && !user.isFrozen && user.role === 'user' && user.trustLevel >= (settings.minTrustLevelForRequests ?? 2)),
+        month,
+      },
+      donationsTotal,
+    },
     myDonations: myDonations.map((item: unknown) => toDonorItem(item, userId)),
     myRequests: myRequests.map((item: unknown) => toReceiverItem(item, userId)),
   };

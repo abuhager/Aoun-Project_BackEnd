@@ -35,6 +35,7 @@ const donationOfferSchema = new mongoose.Schema(
         'rejected',
         'withdrawn',
         'cancelled_by_requester',
+        'cancelled_by_admin',
         'request_expired',
       ],
       default: 'pending',

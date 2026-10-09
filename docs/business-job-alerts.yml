@@ -1,0 +1,25 @@
+groups:
+  - name: aoun-business-jobs
+    rules:
+      - alert: AounBusinessJobsDegraded
+        expr: aoun_background_jobs_healthy == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Aoun background business jobs need attention
+          description: Check /health/jobs for the job reason and last successful run.
+      - alert: AounExpiredBookingBacklog
+        expr: aoun_expired_booking_oldest_age_seconds > 7200
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Aoun has bookings more than two hours past their deadline
+      - alert: AounRepeatedJobFailures
+        expr: aoun_job_consecutive_failures >= 2
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Aoun job has repeatedly failed
