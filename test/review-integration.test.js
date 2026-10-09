@@ -155,13 +155,16 @@ test('خدمات التطبيق وHTTP وSocket مع MongoDB replica set معز�
       isVerifiedStudent: true, trustLevel: 2, quota: 5,
     });
     assert.equal(registration.trustLevel, 1);
+    const beforeVerification = await User.findById(unverified._id).select('+sessionVersion +verificationOtp');
     const verified = await users.atomicVerifyAndComplete(unverified._id, 'review-synthetic-otp-hash', {
       $set: { isVerified: true, isVerifiedStudent: true, trustLevel: 2, quota: 5, 'trustEvidence.emailVerified': true },
       $inc: { sessionVersion: 1 }, $unset: { verificationOtp: 1, verificationOtpExpiry: 1 },
     });
     assert.equal(verified.trustLevel, 1); assert.equal(verified.quota, registration.quota);
-    assert.equal(verified.isVerified, true); assert.equal(verified.verificationOtp, undefined);
-    assert.equal(verified.sessionVersion, registration.sessionVersion + 1);
+    const afterVerification = await User.findById(unverified._id).select('+sessionVersion +verificationOtp');
+    assert.equal(verified.isVerified, true); assert.equal(afterVerification.verificationOtp, undefined);
+    assert.equal(verified.sessionVersion, beforeVerification.sessionVersion + 1);
+    assert.equal(await users.atomicVerifyAndComplete(unverified._id, 'review-synthetic-otp-hash', { $set: { isVerified: true } }), null);
     const fresh = await user({ email: 'new-student@student.aoun.invalid', trustLevel: 1 });
     assert.equal((await auth.loginLogic({ email: fresh.email, password })).body.user.trustLevel, 2);
   });
