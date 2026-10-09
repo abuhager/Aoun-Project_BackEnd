@@ -243,34 +243,17 @@ test('Safe Hub اختياري في التخزين ويصبح إلزامياً م
   assert.match(requestService, /safeHub: hub\?\._id \?\? null/);
 });
 
-test('عتبة الحظر تعتمد البلاغات المعتمدة وتطهر العناصر والحجوزات وقائمة الانتظار', async () => {
-  const originalUpdateMany = Item.updateMany;
-  const updates = [];
-  Item.updateMany = async (filter, update) => {
-    updates.push({ filter, update });
-    return { acknowledged: true };
-  };
-
-  try {
-    await adminService.applyBanConsequences('507f1f77bcf86cd799439011');
-  } finally {
-    Item.updateMany = originalUpdateMany;
-  }
-
-  assert.equal(updates.length, 3);
-  assert.deepEqual(updates[0].update.$set.status, 'مخفي');
-  assert.deepEqual(updates[1].update.$set.status, 'متاح');
-  assert.deepEqual(updates[2].update.$pull, {
-    waitlist: { user: '507f1f77bcf86cd799439011' },
-  });
-
+test('عتبة الحظر تعتمد البلاغات المعتمدة وتستخدم انتقالات الحجز المخصصة', () => {
   const service = readSource('../services/adminService.ts');
   const repository = readSource('../repositories/adminRepository.ts');
   assert.match(service, /countActionedByReportedUser/);
   assert.match(service, /actionedCount >= threshold/);
   assert.match(service, /reportedUser\.role === 'user'/);
+  assert.match(service, /banConsequencesService/);
   assert.match(repository, /actionedReportsAgainstUser/);
   assert.match(repository, /repeatOffenderThreshold/);
+  // The actual queue and request-linked behavior is exercised against MongoDB
+  // in review-integration.test.js rather than endorsing bulk reset-to-available.
 });
 
 test('التحديث الحي والـCron يستخدمان عقد الأحداث والحقول المتغيرة فقط', () => {

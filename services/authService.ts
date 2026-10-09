@@ -30,6 +30,7 @@ type MutableAuthUser = {
   isVerifiedStudent?: boolean;
   trustLevel?: number;
   quota?: number;
+  trustLevelOverride?: number | null;
 };
 
 type EmailInput = { email: string };
@@ -123,6 +124,10 @@ const _upgradeStudentTrust = async (
 
 
   user.isVerifiedStudent = true;
+  if (user.trustLevelOverride === 1 || user.trustLevelOverride === 2) {
+    user.trustLevel = user.trustLevelOverride;
+    return;
+  }
   const studentTrustLevel = Math.min(
     2,
     Math.max(1, Number(cfg?.studentDefaultTrustLevel ?? 2))
@@ -504,10 +509,8 @@ export const loginLogic = async (
 
   let finalUser = user;
   if (needsUpdate) {
-    const saved = await userRepository.updateUser(user._id, {
+    const saved = await userRepository.updateStudentTrust(user._id, {
       isVerifiedStudent: user.isVerifiedStudent,
-      'trustEvidence.emailVerified': true,
-      'trustEvidence.studentVerified': Boolean(user.isVerifiedStudent),
       trustLevel:        user.trustLevel,
       quota:             user.quota,
     });

@@ -1,4 +1,6 @@
 import cron from 'node-cron';
+import mongoose from 'mongoose';
+import BackgroundJobState from '../models/BackgroundJobState.js';
 import type { ScheduledTask } from 'node-cron';
 import User from '../models/User.js';
 import Item from '../models/Item.js';
@@ -31,6 +33,9 @@ type CronStatusEntry = {
   lastStatus: string;
   lastDurationMs?: number;
   lastError?: string | null;
+  lastSuccessAt?: Date | null;
+  nextRunAt?: Date | null;
+  consecutiveFailures?: number;
 };
 type CronStatusSnapshot = Record<string, CronStatusEntry & { scheduled: boolean }>;
 type IdLike = string | Types.ObjectId;
@@ -73,17 +78,37 @@ const cronStatus: Record<JobName, CronStatusEntry> = {
   'expire-donation-requests': { lastRun: null, lastStatus: 'pending' },
 };
 
+const persistJobState = async (name: JobName) => {
+  if (mongoose.connection.readyState !== 1) return;
+  const { lastError: _privateError, ...state } = cronStatus[name];
+  try {
+    await BackgroundJobState.updateOne({ _id: name }, { $set: state }, { upsert: true }).maxTimeMS(1_000);
+  } catch {
+    console.error('[Cron Health] JOB_STATE_PERSIST_FAILED', { job: name });
+  }
+};
+
 const runSafe = async (
   name: JobName,
   fn: () => void | Promise<void>
 ): Promise<void> => {
   const start = Date.now();
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const previous = await BackgroundJobState.findById(name).lean().maxTimeMS(1_000);
+      if (previous) {
+        cronStatus[name].lastSuccessAt = previous.lastSuccessAt ?? null;
+        cronStatus[name].consecutiveFailures = previous.consecutiveFailures ?? 0;
+      }
+    } catch { console.error('[Cron Health] JOB_STATE_READ_FAILED', { job: name }); }
+  }
   cronStatus[name] = {
     ...cronStatus[name],
     lastRun: new Date(),
     lastStatus: 'running',
     lastError: null,
   };
+  await persistJobState(name);
   console.log(`[Cron] ⏳ [${name}] بدأت`);
   try {
     await fn();
@@ -92,6 +117,9 @@ const runSafe = async (
       ...cronStatus[name],
       lastFinishedAt: new Date(),
       lastStatus: 'success',
+      lastSuccessAt: new Date(),
+      consecutiveFailures: 0,
+      nextRunAt: scheduledTasks.get(name)?.getNextRun() ?? null,
       lastDurationMs: duration,
       lastError: null,
     };
@@ -101,10 +129,13 @@ const runSafe = async (
       ...cronStatus[name],
       lastFinishedAt: new Date(),
       lastStatus: 'failed',
+      consecutiveFailures: (cronStatus[name].consecutiveFailures ?? 0) + 1,
       lastDurationMs: Date.now() - start,
       lastError: getErrorMessage(err),
     };
     console.error(`[Cron] ❌ [${name}] فشلت:`, getErrorMessage(err));
+  } finally {
+    await persistJobState(name);
   }
 };
 
@@ -143,13 +174,25 @@ const replaceScheduledTask = (
   if (existing) existing.destroy();
 
   const task = cron.schedule(expression, async () => {
-    await runScheduledWork(name, handler);
+    try {
+      await runScheduledWork(name, handler);
+    } catch (error) {
+      await runSafe(name, async () => { throw error; });
+    }
   }, {
     name,
     noOverlap: true,
     timezone: JOB_TIMEZONE,
   });
   scheduledTasks.set(name, task);
+  cronStatus[name].nextRunAt = task.getNextRun();
+  if (mongoose.connection.readyState === 1) {
+    // Keep the first due time across restarts, without replacing the leader's
+    // most recent success/failure with a follower's pending local status.
+    void BackgroundJobState.updateOne({ _id: name }, {
+      $setOnInsert: { lastStatus: 'pending', nextRunAt: cronStatus[name].nextRunAt, consecutiveFailures: 0 },
+    }, { upsert: true }).maxTimeMS(1_000).catch(() => {});
+  }
   return task;
 };
 

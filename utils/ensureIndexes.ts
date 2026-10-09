@@ -15,6 +15,7 @@ import Report from '../models/Report.js';
 import SafeHub from '../models/SafeHub.js';
 import SystemSettings from '../models/SystemSettings.js';
 import User from '../models/User.js';
+import BackgroundJobState from '../models/BackgroundJobState.js';
 
 type IndexDefinition = {
   key: Record<string, mongo.IndexDirection>;
@@ -83,6 +84,7 @@ const toIndexDefinition = ([key, options]: SchemaIndex): IndexDefinition => {
 // تجعله جزءاً من مهمة production تلقائياً وتمنع انجراف manifest يدوي منفصل.
 const indexModels = [
   AdminLog,
+  BackgroundJobState,
   Conversation,
   DonationOffer,
   DonationRequest,

@@ -56,5 +56,8 @@ const conversationSchema = new mongoose.Schema(
 
 conversationSchema.index({ item: 1, owner: 1, requester: 1 }, { unique: true, partialFilterExpression: { item: { $type: 'objectId' } } });
 conversationSchema.index({ threadKey: 1 }, { unique: true, partialFilterExpression: { threadKey: { $type: 'string' } } });
-conversationSchema.index({ participants: 1, updatedAt: -1 });const Conversation = mongoose.model("Conversation", conversationSchema);
+conversationSchema.index({ participants: 1, updatedAt: -1 });
+conversationSchema.index({ kind: 1, updatedAt: -1, _id: -1 }, { name: 'support_inbox_order' });
+conversationSchema.index({ kind: 1, requester: 1, updatedAt: -1, _id: -1 }, { name: 'support_requester_order' });
+const Conversation = mongoose.model("Conversation", conversationSchema);
 export default Conversation;

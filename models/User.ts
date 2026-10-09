@@ -39,6 +39,8 @@ const userSchema = new mongoose.Schema(
 
     // ── نظام التحقق ومستوى الثقة ───────────────────────────
     trustLevel:        { type: Number, min: 1, max: 2, default: 1 },
+    // Explicit administrative decisions take precedence over verified evidence.
+    trustLevelOverride: { type: Number, enum: [1, 2], default: null },
     trustScore:        { type: Number, default: 70 },
     promotedByAdmin:   { type: Boolean, default: false },
     isVerifiedStudent: { type: Boolean, default: false },

@@ -127,4 +127,22 @@ export const resetMetricsForTests = () => {
   durationSums.clear();
 };
 
+export const renderBackgroundJobMetrics = (health: {
+  healthy: boolean;
+  oldestExpiredAgeMs: number;
+  jobs: Record<string, {
+    healthy: boolean; consecutiveFailures: number; successAgeMs: number | null;
+  }>;
+}): string => [
+  '# TYPE aoun_background_jobs_healthy gauge',
+  `aoun_background_jobs_healthy ${health.healthy ? 1 : 0}`,
+  '# TYPE aoun_expired_booking_oldest_age_seconds gauge',
+  `aoun_expired_booking_oldest_age_seconds ${health.oldestExpiredAgeMs / 1_000}`,
+  ...Object.entries(health.jobs).flatMap(([name, job]) => [
+    `aoun_job_healthy{job="${labelValue(name)}"} ${job.healthy ? 1 : 0}`,
+    `aoun_job_consecutive_failures{job="${labelValue(name)}"} ${job.consecutiveFailures}`,
+    `aoun_job_last_success_age_seconds{job="${labelValue(name)}"} ${job.successAgeMs === null ? -1 : job.successAgeMs / 1_000}`,
+  ]), '',
+].join('\n');
+
 export default { recordHttpMetrics, renderPrometheusMetrics, resetMetricsForTests };

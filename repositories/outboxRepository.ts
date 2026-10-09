@@ -15,6 +15,20 @@ const enqueue = async (input: OutboxCreateInput, session?: ClientSession | null)
   return event;
 };
 
+const recoverExhausted = (staleBefore: Date) => OutboxEvent.updateMany(
+  {
+    $expr: { $gte: ['$attempts', '$maxAttempts'] },
+    $or: [
+      { status: 'processing', lockedAt: { $lte: staleBefore } },
+      { status: 'pending' },
+    ],
+  },
+  { $set: {
+    status: 'dead', lockedAt: null, lockedBy: null,
+    lastErrorCode: 'OUTBOX_EXHAUSTED_DELIVERY_UNKNOWN',
+  } }
+);
+
 const claimNext = (workerId: string, staleBefore: Date) => OutboxEvent.findOneAndUpdate(
   {
     attempts: { $lt: 20 },
@@ -95,5 +109,5 @@ const recordHeartbeat = (
 
 const getHeartbeat = () => WorkerHeartbeat.findById('outbox').lean().maxTimeMS(1_000);
 
-export default { enqueue, claimNext, complete, fail, recordHeartbeat, getHeartbeat };
-export { enqueue, claimNext, complete, fail, recordHeartbeat, getHeartbeat };
+export default { enqueue, claimNext, recoverExhausted, complete, fail, recordHeartbeat, getHeartbeat };
+export { enqueue, claimNext, recoverExhausted, complete, fail, recordHeartbeat, getHeartbeat };

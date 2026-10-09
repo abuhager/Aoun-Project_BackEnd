@@ -22,7 +22,10 @@
     "db:search:check": "tsx scripts/backfill-item-search.ts",
     "db:search:apply": "tsx scripts/backfill-item-search.ts --apply",
     "db:seed:mock": "tsx scripts/seed-mock-data.ts",
-    "perf:smoke": "tsx scripts/load-smoke.ts"
+    "perf:smoke": "tsx scripts/load-smoke.ts",
+    "db:trust:check": "tsx scripts/backfill-trust-overrides.ts",
+    "db:trust:apply": "tsx scripts/backfill-trust-overrides.ts --apply",
+    "test:seed:e2e": "tsx scripts/seed-review-e2e.ts"
   },
   "keywords": [],
   "author": "Adham Abu Hager",
@@ -56,11 +59,12 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.2.0",
     "@types/node": "^20.19.43",
+    "socket.io-client": "^4.8.4",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3"
   },
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=24.0.0 <25"
   },
   "overrides": {
     "uuid": "^11.1.1"

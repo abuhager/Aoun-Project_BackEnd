@@ -155,6 +155,14 @@ const tick = async () => {
   running = true;
   try {
     const processed = await processOutboxBatch();
+    const recovered = await outboxRepository.recoverExhausted(
+      new Date(Date.now() - LOCK_TIMEOUT_MS)
+    );
+    if (recovered.modifiedCount > 0) {
+      console.error('[Outbox] أحداث مستنفدة تتطلب مراجعة التسليم:', {
+        code: 'OUTBOX_EXHAUSTED_DELIVERY_UNKNOWN', count: recovered.modifiedCount,
+      });
+    }
     await outboxRepository.recordHeartbeat(WORKER_ID, 'running', {
       processed: processed > 0,
     });

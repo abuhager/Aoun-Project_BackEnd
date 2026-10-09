@@ -25,15 +25,18 @@ export const phoneVerificationPromotesTrust = (
  */
 export const deriveTrustLevel = (
   evidence: TrustEvidence,
-  options: { phonePromotesTrust?: boolean } = {}
-): 1 | 2 => (
+  options: { phonePromotesTrust?: boolean; adminOverride?: number | null } = {}
+): 1 | 2 => {
+  if (options.adminOverride === 1 || options.adminOverride === 2) return options.adminOverride;
+  return (
   evidence.studentVerified
   || evidence.adminApproved
   || Boolean(evidence.registrationPolicyLevel2)
   || (Boolean(options.phonePromotesTrust) && evidence.phoneVerified)
     ? 2
     : 1
-);
+  );
+};
 
 export default {
   deriveTrustLevel,

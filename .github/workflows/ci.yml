@@ -57,25 +57,36 @@ jobs:
           docker run --detach --name aoun-mongo-rs \
             --publish 27017:27017 \
             mongo:8.0 --replSet rs0 --bind_ip_all
+          mongo_ready=false
           for attempt in {1..30}; do
+            if [ "$(docker inspect --format '{{.State.Running}}' aoun-mongo-rs)" != true ]; then
+              docker logs aoun-mongo-rs
+              docker inspect --format '{{json .State}}' aoun-mongo-rs
+              exit 1
+            fi
             if docker exec aoun-mongo-rs mongosh --quiet --eval "db.adminCommand('ping').ok" | grep -q 1; then
+              mongo_ready=true
               break
             fi
             sleep 1
           done
+          if [ "$mongo_ready" != true ]; then docker logs aoun-mongo-rs; exit 1; fi
           docker exec aoun-mongo-rs mongosh --quiet --eval \
             "rs.initiate({_id:'rs0',members:[{_id:0,host:'127.0.0.1:27017'}]})"
+          mongo_primary=false
           for attempt in {1..30}; do
             if docker exec aoun-mongo-rs mongosh --quiet --eval "rs.status().myState" | grep -q 1; then
+              mongo_primary=true
               break
             fi
             sleep 1
           done
+          if [ "$mongo_primary" != true ]; then docker logs aoun-mongo-rs; exit 1; fi
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20.19.0
+          node-version-file: .node-version
           cache: npm
 
       - name: Install dependencies

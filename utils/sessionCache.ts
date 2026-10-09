@@ -1,62 +1,61 @@
-// utils/sessionCache.js
-// ✅ FIX [PERF-AUTH-01]: In-memory cache لـ sessionIssuedAt
-// يُقلِّل DB queries في requireAuth من query/طلب → query/دقيقة لكل مستخدم
-// TTL = 60 ثانية (قابل للضبط) — يُصفَّر فوراً عند logout أو تغيير كلمة المرور
+import { parsePositiveInteger } from '../config/env.js';
+import { publishRuntimeEvent, subscribeRuntimeEvent } from './runtimeBus.js';
 
-const TTL_MS = parseInt(process.env.SESSION_CACHE_TTL_MS ?? '60000', 10) || 60_000;
+type CacheEntry = { state: unknown; cachedAt: number };
 
-type CacheEntry = {
-  state: unknown;
-  cachedAt: number;
-};
-
-/**
- * @type {Map<string, { state: object, cachedAt: number }>}
- */
-const _cache = new Map<string, CacheEntry>();
-
-/**
- * جلب sessionIssuedAt من الـ Cache
- * @param {string} userId
- * @returns {object | undefined} — undefined = غير موجود في الـ Cache
- */
-const get = (userId: unknown): unknown | undefined => {
-  const key = String(userId);
-  const entry = _cache.get(key);
-  if (!entry) return undefined; // cache miss
-
-  if (Date.now() - entry.cachedAt > TTL_MS) {
-    _cache.delete(key);
-    return undefined; // انتهت الصلاحية
+/** Fixed TTL, bounded LRU storage. Reading an entry never renews its TTL. */
+export class TtlSessionCache {
+  private entries = new Map<string, CacheEntry>();
+  constructor(
+    readonly ttlMs: number,
+    readonly maxEntries: number,
+    private readonly now: () => number = Date.now
+  ) {}
+  get(userId: unknown): unknown | undefined {
+    const key = String(userId);
+    const entry = this.entries.get(key);
+    if (!entry) return undefined;
+    this.entries.delete(key);
+    if (this.now() - entry.cachedAt >= this.ttlMs) return undefined;
+    this.entries.set(key, entry);
+    return entry.state;
   }
+  set(userId: unknown, state: unknown): void {
+    const key = String(userId);
+    this.entries.delete(key);
+    while (this.entries.size >= this.maxEntries) {
+      this.entries.delete(this.entries.keys().next().value!);
+    }
+    this.entries.set(key, { state, cachedAt: this.now() });
+  }
+  invalidate(userId: unknown): void { this.entries.delete(String(userId)); }
+  prune(): void {
+    const cutoff = this.now() - this.ttlMs;
+    for (const [key, entry] of this.entries) {
+      if (entry.cachedAt <= cutoff) this.entries.delete(key);
+    }
+  }
+  stats() {
+    this.prune();
+    return {
+      size: this.entries.size, ttl_ms: this.ttlMs,
+      max_entries: this.maxEntries, entries: [...this.entries.keys()],
+    };
+  }
+}
 
-  return entry.state;
-};
+const cache = new TtlSessionCache(
+  parsePositiveInteger(process.env.SESSION_CACHE_TTL_MS, 60_000, { min: 1, max: 300_000 }),
+  parsePositiveInteger(process.env.SESSION_CACHE_MAX_ENTRIES, 5_000, { min: 1, max: 100_000 })
+);
+const cleanup = setInterval(() => cache.prune(), Math.min(cache.ttlMs, 60_000));
+cleanup.unref();
 
-/**
- * حفظ sessionIssuedAt في الـ Cache
- * @param {string} userId
- * @param {object} state
- */
-const set = (userId: unknown, state: unknown): void => {
-  _cache.set(String(userId), {
-    state,
-    cachedAt: Date.now(),
-  });
-};
-
-/**
- * إبطال الـ Cache فوراً — يُستدعى عند:
- * - logout
- * - تغيير كلمة المرور (updatePasswordLogic)
- * - حظر المستخدم (banUser في adminService)
- * @param {string} userId
- */
-const invalidateLocal = (userId: unknown): void => {
-  _cache.delete(String(userId));
-};
-
-const invalidate = (userId: unknown): void => {
+export const get = (userId: unknown) => cache.get(userId);
+export const set = (userId: unknown, state: unknown) => cache.set(userId, state);
+export const invalidateLocal = (userId: unknown) => cache.invalidate(userId);
+export const stats = () => cache.stats();
+export const invalidate = (userId: unknown): void => {
   invalidateLocal(userId);
   void publishRuntimeEvent('session:invalidate', { userId: String(userId) })
     .catch((error: unknown) => console.error(
@@ -64,22 +63,7 @@ const invalidate = (userId: unknown): void => {
       error instanceof Error ? error.message : String(error)
     ));
 };
-
 subscribeRuntimeEvent('session:invalidate', ({ userId }) => {
   if (userId != null) invalidateLocal(userId);
 });
-
-/**
- * إحصائيات للـ debugging (اختياري)
- */
-const stats = (): { size: number; ttl_ms: number; entries: string[] } => ({
-  size:    _cache.size,
-  ttl_ms:  TTL_MS,
-  entries: [..._cache.keys()],
-});
-
-const sessionCache = { get, set, invalidate, invalidateLocal, stats };
-
-export { get, set, invalidate, invalidateLocal, stats };
-export default sessionCache;
-import { publishRuntimeEvent, subscribeRuntimeEvent } from './runtimeBus.js';
+export default { get, set, invalidate, invalidateLocal, stats };

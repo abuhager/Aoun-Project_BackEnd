@@ -50,7 +50,7 @@ export async function listSupport(userId: string, admin: boolean, page: number) 
   const filter = { kind: 'support' as const, ...(admin ? {} : { requester: userId }) };
   const [rows, total] = await Promise.all([
     Conversation.find(filter).populate('requester', 'name avatar').populate('owner', 'name avatar')
-      .sort({ updatedAt: -1 }).skip((page - 1) * 20).limit(20).lean(),
+      .sort({ updatedAt: -1, _id: -1 }).skip((page - 1) * 20).limit(20).lean(),
     Conversation.countDocuments(filter),
   ]);
   // Inbox exposes ticket metadata only. Messages remain participant-only.
