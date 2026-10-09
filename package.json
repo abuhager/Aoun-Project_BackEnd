@@ -58,7 +58,7 @@
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.2.0",
-    "@types/node": "^20.19.43",
+    "@types/node": "^26.6.4",
     "socket.io-client": "^4.8.4",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3"
