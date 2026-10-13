@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">Aoun backend architecture</title>
+  <desc id="desc">The Next.js frontend uses Express REST routes and Socket.IO. Controllers and realtime handlers call services and repositories backed by MongoDB. Redis supports shared rate limiting and the optional Socket.IO adapter. MongoDB stores durable outbox events consumed by a worker for email and Cloudinary cleanup.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10Z" fill="#92a6c0"/></marker>
+  </defs>
+  <rect width="1200" height="760" rx="24" fill="#101b2b"/>
+  <g font-family="Arial, DejaVu Sans, sans-serif">
+    <text x="48" y="58" font-size="30" font-weight="700" fill="#f2f7ff">Aoun — backend architecture</text>
+    <text x="48" y="91" font-size="16" fill="#aebed4">REST, realtime communication, persistent data, and background effects</text>
+    <g fill="none" stroke="#92a6c0" stroke-width="2.5" marker-end="url(#arrow)">
+      <path d="M270 180 H315"/>
+      <path d="M270 225 H291 V300 H315"/>
+      <path d="M545 170 H598"/>
+      <path d="M545 300 H570 V225 H598"/>
+      <path d="M855 195 H922"/>
+      <path d="M145 404 V362 H286 V210 H315"/>
+      <path d="M270 453 H297 V325 H315"/>
+      <path d="M1040 272 V404"/>
+      <path d="M922 453 H855"/>
+      <path d="M726 509 V585"/>
+    </g>
+    <rect x="48" y="138" width="222" height="142" rx="15" fill="#16362f" stroke="#44ba8b"/>
+    <text x="70" y="179" font-size="21" font-weight="700" fill="#e9fff6">Next.js frontend</text>
+    <text x="70" y="211" font-size="16" fill="#b8dfd0">Browser + server</text>
+    <text x="70" y="241" font-size="15" fill="#b8dfd0">HTTP / Socket.IO client</text>
+    <rect x="315" y="130" width="230" height="96" rx="15" fill="#203448" stroke="#508fb5"/>
+    <text x="337" y="166" font-size="21" font-weight="700" fill="#f2f7ff">Express REST API</text>
+    <text x="337" y="193" font-size="14" fill="#c2d1e4">Routes + middleware</text>
+    <text x="337" y="215" font-size="14" fill="#c2d1e4">HTTP controllers</text>
+    <rect x="315" y="262" width="230" height="84" rx="15" fill="#203448" stroke="#508fb5"/>
+    <text x="337" y="296" font-size="21" font-weight="700" fill="#f2f7ff">Socket.IO</text>
+    <text x="337" y="325" font-size="14" fill="#c2d1e4">Authenticated event handlers</text>
+    <rect x="598" y="130" width="257" height="142" rx="15" fill="#283447" stroke="#758bb3"/>
+    <text x="620" y="170" font-size="21" font-weight="700" fill="#f2f7ff">Services + DTOs</text>
+    <text x="620" y="204" font-size="15" fill="#c2d1e4">Business rules and use cases</text>
+    <text x="620" y="239" font-size="16" fill="#c2d1e4">Repositories / transactions</text>
+    <rect x="922" y="130" width="230" height="142" rx="15" fill="#16362f" stroke="#44ba8b"/>
+    <text x="944" y="170" font-size="22" font-weight="700" fill="#e9fff6">MongoDB</text>
+    <text x="944" y="204" font-size="16" fill="#b8dfd0">Application records</text>
+    <text x="944" y="239" font-size="14" fill="#b8dfd0">Replica set + transactions</text>
+    <rect x="48" y="404" width="222" height="105" rx="15" fill="#402734" stroke="#cb7485"/>
+    <text x="70" y="442" font-size="22" font-weight="700" fill="#ffe7ed">Redis</text>
+    <text x="70" y="472" font-size="15" fill="#e2b7c1">Shared rate limiting</text>
+    <text x="70" y="496" font-size="13" fill="#e2b7c1">Optional Socket.IO adapter</text>
+    <rect x="598" y="404" width="257" height="105" rx="15" fill="#3a3423" stroke="#c3a56e"/>
+    <text x="620" y="442" font-size="21" font-weight="700" fill="#fff1d3">Outbox worker</text>
+    <text x="620" y="474" font-size="15" fill="#decdab">Polling, locks, retries</text>
+    <text x="620" y="496" font-size="14" fill="#decdab">Health heartbeat</text>
+    <text x="673" y="563" font-size="14" fill="#aebed4">External adapters</text>
+    <rect x="922" y="404" width="230" height="105" rx="15" fill="#3a3423" stroke="#c3a56e"/>
+    <text x="944" y="442" font-size="21" font-weight="700" fill="#fff1d3">Durable outbox</text>
+    <text x="944" y="475" font-size="15" fill="#decdab">Events stored in MongoDB</text>
+    <text x="881" y="444" font-size="12" fill="#aebed4">read</text>
+    <rect x="598" y="585" width="554" height="90" rx="15" fill="#203448" stroke="#508fb5"/>
+    <text x="620" y="622" font-size="21" font-weight="700" fill="#f2f7ff">Brevo + Cloudinary cleanup</text>
+    <text x="620" y="651" font-size="16" fill="#c2d1e4">Email delivery and queued deletion of stored images</text>
+    <text x="48" y="718" font-size="15" fill="#aebed4">single: worker runs within the web process  ·  distributed: separate worker + required Redis</text>
+  </g>
+</svg>

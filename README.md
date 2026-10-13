@@ -15,33 +15,29 @@
 
 [![Backend CI](https://github.com/abuhager/Aoun-Project_BackEnd/actions/workflows/ci.yml/badge.svg)](https://github.com/abuhager/Aoun-Project_BackEnd/actions/workflows/ci.yml)
 
+[البنية](#نظرة-معمارية) · [التشغيل المحلي](#التشغيل-المحلي) · [API](#api-overview) · [دليل الإنتاج](docs/PRODUCTION-RUNBOOK.md)
+
 ## روابط المشروع
 
-- **Frontend Repository:** https://github.com/abuhager/Aoun-Project_FrontEnd
-- **Live Application:** https://www.aoun.website/
-- **Backend Health Check:** https://aoun-project-backend.onrender.com/health/live
+- **مستودع الواجهة:** [Aoun Frontend](https://github.com/abuhager/Aoun-Project_FrontEnd)
+- **التطبيق المنشور:** [www.aoun.website](https://www.aoun.website/)
+- **فحص حياة الخادم:** [/health/live](https://aoun-project-backend.onrender.com/health/live)
 
 > المشروع MVP منشور. بيانات Demo المستخدمة للاختبار والعرض لا تمثل مستخدمين أو شراكات مؤسسية فعلية.
+
+## معاينة المنتج
+
+الخادم يدعم تجربة عون المعروضة في مستودع الواجهة. الصورة التالية لقطة فعلية من واجهة المنتج، وليست واجهة مستقلة للـAPI.
+
+![واجهة عون التي تعتمد على REST API وخدمات هذا المستودع](docs/images/product-preview.webp)
 
 ## نظرة معمارية
 
 يتبع المشروع فصلًا واضحًا للمسؤوليات:
 
-```text
-HTTP Request
-    ↓
-Route
-    ↓
-Middleware
-    ↓
-Controller
-    ↓
-Service
-    ↓
-Repository
-    ↓
-MongoDB
-```
+![بنية Aoun Backend: HTTP وSocket.IO وطبقات الخدمات وMongoDB وRedis وعامل Outbox](docs/images/architecture.svg)
+
+يمر طلب HTTP عبر route وmiddleware وcontroller قبل تنفيذ قواعد العمل في service والوصول إلى MongoDB عبر repository. الرسم يلخص علاقات التشغيل؛ تفاصيل الاعتماد بين الطبقات في [Architecture Boundaries](docs/ARCHITECTURE-BOUNDARIES.md).
 
 - **Routes:** تعريف endpoints وربط middleware والـcontrollers.
 - **Middlewares:** المصادقة، validation، rate limiting، الرفع ومعالجة جوانب الطلب المشتركة.
@@ -51,37 +47,6 @@ MongoDB
 - **Repositories:** عزل استعلامات البيانات المتكررة عن منطق الأعمال.
 - **Models:** نماذج Mongoose.
 - **Transactions:** العمليات التي تحتاج إلى اتساق بين عدة مستندات تستخدم MongoDB transactions.
-
-### نظرة على البنية التشغيلية
-
-```mermaid
-flowchart TD
-    FE["Next.js Frontend"]
-    API["Express REST API"]
-    SOCKET["Socket.IO"]
-    MW["Middleware"]
-    SERVICE["Services"]
-    REPO["Repositories"]
-    REDIS[("Redis")]
-    MONGO[("MongoDB")]
-    OUTBOX[("Durable Outbox")]
-    WORKER["Outbox Worker"]
-    BREVO["Brevo"]
-    CLOUDINARY["Cloudinary"]
-
-    FE -->|HTTPS| API
-    FE <-->|Realtime| SOCKET
-    API --> MW
-    MW --> SERVICE
-    SOCKET --> SERVICE
-    SERVICE --> REPO
-    REPO --> MONGO
-    API <-->|Rate limiting| REDIS
-    SERVICE --> OUTBOX
-    OUTBOX --> WORKER
-    WORKER --> BREVO
-    SERVICE --> CLOUDINARY
-```
 
 في العمليات الحساسة يمكن تنفيذ أكثر من تعديل داخل MongoDB transaction، بينما يستخدم Durable Outbox لفصل بعض التأثيرات الخارجية عن المعاملة الأساسية وإعادة محاولة تنفيذها عند الحاجة.
 
@@ -145,7 +110,7 @@ flowchart TD
 
 ## المتطلبات
 
-- Node.js 24 LTS (`24.19.0` in `.node-version`)
+- Node.js **24**؛ النسخة في [`.node-version`](.node-version) هي `24.19.0`، والنطاق المدعوم في `package.json` هو `>=24.0.0 <25`.
 - npm
 - MongoDB يدعم transactions للعمليات التي تعتمد عليها
 - إعدادات Cloudinary للوظائف التي ترفع الصور
@@ -160,7 +125,28 @@ cd Aoun-Project_BackEnd
 npm ci
 ```
 
-أنشئ ملف `.env` محليًا اعتمادًا على `.env.production.example` مع استخدام قيم تطوير خاصة بك وعدم نسخ أسرار الإنتاج.
+أنشئ `.env` من المثال المرفق:
+
+```bash
+cp .env.production.example .env
+```
+
+على PowerShell استخدم `Copy-Item .env.production.example .env`. المثال مضبوط للإنتاج؛ غيّر إعدادات بيئة التطوير قبل التشغيل:
+
+| الإعداد | قيمة التطوير أو المطلوب |
+| --- | --- |
+| `NODE_ENV`, `PORT` | `development`, `5000` |
+| `ALLOWED_ORIGINS`, `CLIENT_URL` | `http://localhost:3000` |
+| `MONGO_URI` | قاعدة تطوير منفصلة على MongoDB Replica Set لدعم transactions |
+| `JWT_SECRET`, `JWT_REFRESH_SECRET`, `COOKIE_SECRET`, `OTP_PEPPER` | قيم عشوائية مستقلة خاصة ببيئة التطوير |
+| `JWT_ACCESS_EXPIRE`, `JWT_REFRESH_EXPIRE` | مثل `15m`, `7d` |
+| `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | إعدادات Cloudinary؛ مطلوبة عند التحقق من البيئة، والرفع يحتاج بيانات مزود عاملة |
+| `BREVO_API_KEY`, `PLATFORM_EMAIL` | بيانات بريد تطوير لتجربة التفعيل والاستعادة |
+| `RUNTIME_TOPOLOGY`, `WEB_CONCURRENCY` | `single`, `1` للتطوير على عملية ويب واحدة |
+| `REDIS_REQUIRED`, `REDIS_URL` | `false` إذا لم تستخدم Redis محليًا؛ وإلا عنوان Redis العامل |
+| `OUTBOX_WORKER_REQUIRED`, `OUTBOX_ENCRYPTION_KEY` | فعّل العامل لتجربة البريد والتنظيف؛ استخدم مفتاحًا ثابتًا عشوائيًا من 64 محرف hex |
+
+يمكن توليد قيمة عشوائية باستخدام `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`. ولّد قيمة مستقلة لكل مفتاح. احتفظ بـ`.env` محليًا، وراجع [دليل التشغيل](docs/PRODUCTION-RUNBOOK.md) لإعدادات الإنتاج والفهارس.
 
 ثم:
 
@@ -252,7 +238,9 @@ npm run worker
 | `npm run db:orphans:audit` | تدقيق مراجع الأغراض |
 | `npm run db:search:check` | فحص backfill لبيانات البحث |
 | `npm run db:search:apply` | تطبيق backfill لبيانات البحث |
-| `npm run db:seed:mock` | إنشاء بيانات Mock |
+| `npm run db:seed:mock` | إنشاء بيانات Mock على قاعدة تطوير فقط |
+| `npm run db:trust:check` / `npm run db:trust:apply` | فحص/تطبيق backfill لاستثناءات الثقة |
+| `npm run test:seed:e2e` | تجهيز حسابات CI الاصطناعية على قاعدة اختبار مستقلة |
 | `npm run perf:smoke` | تشغيل Performance Smoke Test |
 
 ## الاختبارات
@@ -290,10 +278,11 @@ npm run verify
 GET /health/live
 GET /health
 GET /health/ready
+GET /health/jobs
 GET /metrics
 ```
 
-تتحقق readiness من مكونات التشغيل ذات الصلة مثل قاعدة البيانات وRedis والمهام الخلفية والـOutbox Worker وفق إعدادات البيئة.
+`/health/live` يفحص حياة العملية، و`/health/ready` جاهزيتها لاستقبال HTTP. افحص `/health/jobs` لمتابعة فشل وظائف الأعمال الخلفية؛ نجاح liveness وحده لا يثبت نجاح هذه الوظائف. تفاصيل سياسات الجاهزية والتنبيه في [Production Runbook](docs/PRODUCTION-RUNBOOK.md).
 
 ## بنية المشروع
 
@@ -320,10 +309,10 @@ test/            # Automated tests
 
 يحتوي `docs/` على وثائق تقنية إضافية، منها:
 
-- `ARCHITECTURE-BOUNDARIES.md`
-- `PRODUCTION-RUNBOOK.md`
-- `PRIVACY-DATA-MAP.md`
-- `PERFORMANCE-SMOKE-REPORT.md`
-- `ITEM-DELETION-POLICY.md`
+- [ARCHITECTURE-BOUNDARIES.md](docs/ARCHITECTURE-BOUNDARIES.md)
+- [PRODUCTION-RUNBOOK.md](docs/PRODUCTION-RUNBOOK.md)
+- [PRIVACY-DATA-MAP.md](docs/PRIVACY-DATA-MAP.md)
+- [PERFORMANCE-SMOKE-REPORT.md](docs/PERFORMANCE-SMOKE-REPORT.md)
+- [ITEM-DELETION-POLICY.md](docs/ITEM-DELETION-POLICY.md)
 
 هذه الملفات تكمل README بالتفاصيل التشغيلية والمعمارية التي لا تحتاج إلى وضعها كلها في الصفحة الرئيسية.
