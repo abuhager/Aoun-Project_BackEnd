@@ -7,10 +7,10 @@ import Report from '../models/Report.js';
 import DonationRequest from '../models/DonationRequest.js';
 
 const countOrphans = async (
-  model: mongoose.Model<unknown>,
+  model: Pick<mongoose.Model<unknown>, 'aggregate'>,
   field: string
 ): Promise<number> => {
-  const rows = await model.aggregate([
+  const rows = await model.aggregate<{ count: number }>([
     { $match: { [field]: { $type: 'objectId' } } },
     {
       $lookup: {
