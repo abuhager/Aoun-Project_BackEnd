@@ -426,7 +426,7 @@ export const createItemLogic = async (
       : (settings.maxActiveDonationsPerUser    ?? 2);
 
   const uploadResult = await uploadToCloudinary(file.buffer);
-  let item;
+  let item: InstanceType<typeof Item> | null = null;
   let replayed = false;
 
   try {
@@ -525,6 +525,8 @@ export const createItemLogic = async (
       console.warn('[Cloudinary] تعذر حذف صورة مكررة:', getErrorMessage(cleanupError));
     }
   }
+
+  if (!item) throw new AppError('تعذر استعادة عملية نشر التبرع', 500, 'PUBLISH_RESULT_UNAVAILABLE');
 
   await item.populate([
     { path: 'donor', select: 'name avatar trustScore isVerifiedStudent trustLevel' },
