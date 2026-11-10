@@ -56,7 +56,7 @@ jobs:
         run: |
           docker run --detach --name aoun-mongo-rs \
             --publish 27017:27017 \
-            mongo:8.0 --replSet rs0 --bind_ip_all
+            mongo:7.0 --replSet rs0 --bind_ip_all
           mongo_ready=false
           for attempt in {1..30}; do
             if [ "$(docker inspect --format '{{.State.Running}}' aoun-mongo-rs)" != true ]; then
