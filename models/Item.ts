@@ -103,6 +103,9 @@ const ItemSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Stable identity for a logical publish attempt (legacy items omit this).
+    publishKey: { type: String, default: null, select: false },
+    publishPayloadHash: { type: String, default: null, select: false },
     linkedRequestId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'DonationRequest',
@@ -131,6 +134,15 @@ ItemSchema.index({ location: 1, status: 1 });
 ItemSchema.index({ searchTokens: 1, status: 1, createdAt: -1 });
 ItemSchema.index({ searchPrefixes: 1, status: 1, createdAt: -1 });
 ItemSchema.index({ 'waitlist.user': 1, status: 1 });
+// Must be provisioned with npm run db:indexes before enabling idempotent publishing.
+ItemSchema.index(
+  { donor: 1, publishKey: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { publishKey: { $type: 'string' } },
+    name: 'donor_publish_key_unique',
+  }
+);
 ItemSchema.index(
   { linkedRequestId: 1 },
   {
