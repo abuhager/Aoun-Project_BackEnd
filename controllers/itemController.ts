@@ -23,7 +23,11 @@ export const getItemById = asyncHandler(async (req, res) => {
 });
 
 export const createItem = asyncHandler(async (req, res) => {
-  const result = await itemService.createItemLogic(req.body as ItemInput, req.user!.id, req.file!);
+  const rawPublishKey = req.get('Idempotency-Key');
+  if (rawPublishKey && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(rawPublishKey)) {
+    return res.status(400).json({ success: false, code: 'INVALID_PUBLISH_KEY', msg: 'مفتاح عملية النشر غير صالح' });
+  }
+  const result = await itemService.createItemLogic(req.body as ItemInput, req.user!.id, req.file!, rawPublishKey);
   res.status(201).json({ success: true, ...result });
 });
 

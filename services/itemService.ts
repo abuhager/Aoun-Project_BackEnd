@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { createHash } from 'node:crypto';
 import type { ClientSession } from 'mongoose';
 import Item from '../models/Item.js';
 import User from '../models/User.js';
@@ -346,12 +347,52 @@ export const getItemByIdLogic = async (
   return toPublicItem(obj, requesterId);
 };
 
+// The key identifies a publish attempt, not the donation's title or content.
+// Include image bytes so reusing a key with a different image is a conflict.
+const getPublishPayloadHash = (body: ItemInput, file: UploadedFile): string => {
+  const normalized = {
+    title: body.title?.trim(),
+    description: body.description?.trim() ?? '',
+    category: body.category,
+    location: body.location?.trim(),
+    condition: body.condition,
+    safeHub: body.safeHub || null,
+  };
+  return createHash('sha256')
+    .update(JSON.stringify(normalized))
+    .update(file.buffer)
+    .digest('hex');
+};
+
+const findPublishedAttempt = async (userId: EntityId, publishKey: string) =>
+  Item.findOne({ donor: userId, publishKey }).select('+publishKey +publishPayloadHash');
+
+const assertMatchingPublishAttempt = (item: { publishPayloadHash?: string | null }, payloadHash: string) => {
+  if (item.publishPayloadHash !== payloadHash) {
+    throw new AppError('هذا المفتاح مستخدم لبيانات تبرع مختلفة. ابدأ عملية نشر جديدة.', 409, 'PUBLISH_KEY_CONFLICT');
+  }
+};
+
 export const createItemLogic = async (
   body: ItemInput,
   userId: EntityId,
-  file: UploadedFile
+  file: UploadedFile,
+  publishKey?: string
 ) => {
   validateImageFile(file, { required: true });
+  const payloadHash = publishKey ? getPublishPayloadHash(body, file) : null;
+  // Fast replay: skip a redundant Cloudinary upload and any business side effects.
+  if (publishKey) {
+    const previous = await findPublishedAttempt(userId, publishKey);
+    if (previous) {
+      assertMatchingPublishAttempt(previous, payloadHash!);
+      await previous.populate([
+        { path: 'donor', select: 'name avatar trustScore isVerifiedStudent trustLevel' },
+        { path: 'safeHub', select: 'name address city workingHours' },
+      ]);
+      return { item: toDonorItem(previous.toObject(), userId) };
+    }
+  }
 
   const [user, settings, safeHub] = await Promise.all([
     User.findById(userId).select('isVerified trustLevel quota').lean(),
@@ -385,11 +426,24 @@ export const createItemLogic = async (
       : (settings.maxActiveDonationsPerUser    ?? 2);
 
   const uploadResult = await uploadToCloudinary(file.buffer);
-  let item;
+  let item: InstanceType<typeof Item> | null = null;
+  let replayed = false;
 
   try {
     item = await runMongoTransaction(async (session) => {
       await acquireUserOperationLocks([userId], session);
+      // Recheck while holding the per-user write lock; another request may have committed.
+      if (publishKey) {
+        const previous = await Item.findOne({ donor: userId, publishKey })
+          .select('+publishKey +publishPayloadHash')
+          .session(session);
+        if (previous) {
+          assertMatchingPublishAttempt(previous, payloadHash!);
+          replayed = true;
+          return previous;
+        }
+      }
+      replayed = false;
       if (body.safeHub) {
         const acquiredHub = await hubRepository.acquireActiveForWrite(body.safeHub, session);
         if (!acquiredHub) {
@@ -431,6 +485,7 @@ export const createItemLogic = async (
         condition:    body.condition,
         safeHub:      safeHub?._id ?? null,
         donor:        userId,
+        ...(publishKey ? { publishKey, publishPayloadHash: payloadHash } : {}),
         imageUrl:     uploadResult.secure_url,
         cloudinaryId: uploadResult.public_id,
       }], { session });
@@ -438,23 +493,47 @@ export const createItemLogic = async (
       return createdItem;
     });
   } catch (err) {
+    // A concurrent request may win the unique-index race. Do not create a second item.
+    // Do not swallow arbitrary database errors; only replay a verified, committed attempt.
+    if (publishKey && typeof err === 'object' && err !== null && 'code' in err && err.code === 11000) {
+      const previous = await findPublishedAttempt(userId, publishKey);
+      if (previous) {
+        try {
+          assertMatchingPublishAttempt(previous, payloadHash!);
+          item = previous;
+          replayed = true;
+        } catch (conflictError) {
+          try { await deleteFromCloudinary(uploadResult.public_id); } catch (_) {}
+          throw conflictError;
+        }
+      }
+    }
+    if (!replayed) {
+      try {
+        await deleteFromCloudinary(uploadResult.public_id);
+      } catch (cleanupError: unknown) {
+        console.warn('[Cloudinary] تعذر حذف صورة غرض فشل إنشاؤه:', getErrorMessage(cleanupError));
+      }
+      if (!item) throw err;
+    }
+  }
+
+  if (replayed) {
     try {
       await deleteFromCloudinary(uploadResult.public_id);
     } catch (cleanupError: unknown) {
-      console.warn(
-        '[Cloudinary] تعذر حذف صورة غرض فشل إنشاؤه:',
-        getErrorMessage(cleanupError)
-      );
+      console.warn('[Cloudinary] تعذر حذف صورة مكررة:', getErrorMessage(cleanupError));
     }
-    throw err;
   }
+
+  if (!item) throw new AppError('تعذر استعادة عملية نشر التبرع', 500, 'PUBLISH_RESULT_UNAVAILABLE');
 
   await item.populate([
     { path: 'donor', select: 'name avatar trustScore isVerifiedStudent trustLevel' },
     { path: 'safeHub', select: 'name address city workingHours' },
   ]);
 
-  setImmediate(async () => {
+  if (!replayed) setImmediate(async () => {
     try {
       const requests = await DonationRequest.find({
         category: item.category,
